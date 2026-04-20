@@ -1,0 +1,1417 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+
+/* ══════════════════════════════════════════════════════
+   SUPABASE CONFIG
+══════════════════════════════════════════════════════ */
+const SB_URL = "https://bodeplbamprefhdrckyp.supabase.co";
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJvZGVwbGJhbXByZWZoZHJja3lwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1NDE1MjUsImV4cCI6MjA5MjExNzUyNX0.Au8NUHC_2eFFuNugM6JybzK6AzKNIUTLuyUo-F772FQ";
+
+const headers = {
+  "Content-Type": "application/json",
+  "apikey": SB_KEY,
+  "Authorization": `Bearer ${SB_KEY}`,
+  "Prefer": "return=representation",
+};
+
+const sb = {
+  async get(table, query = "") {
+    const r = await fetch(`${SB_URL}/rest/v1/${table}${query}`, { headers });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  },
+  async post(table, body) {
+    const r = await fetch(`${SB_URL}/rest/v1/${table}`, {
+      method: "POST", headers, body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  },
+  async patch(table, query, body) {
+    const r = await fetch(`${SB_URL}/rest/v1/${table}${query}`, {
+      method: "PATCH", headers, body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  },
+  async delete(table, query) {
+    const r = await fetch(`${SB_URL}/rest/v1/${table}${query}`, {
+      method: "DELETE", headers,
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return r.status === 204 ? [] : r.json();
+  },
+  async uploadFile(bucket, path, file) {
+    const r = await fetch(`${SB_URL}/storage/v1/object/${bucket}/${path}`, {
+      method: "POST",
+      headers: { "apikey": SB_KEY, "Authorization": `Bearer ${SB_KEY}`, "Content-Type": file.type },
+      body: file,
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return `${SB_URL}/storage/v1/object/public/${bucket}/${path}`;
+  },
+};
+
+/* ══════════════════════════════════════════════════════
+   STATIC DATA
+══════════════════════════════════════════════════════ */
+const SUBJECTS = [
+  "Agriculture","Aviation Technology","Biology","Business Studies","Chemistry",
+  "Community Service Learning","Computer Science","Creative Arts & Sports","Economics",
+  "Engineering Studies","English","Environmental Activities","Fine Arts","Geography",
+  "Health Education","History & Citizenship","Home Science","Hygiene & Nutrition",
+  "Indigenous Language","Integrated Science","Kenyan Sign Language","Kiswahili",
+  "Language Activities","Life Skills Education","Mathematical Activities","Mathematics",
+  "Movement & Creative Activities","Music & Dance","Performing Arts","Physical Education",
+  "Pre-Technical Studies","Psychology","Psychomotor & Creative Activities",
+  "Religious Education (CRE / IRE / HRE)","Religious Education Activities",
+  "Science & Technology","Social Studies","Sociology","Sports & Physical Education",
+  "Sports Science","Theatre & Film","Visual Arts",
+];
+const GENDERS = ["Male","Female","Other"];
+const DAYS    = ["MON","TUE","WED","THU","FRI","SAT","SUN"];
+const DAY_FULL= ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const HOURS   = Array.from({length:15},(_,i)=>i+6);
+const STUDENT_GRADES = ["PP1","PP2","Grade 1","Grade 2","Grade 3","Grade 4","Grade 5","Grade 6","Grade 7","Grade 8","Grade 9"];
+const LEVELS = [
+  {label:"Pre-Primary → PP1 & PP2",            value:"Pre-Primary"},
+  {label:"Lower Primary → Grade 1, 2, 3",       value:"Lower Primary"},
+  {label:"Upper Primary → Grade 4, 5, 6",       value:"Upper Primary"},
+  {label:"Junior Secondary → Grade 7, 8, 9",    value:"Junior Secondary"},
+  {label:"Senior Secondary → Grade 10, 11, 12", value:"Senior Secondary"},
+];
+const COVER_COLORS = ["#c8e6c9","#b0bec5","#ffe0b2","#bbdefb","#f8bbd0","#d1c4e9","#ffe082","#b2dfdb"];
+
+function timeLbl(h){
+  if(h===12) return "12:00"; return h>12?`${String(h-12).padStart(2,"0")}:00`:`${String(h).padStart(2,"0")}:00`;
+}
+function subjBg(s){
+  const p=["#F0F4FF","#FFF0F6","#F0FFF4","#FFFBF0","#F5F0FF","#FFF5F0","#F0FFFE","#FFF0F0"];
+  let h=0; for(const c of s) h=(h*31+c.charCodeAt(0))&0xffff; return p[h%p.length];
+}
+function agoLabel(ts){
+  const diff=Date.now()-new Date(ts).getTime();
+  const m=Math.floor(diff/60000), hr=Math.floor(m/60), d=Math.floor(hr/24), w=Math.floor(d/7);
+  if(w>0) return `${w}W AGO`; if(d>0) return `${d}D AGO`; if(hr>0) return `${hr}H AGO`; return "JUST NOW";
+}
+const lightC=()=>({bg:"#F5F5F5",surface:"#FFFFFF",surfaceAlt:"#F2F2F2",border:"#EBEBEB",
+  text:"#111111",sub:"#888888",accentBg:"#111111",accentText:"#FFFFFF"});
+const darkC=()=>({bg:"#111111",surface:"#1C1C1C",surfaceAlt:"#252525",border:"#2A2A2A",
+  text:"#F0F0F0",sub:"#888888",accentBg:"#FFFFFF",accentText:"#111111"});
+
+/* ══════════════════════════════════════════════════════
+   CUSTOM PICKER
+══════════════════════════════════════════════════════ */
+function Picker({value,onChange,items,placeholder="Choose…",C,mb=14}){
+  const [open,setOpen]=useState(false);
+  const norm=items.map(i=>typeof i==="string"?{label:i,value:i}:i);
+  const chosen=norm.find(i=>i.value===value);
+  return(
+    <div style={{position:"relative",marginBottom:mb,zIndex:open?500:1}}>
+      <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",
+        justifyContent:"space-between",padding:"13px 16px",borderRadius:14,
+        border:`1.5px solid ${open?C.text:C.border}`,background:C.surfaceAlt,
+        cursor:"pointer",userSelect:"none",transition:"border .15s"}}>
+        <span style={{fontSize:14,color:chosen?C.text:C.sub,fontFamily:"'Barlow',sans-serif"}}>
+          {chosen?chosen.label:placeholder}
+        </span>
+        <span style={{fontSize:11,color:C.sub,transition:"transform .15s",
+          transform:open?"rotate(180deg)":"none"}}>▾</span>
+      </div>
+      {open&&(
+        <div style={{position:"absolute",left:0,right:0,top:"calc(100% + 4px)",
+          background:C.surface,borderRadius:16,zIndex:9999,overflowY:"auto",maxHeight:220,
+          boxShadow:"0 8px 40px rgba(0,0,0,.2)",border:`1px solid ${C.border}`}}>
+          {norm.map((item,i)=>(
+            <div key={item.value} onClick={()=>{onChange(item.value);setOpen(false);}} style={{
+              padding:"13px 18px",fontSize:14,fontFamily:"'Barlow',sans-serif",cursor:"pointer",
+              color:item.value===value?C.accentText:C.text,
+              background:item.value===value?C.accentBg:"transparent",
+              fontWeight:item.value===value?700:400,
+              borderBottom:i<norm.length-1?`1px solid ${C.border}`:"none"}}>
+              {item.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   ROOT
+══════════════════════════════════════════════════════ */
+export default function App(){
+  const [screen,setScreen]=useState("welcome");
+  const [role,setRole]=useState(null);
+  const [currentUser,setCurrentUser]=useState(null);
+
+  function handleJoin(user){ setCurrentUser(user); setScreen("app"); }
+  function handleLogout(){ setCurrentUser(null); setScreen("welcome"); }
+
+  return(
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800;900&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+        body{background:#F5F5F5} ::-webkit-scrollbar{width:0}
+      `}</style>
+      {screen==="welcome"&&<WelcomeScreen onSelect={r=>{setRole(r);setScreen("register");}}/>}
+      {screen==="register"&&role==="student"&&
+        <StudentRegister onBack={()=>setScreen("welcome")} onJoin={handleJoin}/>}
+      {screen==="register"&&role==="tutor"&&
+        <TutorRegister onBack={()=>setScreen("welcome")} onJoin={handleJoin}/>}
+      {screen==="app"&&role==="student"&&currentUser&&
+        <StudentApp user={currentUser} onLogout={handleLogout}/>}
+      {screen==="app"&&role==="tutor"&&currentUser&&
+        <TutorApp user={currentUser} onLogout={handleLogout}/>}
+    </>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   WELCOME
+══════════════════════════════════════════════════════ */
+function WelcomeScreen({onSelect}){
+  const C=lightC();
+  return(
+    <Shell C={C}>
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",
+        justifyContent:"center",gap:32,padding:"0 24px"}}>
+        <Logo C={C} size={52}/>
+        <div style={{background:C.surface,borderRadius:28,padding:"32px 24px",width:"100%",
+          boxShadow:"0 4px 40px rgba(0,0,0,.08)"}}>
+          <Heading C={C}>WELCOME</Heading>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            <button onClick={()=>onSelect("student")} style={roleBtnStyle(C,false)}>
+              <GradCapIcon color="#888"/>
+              <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:12,letterSpacing:2,color:"#888"}}>STUDENT</span>
+            </button>
+            <button onClick={()=>onSelect("tutor")} style={roleBtnStyle(C,true)}>
+              <PersonCircleIcon color="#111"/>
+              <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:2,color:"#111"}}>TUTOR</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Shell>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   STUDENT REGISTER
+══════════════════════════════════════════════════════ */
+function StudentRegister({onBack,onJoin}){
+  const C=lightC();
+  const [p,setP]=useState({name:"",age:"",gender:"",level:"",location:""});
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState("");
+
+  async function handleJoin(){
+    if(!p.name) return;
+    setLoading(true); setErr("");
+    try{
+      const [user]=await sb.post("profiles",{
+        name:p.name,age:p.age?+p.age:null,gender:p.gender,location:p.location,
+        role:"student",grade:p.level,
+      });
+      onJoin(user);
+    }catch(e){ setErr("Could not create profile. Check connection."); }
+    finally{ setLoading(false); }
+  }
+
+  return(
+    <Shell C={C}>
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",
+        justifyContent:"center",gap:20,padding:"0 20px",overflowY:"auto"}}>
+        <Logo C={C} size={48}/>
+        <div style={{background:C.surface,borderRadius:28,padding:"28px 22px 24px",
+          width:"100%",boxShadow:"0 4px 40px rgba(0,0,0,.08)"}}>
+          <Heading C={C}>WELCOME</Heading>
+          <RoleMeta role="STUDENT" onBack={onBack} C={C}/>
+          <FL>CALLSIGN</FL>
+          <FI C={C} placeholder="Full Name" value={p.name} onChange={e=>setP(x=>({...x,name:e.target.value}))}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><FL>AGE</FL>
+              <FI C={C} placeholder="Years" type="number" value={p.age} onChange={e=>setP(x=>({...x,age:e.target.value}))}/>
+            </div>
+            <div><FL>GENDER</FL>
+              <Picker value={p.gender} onChange={v=>setP(x=>({...x,gender:v}))} items={GENDERS} placeholder="Select" C={C}/>
+            </div>
+          </div>
+          <FL>ACADEMIC GRADE</FL>
+          <Picker value={p.level} onChange={v=>setP(x=>({...x,level:v}))} items={STUDENT_GRADES} placeholder="Choose grade" C={C}/>
+          <FL>ZONE</FL>
+          <FI C={C} placeholder="City, Region" value={p.location} onChange={e=>setP(x=>({...x,location:e.target.value}))}/>
+          {err&&<div style={{color:"#EF4444",fontSize:12,marginBottom:10,textAlign:"center"}}>{err}</div>}
+          <JoinBtn disabled={!p.name||loading} onClick={handleJoin} loading={loading}/>
+        </div>
+      </div>
+    </Shell>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   TUTOR REGISTER
+══════════════════════════════════════════════════════ */
+function TutorRegister({onBack,onJoin}){
+  const C=lightC();
+  const [p,setP]=useState({name:"",age:"",gender:"",level:"",location:""});
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState("");
+
+  async function handleJoin(){
+    if(!p.name) return;
+    setLoading(true); setErr("");
+    try{
+      const [user]=await sb.post("profiles",{
+        name:p.name,age:p.age?+p.age:null,gender:p.gender,location:p.location,
+        role:"tutor",curriculum_level:p.level,
+      });
+      onJoin(user);
+    }catch(e){ setErr("Could not create profile. Check connection."); }
+    finally{ setLoading(false); }
+  }
+
+  return(
+    <Shell C={C}>
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",
+        justifyContent:"center",gap:20,padding:"0 20px",overflowY:"auto"}}>
+        <Logo C={C} size={48}/>
+        <div style={{background:C.surface,borderRadius:28,padding:"28px 22px 24px",
+          width:"100%",boxShadow:"0 4px 40px rgba(0,0,0,.08)"}}>
+          <Heading C={C}>WELCOME</Heading>
+          <RoleMeta role="TUTOR" onBack={onBack} C={C}/>
+          <FL>CALLSIGN</FL>
+          <FI C={C} placeholder="Full Name" value={p.name} onChange={e=>setP(x=>({...x,name:e.target.value}))}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><FL>AGE</FL>
+              <FI C={C} placeholder="Years" type="number" value={p.age} onChange={e=>setP(x=>({...x,age:e.target.value}))}/>
+            </div>
+            <div><FL>GENDER</FL>
+              <Picker value={p.gender} onChange={v=>setP(x=>({...x,gender:v}))} items={GENDERS} placeholder="Select" C={C}/>
+            </div>
+          </div>
+          <FL>CURRICULUM SPECIALIZATION</FL>
+          <Picker value={p.level} onChange={v=>setP(x=>({...x,level:v}))} items={LEVELS} placeholder="Choose level" C={C}/>
+          <FL>ZONE</FL>
+          <FI C={C} placeholder="City, Region" value={p.location} onChange={e=>setP(x=>({...x,location:e.target.value}))}/>
+          {err&&<div style={{color:"#EF4444",fontSize:12,marginBottom:10,textAlign:"center"}}>{err}</div>}
+          <JoinBtn disabled={!p.name||loading} onClick={handleJoin} loading={loading}/>
+        </div>
+      </div>
+    </Shell>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   STUDENT APP
+══════════════════════════════════════════════════════ */
+function StudentApp({user,onLogout}){
+  const [dm,setDm]=useState(false);
+  const C=dm?darkC():lightC();
+  const [tab,setTab]=useState("timetable");
+
+  /* timetable state */
+  const [lessons,setLessons]=useState([]);
+  const [lessonsLoading,setLessonsLoading]=useState(true);
+  const [showAdd,setShowAdd]=useState(false);
+  const [showManage,setShowManage]=useState(false);
+  const [showTutors,setShowTutors]=useState(null);
+  const [editLesson,setEditLesson]=useState(null);
+  const [tutors,setTutors]=useState([]);
+  const [requested,setRequested]=useState(new Set());
+  const [addForm,setAddForm]=useState({subject:"",day:"MON",from:8,to:9,desc:"",online:false});
+  const [saving,setSaving]=useState(false);
+
+  /* archive state */
+  const [notes,setNotes]=useState([]);
+  const [notesLoading,setNotesLoading]=useState(true);
+  const [archFilter,setArchFilter]=useState("ALL");
+  const [archSearch,setArchSearch]=useState("");
+  const [interactions,setInteractions]=useState({}); // noteId -> {liked,saved}
+
+  /* profile state */
+  const [profile,setProfile]=useState(user);
+  const [profEdit,setProfEdit]=useState(false);
+  const [editP,setEditP]=useState({...user});
+  const [profSaving,setProfSaving]=useState(false);
+  const pfpRef=useRef();
+
+  /* ── fetch lessons ── */
+  const fetchLessons=useCallback(async()=>{
+    setLessonsLoading(true);
+    try{
+      const data=await sb.get("lessons",`?student_id=eq.${user.id}&order=from_hour.asc`);
+      setLessons(data);
+    }catch(e){ console.error(e); }
+    finally{ setLessonsLoading(false); }
+  },[user.id]);
+
+  /* ── fetch notes ── */
+  const fetchNotes=useCallback(async()=>{
+    setNotesLoading(true);
+    try{
+      const [n,ix]=await Promise.all([
+        sb.get("notes","?order=created_at.desc"),
+        sb.get("note_interactions",`?user_id=eq.${user.id}`),
+      ]);
+      setNotes(n);
+      const map={};
+      ix.forEach(i=>{ map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id}; });
+      setInteractions(map);
+    }catch(e){ console.error(e); }
+    finally{ setNotesLoading(false); }
+  },[user.id]);
+
+  /* ── fetch tutors ── */
+  const fetchTutors=useCallback(async()=>{
+    try{
+      const data=await sb.get("profiles","?role=eq.tutor&select=id,name,age,gender,location,hourly_rate,curriculum_level");
+      setTutors(data);
+    }catch(e){ console.error(e); }
+  },[]);
+
+  useEffect(()=>{ fetchLessons(); },[fetchLessons]);
+  useEffect(()=>{ fetchNotes(); },[fetchNotes]);
+  useEffect(()=>{ fetchTutors(); },[fetchTutors]);
+
+  /* ── lesson CRUD ── */
+  async function handleAddLesson(){
+    if(!addForm.subject||saving) return;
+    setSaving(true);
+    try{
+      const [lesson]=await sb.post("lessons",{
+        student_id:user.id,subject:addForm.subject,day:addForm.day,
+        from_hour:addForm.from,to_hour:addForm.to,
+        description:addForm.desc,online:addForm.online,
+      });
+      setLessons(l=>[...l,lesson]);
+      setShowAdd(false);
+      setAddForm({subject:"",day:"MON",from:8,to:9,desc:"",online:false});
+    }catch(e){ console.error(e); }
+    finally{ setSaving(false); }
+  }
+
+  async function handleDeleteLesson(id){
+    try{
+      await sb.delete("lessons",`?id=eq.${id}`);
+      setLessons(l=>l.filter(x=>x.id!==id));
+      if(editLesson?.id===id) setEditLesson(null);
+    }catch(e){ console.error(e); }
+  }
+
+  async function handleSaveEdit(){
+    if(!editLesson||saving) return;
+    setSaving(true);
+    try{
+      await sb.patch("lessons",`?id=eq.${editLesson.id}`,{
+        subject:editLesson.subject,day:editLesson.day,
+        from_hour:editLesson.from_hour,to_hour:editLesson.to_hour,
+        description:editLesson.description,online:editLesson.online,
+      });
+      setLessons(l=>l.map(x=>x.id===editLesson.id?{...x,...editLesson}:x));
+      setEditLesson(null);
+    }catch(e){ console.error(e); }
+    finally{ setSaving(false); }
+  }
+
+  /* ── request tutor ── */
+  async function handleRequestTutor(tutor,lesson){
+    const key=`${tutor.id}-${lesson.id}`;
+    if(requested.has(key)) return;
+    try{
+      await sb.post("tutor_requests",{
+        lesson_id:lesson.id,student_id:user.id,tutor_id:tutor.id,
+        subject:lesson.subject,day:lesson.day,
+        from_hour:lesson.from_hour,to_hour:lesson.to_hour,
+        online:lesson.online,description:lesson.description,
+        student_name:user.name,status:"pending",
+      });
+      setRequested(s=>new Set([...s,key]));
+    }catch(e){ console.error(e); }
+  }
+
+  /* ── note interactions ── */
+  async function handleInteraction(noteId,field){
+    const cur=interactions[noteId]||{liked:false,saved:false};
+    const next={...cur,[field]:!cur[field]};
+    setInteractions(i=>({...i,[noteId]:next}));
+    try{
+      if(cur.id){
+        await sb.patch("note_interactions",`?id=eq.${cur.id}`,{[field]:next[field]});
+      }else{
+        const [row]=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});
+        setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));
+      }
+    }catch(e){ console.error(e); setInteractions(i=>({...i,[noteId]:cur})); }
+  }
+
+  /* ── save profile ── */
+  async function handleSaveProfile(){
+    setProfSaving(true);
+    try{
+      await sb.patch("profiles",`?id=eq.${user.id}`,{
+        name:editP.name,age:editP.age?+editP.age:null,
+        gender:editP.gender,location:editP.location,grade:editP.grade,
+      });
+      setProfile({...profile,...editP});
+      setProfEdit(false);
+    }catch(e){ console.error(e); }
+    finally{ setProfSaving(false); }
+  }
+
+  const getLessonsForDay=d=>lessons.filter(l=>l.day===d).sort((a,b)=>a.from_hour-b.from_hour);
+  const filteredNotes=()=>{
+    let n=notes.map(note=>({...note,...(interactions[note.id]||{liked:false,saved:false})}));
+    if(archFilter==="FAVORITES") n=n.filter(x=>x.liked);
+    if(archFilter==="SAVED") n=n.filter(x=>x.saved);
+    if(archSearch) n=n.filter(x=>
+      x.title?.toLowerCase().includes(archSearch.toLowerCase())||
+      x.subject?.toLowerCase().includes(archSearch.toLowerCase()));
+    return n;
+  };
+
+  return(
+    <Shell C={C}>
+      {/* ── TIMETABLE ── */}
+      {tab==="timetable"&&<>
+        <AppHeader C={C}>
+          <PillBtn outline C={C} onClick={()=>setShowManage(true)}>MANAGE</PillBtn>
+          <PillBtn C={C} onClick={()=>setShowAdd(true)}>ADD SLOT</PillBtn>
+        </AppHeader>
+        <Scroll>
+          {lessonsLoading
+            ?<Loading C={C}/>
+            :<DayGrid days={DAYS} getLessons={getLessonsForDay} C={C}
+                onLessonTap={l=>setShowTutors(l)} isStudent/>
+          }
+        </Scroll>
+      </>}
+
+      {/* ── ARCHIVE ── */}
+      {tab==="archive"&&<>
+        <AppHeader C={C}><AvatarBubble name={profile.name} C={C}/></AppHeader>
+        <Scroll>
+          <ArchiveSearch value={archSearch} onChange={setArchSearch} C={C}/>
+          <FilterRow value={archFilter} onChange={setArchFilter} C={C}/>
+          {notesLoading?<Loading C={C}/>:
+            <NoteGrid notes={filteredNotes()} C={C}
+              onLike={id=>handleInteraction(id,"liked")}
+              onSave={id=>handleInteraction(id,"saved")}/>
+          }
+        </Scroll>
+      </>}
+
+      {/* ── IDENTITY ── */}
+      {tab==="identity"&&<>
+        <IdentityHeader C={C} dm={dm} setDm={setDm} onLogout={onLogout}/>
+        <Scroll>
+          <ProfileCard profile={profile} editP={editP} setEditP={setEditP}
+            editing={profEdit} pfpRef={pfpRef} C={C}/>
+          <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}}
+            onChange={e=>{const f=e.target.files[0];if(!f)return;
+              const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
+          <ConfigCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isStudent
+            onToggle={()=>{ if(profEdit)handleSaveProfile(); else{ setEditP({...profile}); setProfEdit(true); } }}
+            saving={profSaving}/>
+          <div style={{height:24}}/>
+        </Scroll>
+      </>}
+
+      <BottomNav tab={tab} setTab={setTab} C={C}/>
+
+      {/* ADD MODAL */}
+      {showAdd&&(
+        <Modal onClose={()=>setShowAdd(false)} C={C}>
+          <MTitle>📅 New Session</MTitle>
+          <MSub C={C}>Configure the educational slot.</MSub>
+          <ML C={C}>SUBJECT</ML>
+          <Picker value={addForm.subject} onChange={v=>setAddForm(f=>({...f,subject:v}))}
+            items={SUBJECTS} placeholder="Select Subject" C={C}/>
+          <ML C={C}>DAY</ML>
+          <Picker value={addForm.day}
+            onChange={v=>setAddForm(f=>({...f,day:v}))}
+            items={DAYS.map((d,i)=>({label:`${d} – ${DAY_FULL[i]}`,value:d}))}
+            placeholder="Select Day" C={C}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><ML C={C}>FROM</ML>
+              <Picker value={String(addForm.from)} onChange={v=>setAddForm(f=>({...f,from:+v}))}
+                items={HOURS.map(h=>({label:timeLbl(h),value:String(h)}))} placeholder="From" C={C}/>
+            </div>
+            <div><ML C={C}>TO</ML>
+              <Picker value={String(addForm.to)} onChange={v=>setAddForm(f=>({...f,to:+v}))}
+                items={HOURS.map(h=>({label:timeLbl(h),value:String(h)}))} placeholder="To" C={C}/>
+            </div>
+          </div>
+          <ML C={C}>DESCRIPTION (OPTIONAL)</ML>
+          <input style={mi(C)} placeholder="Brief note for the tutor…"
+            value={addForm.desc} onChange={e=>setAddForm(f=>({...f,desc:e.target.value}))}/>
+          <ML C={C}>MODE</ML>
+          <ModeRow online={addForm.online} C={C} setOnline={v=>setAddForm(f=>({...f,online:v}))}/>
+          <SaveBtn C={C} onClick={handleAddLesson} loading={saving}>💾 SAVE SLOT</SaveBtn>
+          <CancelBtn C={C} onClick={()=>setShowAdd(false)}>CANCEL</CancelBtn>
+        </Modal>
+      )}
+
+      {/* MANAGE MODAL */}
+      {showManage&&(
+        <Modal onClose={()=>{setShowManage(false);setEditLesson(null);}} C={C}>
+          {editLesson?(
+            <>
+              <MTitle>✏️ Edit Session</MTitle>
+              <MSub C={C}>Modify the lesson details.</MSub>
+              <ML C={C}>SUBJECT</ML>
+              <Picker value={editLesson.subject} onChange={v=>setEditLesson(l=>({...l,subject:v}))}
+                items={SUBJECTS} placeholder="Select Subject" C={C}/>
+              <ML C={C}>DAY</ML>
+              <Picker value={editLesson.day}
+                onChange={v=>setEditLesson(l=>({...l,day:v}))}
+                items={DAYS.map((d,i)=>({label:`${d} – ${DAY_FULL[i]}`,value:d}))} placeholder="Select Day" C={C}/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div><ML C={C}>FROM</ML>
+                  <Picker value={String(editLesson.from_hour)} onChange={v=>setEditLesson(l=>({...l,from_hour:+v}))}
+                    items={HOURS.map(h=>({label:timeLbl(h),value:String(h)}))} placeholder="From" C={C}/>
+                </div>
+                <div><ML C={C}>TO</ML>
+                  <Picker value={String(editLesson.to_hour)} onChange={v=>setEditLesson(l=>({...l,to_hour:+v}))}
+                    items={HOURS.map(h=>({label:timeLbl(h),value:String(h)}))} placeholder="To" C={C}/>
+                </div>
+              </div>
+              <ML C={C}>MODE</ML>
+              <ModeRow online={editLesson.online} C={C} setOnline={v=>setEditLesson(l=>({...l,online:v}))}/>
+              <SaveBtn C={C} onClick={handleSaveEdit} loading={saving}>✓ SAVE CHANGES</SaveBtn>
+              <CancelBtn C={C} onClick={()=>setEditLesson(null)}>← BACK</CancelBtn>
+            </>
+          ):(
+            <>
+              <MTitle>⚙️ Manage Slots</MTitle>
+              <MSub C={C}>{lessons.length} lesson{lessons.length!==1?"s":""} scheduled</MSub>
+              {lessons.length===0&&<Empty C={C}>NO LESSONS YET</Empty>}
+              {lessons.map(l=>(
+                <div key={l.id} style={{background:subjBg(l.subject),borderRadius:14,
+                  padding:"12px 14px",marginBottom:10,display:"flex",
+                  alignItems:"center",justifyContent:"space-between"}}>
+                  <div>
+                    <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:14,color:"#111"}}>{l.subject}</div>
+                    <div style={{fontSize:11,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>
+                      {l.day} · {timeLbl(l.from_hour)}–{timeLbl(l.to_hour)}
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>setEditLesson({...l})} style={smBtn("#fff","#111","#ddd")}>EDIT</button>
+                    <button onClick={()=>handleDeleteLesson(l.id)} style={smBtn("#FEE2E2","#DC2626","transparent")}>DEL</button>
+                  </div>
+                </div>
+              ))}
+              <CancelBtn C={C} onClick={()=>setShowManage(false)}>CLOSE</CancelBtn>
+            </>
+          )}
+        </Modal>
+      )}
+
+      {/* TUTORS MODAL */}
+      {showTutors&&(
+        <Modal onClose={()=>setShowTutors(null)} C={C}>
+          <div style={{fontSize:10,fontWeight:800,letterSpacing:2,color:C.sub,
+            fontFamily:"'Barlow Condensed',sans-serif",marginBottom:4}}>SUBJECT</div>
+          <MTitle>{showTutors.subject}</MTitle>
+          <MSub C={C}>{showTutors.day} · {timeLbl(showTutors.from_hour)} – {timeLbl(showTutors.to_hour)} · {showTutors.online?"ONLINE":"OFFLINE"}</MSub>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,
+            letterSpacing:1.5,color:C.sub,marginBottom:12}}>AVAILABLE TUTORS</div>
+          {tutors.length===0&&<Empty C={C}>NO TUTORS REGISTERED YET</Empty>}
+          {tutors.map(tutor=>{
+            const key=`${tutor.id}-${showTutors.id}`;
+            const done=requested.has(key);
+            return(
+              <div key={tutor.id} style={{background:C.surfaceAlt,borderRadius:16,padding:"14px 16px",
+                marginBottom:10,border:`1px solid ${C.border}`,
+                display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
+                <div style={{flex:1}}>
+                  <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,color:C.text}}>{tutor.name}</div>
+                  <div style={{fontSize:12,color:C.sub,marginTop:2}}>{tutor.age&&`${tutor.age} yrs · `}{tutor.gender&&`${tutor.gender} · `}{tutor.location}</div>
+                  {tutor.hourly_rate&&<div style={{fontSize:14,fontWeight:800,color:"#22C55E",marginTop:4,
+                    fontFamily:"'Barlow Condensed',sans-serif"}}>KES {tutor.hourly_rate} / hr</div>}
+                </div>
+                <button onClick={()=>handleRequestTutor(tutor,showTutors)}
+                  style={{padding:"9px 16px",borderRadius:50,cursor:"pointer",whiteSpace:"nowrap",
+                    border:`1.5px solid ${done?"#22C55E":C.text}`,
+                    background:done?"#22C55E":C.accentBg,color:done?"#fff":C.accentText,
+                    fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1}}>
+                  {done?"✓ SENT":"REQUEST"}
+                </button>
+              </div>
+            );
+          })}
+          <CancelBtn C={C} onClick={()=>setShowTutors(null)}>CLOSE</CancelBtn>
+        </Modal>
+      )}
+    </Shell>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   TUTOR APP
+══════════════════════════════════════════════════════ */
+function TutorApp({user,onLogout}){
+  const [dm,setDm]=useState(false);
+  const C=dm?darkC():lightC();
+  const [tab,setTab]=useState("timetable");
+
+  /* requests & timetable */
+  const [requests,setRequests]=useState([]);
+  const [reqLoading,setReqLoading]=useState(true);
+  const [showManage,setShowManage]=useState(false);
+  const [showReq,setShowReq]=useState(null);
+  const [reqSaving,setReqSaving]=useState(false);
+
+  /* archive */
+  const [notes,setNotes]=useState([]);
+  const [notesLoading,setNotesLoading]=useState(true);
+  const [archFilter,setArchFilter]=useState("ALL");
+  const [archSearch,setArchSearch]=useState("");
+  const [interactions,setInteractions]=useState({});
+  const [showPublish,setShowPublish]=useState(false);
+  const [pubForm,setPubForm]=useState({title:"",subject:"",file:null,coverPreview:null,coverFile:null});
+  const [publishing,setPublishing]=useState(false);
+
+  /* profile */
+  const [profile,setProfile]=useState(user);
+  const [profEdit,setProfEdit]=useState(false);
+  const [editP,setEditP]=useState({...user});
+  const [profSaving,setProfSaving]=useState(false);
+  const pfpRef=useRef();
+  const pdfRef=useRef();
+  const coverRef=useRef();
+
+  /* ── fetch ── */
+  const fetchRequests=useCallback(async()=>{
+    setReqLoading(true);
+    try{
+      const data=await sb.get("tutor_requests",`?tutor_id=eq.${user.id}&order=created_at.desc`);
+      setRequests(data);
+    }catch(e){ console.error(e); }
+    finally{ setReqLoading(false); }
+  },[user.id]);
+
+  const fetchNotes=useCallback(async()=>{
+    setNotesLoading(true);
+    try{
+      const [n,ix]=await Promise.all([
+        sb.get("notes","?order=created_at.desc"),
+        sb.get("note_interactions",`?user_id=eq.${user.id}`),
+      ]);
+      setNotes(n);
+      const map={};
+      ix.forEach(i=>{ map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id}; });
+      setInteractions(map);
+    }catch(e){ console.error(e); }
+    finally{ setNotesLoading(false); }
+  },[user.id]);
+
+  useEffect(()=>{ fetchRequests(); },[fetchRequests]);
+  useEffect(()=>{ fetchNotes(); },[fetchNotes]);
+
+  /* ── accept / decline ── */
+  async function handleRespond(reqId,status){
+    if(reqSaving) return;
+    setReqSaving(true);
+    try{
+      await sb.patch("tutor_requests",`?id=eq.${reqId}`,{status});
+      setRequests(r=>r.map(x=>x.id===reqId?{...x,status}:x));
+      setShowReq(null);
+      if(status==="accepted") setShowManage(false);
+    }catch(e){ console.error(e); }
+    finally{ setReqSaving(false); }
+  }
+
+  async function handleCancelBooked(reqId){
+    try{
+      await sb.patch("tutor_requests",`?id=eq.${reqId}`,{status:"cancelled"});
+      setRequests(r=>r.map(x=>x.id===reqId?{...x,status:"cancelled"}:x));
+    }catch(e){ console.error(e); }
+  }
+
+  /* ── publish ── */
+  async function handlePublish(){
+    if(!pubForm.title||!pubForm.subject||publishing) return;
+    setPublishing(true);
+    try{
+      let pdfUrl=null, coverUrl=null;
+      const ts=Date.now();
+      if(pubForm.file){
+        try{ pdfUrl=await sb.uploadFile("notes-pdfs",`${user.id}/${ts}-${pubForm.file.name}`,pubForm.file); }
+        catch(e){ console.warn("PDF upload failed (bucket may not exist)",e); }
+      }
+      if(pubForm.coverFile){
+        try{ coverUrl=await sb.uploadFile("note-covers",`${user.id}/${ts}-cover`,pubForm.coverFile); }
+        catch(e){ console.warn("Cover upload failed (bucket may not exist)",e); }
+      }
+      const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
+      const [note]=await sb.post("notes",{
+        tutor_id:user.id,tutor_name:profile.name,
+        title:pubForm.title.toUpperCase(),subject:pubForm.subject,
+        pdf_url:pdfUrl,cover_url:coverUrl,cover_color:color,rating:0,
+      });
+      setNotes(n=>[{...note,cover_url:coverUrl||null},...n]);
+      setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null});
+      setShowPublish(false);
+    }catch(e){ console.error(e); }
+    finally{ setPublishing(false); }
+  }
+
+  /* ── interactions ── */
+  async function handleInteraction(noteId,field){
+    const cur=interactions[noteId]||{liked:false,saved:false};
+    const next={...cur,[field]:!cur[field]};
+    setInteractions(i=>({...i,[noteId]:next}));
+    try{
+      if(cur.id){
+        await sb.patch("note_interactions",`?id=eq.${cur.id}`,{[field]:next[field]});
+      }else{
+        const [row]=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});
+        setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));
+      }
+    }catch(e){ console.error(e); setInteractions(i=>({...i,[noteId]:cur})); }
+  }
+
+  /* ── save profile ── */
+  async function handleSaveProfile(){
+    setProfSaving(true);
+    try{
+      await sb.patch("profiles",`?id=eq.${user.id}`,{
+        name:editP.name,age:editP.age?+editP.age:null,gender:editP.gender,
+        location:editP.location,curriculum_level:editP.curriculum_level,
+        hourly_rate:editP.hourly_rate?+editP.hourly_rate:null,
+      });
+      setProfile({...profile,...editP});
+      setProfEdit(false);
+    }catch(e){ console.error(e); }
+    finally{ setProfSaving(false); }
+  }
+
+  const booked=requests.filter(r=>r.status==="accepted");
+  const pending=requests.filter(r=>r.status==="pending");
+  const getLessonsForDay=d=>booked.filter(l=>l.day===d).sort((a,b)=>a.from_hour-b.from_hour);
+
+  const filteredNotes=()=>{
+    let n=notes.map(note=>({...note,...(interactions[note.id]||{liked:false,saved:false})}));
+    if(archFilter==="FAVORITES") n=n.filter(x=>x.liked);
+    if(archFilter==="SAVED") n=n.filter(x=>x.saved);
+    if(archSearch) n=n.filter(x=>
+      x.title?.toLowerCase().includes(archSearch.toLowerCase())||
+      x.subject?.toLowerCase().includes(archSearch.toLowerCase()));
+    return n;
+  };
+
+  return(
+    <Shell C={C}>
+      {/* ── TIMETABLE ── */}
+      {tab==="timetable"&&<>
+        <AppHeader C={C}>
+          <PillBtn outline C={C} onClick={()=>setShowManage(true)}>MANAGE</PillBtn>
+        </AppHeader>
+        <Scroll>
+          {reqLoading?<Loading C={C}/>:
+            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} showStudent/>}
+        </Scroll>
+      </>}
+
+      {/* ── ARCHIVE ── */}
+      {tab==="archive"&&<>
+        <AppHeader C={C}>
+          <PillBtn C={C} onClick={()=>setShowPublish(true)}>
+            <span style={{fontSize:16}}>+</span> PUBLISH
+          </PillBtn>
+        </AppHeader>
+        <Scroll>
+          <ArchiveSearch value={archSearch} onChange={setArchSearch} C={C}/>
+          <FilterRow value={archFilter} onChange={setArchFilter} C={C}/>
+          {notesLoading?<Loading C={C}/>:
+            <NoteGrid notes={filteredNotes()} C={C}
+              onLike={id=>handleInteraction(id,"liked")}
+              onSave={id=>handleInteraction(id,"saved")}/>
+          }
+        </Scroll>
+      </>}
+
+      {/* ── IDENTITY ── */}
+      {tab==="identity"&&<>
+        <IdentityHeader C={C} dm={dm} setDm={setDm} onLogout={onLogout}/>
+        <Scroll>
+          <ProfileCard profile={profile} editP={editP} setEditP={setEditP}
+            editing={profEdit} pfpRef={pfpRef} C={C}/>
+          <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}}
+            onChange={e=>{const f=e.target.files[0];if(!f)return;
+              const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
+          <ConfigCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isTutor
+            onToggle={()=>{ if(profEdit)handleSaveProfile(); else{ setEditP({...profile}); setProfEdit(true); } }}
+            saving={profSaving}/>
+          <div style={{height:24}}/>
+        </Scroll>
+      </>}
+
+      <BottomNav tab={tab} setTab={setTab} C={C}/>
+
+      {/* MANAGE MODAL — booked sessions only, pending as compact tap-to-review */}
+      {showManage&&(
+        <Modal onClose={()=>{setShowManage(false);setShowReq(null);}} C={C}>
+          {showReq?(
+            <>
+              <MTitle>📩 Student Request</MTitle>
+              <MSub C={C}>Review and respond to this session request.</MSub>
+              {[
+                {label:"STUDENT",  value:showReq.student_name},
+                {label:"SUBJECT",  value:showReq.subject},
+                {label:"DAY",      value:DAY_FULL[DAYS.indexOf(showReq.day)]||showReq.day},
+                {label:"TIME",     value:`${timeLbl(showReq.from_hour)} – ${timeLbl(showReq.to_hour)}`},
+                {label:"MODE",     value:showReq.online?"Online":"Offline"},
+              ].map(row=>(
+                <div key={row.label} style={{display:"flex",justifyContent:"space-between",
+                  alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,
+                    fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
+                  <span style={{fontSize:14,fontWeight:700,color:C.text,
+                    fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
+                </div>
+              ))}
+              {showReq.description&&(
+                <div style={{marginTop:14,padding:"14px",borderRadius:12,
+                  background:C.surfaceAlt,border:`1px solid ${C.border}`}}>
+                  <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,
+                    fontFamily:"'Barlow Condensed',sans-serif",marginBottom:6}}>STUDENT'S NOTE</div>
+                  <div style={{fontSize:13,color:C.text,fontFamily:"'Barlow',sans-serif",
+                    lineHeight:1.6,fontStyle:"italic"}}>"{showReq.description}"</div>
+                </div>
+              )}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:16}}>
+                <button onClick={()=>handleRespond(showReq.id,"accepted")} style={acBtn("#22C55E")}>
+                  {reqSaving?"…":"✓ ACCEPT"}
+                </button>
+                <button onClick={()=>handleRespond(showReq.id,"declined")} style={acBtn("#EF4444")}>
+                  {reqSaving?"…":"✕ DECLINE"}
+                </button>
+              </div>
+              <CancelBtn C={C} onClick={()=>setShowReq(null)}>← BACK</CancelBtn>
+            </>
+          ):(
+            <>
+              <MTitle>⚙️ Manage Sessions</MTitle>
+              <MSub C={C}>{booked.length} booked session{booked.length!==1?"s":""}</MSub>
+
+              {/* Pending — compact notification strip only */}
+              {pending.length>0&&(
+                <div style={{background:C.surfaceAlt,borderRadius:14,padding:"12px 14px",
+                  marginBottom:16,border:`1px solid ${C.border}`}}>
+                  <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:"#F59E0B",
+                    fontFamily:"'Barlow Condensed',sans-serif",marginBottom:8}}>
+                    📬 {pending.length} PENDING REQUEST{pending.length!==1?"S":""}
+                  </div>
+                  {pending.map((r,i)=>(
+                    <div key={r.id} onClick={()=>setShowReq(r)}
+                      style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                        padding:"8px 0",borderBottom:i<pending.length-1?`1px solid ${C.border}`:"none",
+                        cursor:"pointer"}}>
+                      <div>
+                        <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,
+                          fontSize:13,color:C.text}}>{r.subject}</span>
+                        <span style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",
+                          fontWeight:700,marginLeft:8}}>{r.student_name}</span>
+                      </div>
+                      <span style={{color:C.sub,fontSize:16}}>›</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Booked sessions — the only truly manageable ones */}
+              {booked.length===0&&pending.length===0&&<Empty C={C}>NO SESSIONS YET</Empty>}
+              {booked.length===0&&pending.length>0&&<Empty C={C}>NO BOOKED SESSIONS YET</Empty>}
+              {booked.map(l=>(
+                <div key={l.id} style={{background:subjBg(l.subject),borderRadius:14,
+                  padding:"12px 14px",marginBottom:10,
+                  display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div>
+                    <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:14,color:"#111"}}>{l.subject}</div>
+                    <div style={{fontSize:11,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>
+                      {l.day} · {timeLbl(l.from_hour)}–{timeLbl(l.to_hour)} · {l.student_name}
+                    </div>
+                  </div>
+                  <button onClick={()=>handleCancelBooked(l.id)}
+                    style={smBtn("#FEE2E2","#DC2626","transparent")}>CANCEL</button>
+                </div>
+              ))}
+              <CancelBtn C={C} onClick={()=>setShowManage(false)}>CLOSE</CancelBtn>
+            </>
+          )}
+        </Modal>
+      )}
+
+      {/* PUBLISH MODAL */}
+      {showPublish&&(
+        <Modal onClose={()=>setShowPublish(false)} C={C}>
+          <MTitle>📤 Publish Material</MTitle>
+          <MSub C={C}>Share study resources with students.</MSub>
+
+          <ML C={C}>COVER IMAGE</ML>
+          <div onClick={()=>coverRef.current.click()} style={{height:140,borderRadius:14,
+            border:`2px dashed ${C.border}`,marginBottom:14,overflow:"hidden",cursor:"pointer",
+            background:pubForm.coverPreview?"transparent":C.surfaceAlt,
+            display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+            {pubForm.coverPreview
+              ?<img src={pubForm.coverPreview} alt="cover" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              :<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,color:C.sub}}>
+                <span style={{fontSize:28}}>🖼️</span>
+                <span style={{fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>TAP TO ADD COVER</span>
+              </div>
+            }
+            {pubForm.coverPreview&&(
+              <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,.5)",
+                borderRadius:8,padding:"4px 10px",fontSize:10,color:"#fff",
+                fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>CHANGE</div>
+            )}
+          </div>
+          <input type="file" accept="image/*" ref={coverRef} style={{display:"none"}}
+            onChange={e=>{const f=e.target.files[0];if(!f)return;
+              const r=new FileReader();r.onload=ev=>setPubForm(p=>({...p,coverPreview:ev.target.result,coverFile:f}));r.readAsDataURL(f);}}/>
+
+          <ML C={C}>TITLE</ML>
+          <input style={mi(C)} placeholder="e.g. Algebra Chapter 3"
+            value={pubForm.title} onChange={e=>setPubForm(f=>({...f,title:e.target.value}))}/>
+
+          <ML C={C}>SUBJECT</ML>
+          <Picker value={pubForm.subject} onChange={v=>setPubForm(f=>({...f,subject:v}))}
+            items={SUBJECTS} placeholder="Select Subject" C={C}/>
+
+          <ML C={C}>PDF FILE</ML>
+          <div onClick={()=>pdfRef.current.click()} style={{border:`2px dashed ${pubForm.file?"#22C55E":C.border}`,
+            borderRadius:14,padding:"18px",textAlign:"center",cursor:"pointer",marginBottom:14,
+            background:pubForm.file?"#F0FDF4":C.surfaceAlt,transition:"all .15s"}}>
+            {pubForm.file?(
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                <span style={{fontSize:24}}>📄</span>
+                <span style={{fontSize:12,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,
+                  letterSpacing:.5,color:"#15803d"}}>{pubForm.file.name}</span>
+                <span style={{fontSize:10,color:"#15803d",fontFamily:"'Barlow Condensed',sans-serif",
+                  fontWeight:700}}>TAP TO CHANGE</span>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,color:C.sub}}>
+                <span style={{fontSize:28}}>📎</span>
+                <span style={{fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",
+                  fontWeight:700,letterSpacing:1}}>TAP TO ATTACH PDF</span>
+              </div>
+            )}
+          </div>
+          <input type="file" accept=".pdf" ref={pdfRef} style={{display:"none"}}
+            onChange={e=>setPubForm(f=>({...f,file:e.target.files[0]}))}/>
+
+          <SaveBtn C={C} onClick={handlePublish} loading={publishing}>📤 PUBLISH</SaveBtn>
+          <CancelBtn C={C} onClick={()=>setShowPublish(false)}>CANCEL</CancelBtn>
+        </Modal>
+      )}
+    </Shell>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   SHARED COMPONENTS
+══════════════════════════════════════════════════════ */
+function Shell({C,children}){return(
+  <div style={{fontFamily:"'Barlow',sans-serif",background:C.bg,color:C.text,height:"100vh",
+    maxWidth:430,margin:"0 auto",display:"flex",flexDirection:"column",overflow:"hidden",
+    transition:"background .2s,color .2s",position:"relative"}}>{children}</div>
+);}
+function Scroll({children}){return(
+  <div style={{flex:1,overflowY:"auto",paddingBottom:72}}>{children}</div>
+);}
+function Logo({C,size}){return(
+  <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,
+    fontSize:size,letterSpacing:3,color:C.text,lineHeight:1}}>JRSH</div>
+);}
+function Heading({C,children}){return(
+  <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:28,
+    letterSpacing:2,textAlign:"center",marginBottom:24,color:C.text}}>{children}</div>
+);}
+function RoleMeta({role,onBack,C}){return(
+  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+    marginBottom:20,fontSize:12,color:C.sub}}>
+    <span style={{cursor:"pointer",textDecoration:"underline"}} onClick={onBack}>Change Role</span>
+    <span>•</span>
+    <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,
+      fontSize:12,letterSpacing:2,color:C.text}}>{role} MODE ACTIVE</span>
+  </div>
+);}
+function AppHeader({C,children}){return(
+  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+    padding:"18px 20px 14px",background:C.surface,borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+    <Logo C={C} size={26}/>
+    <div style={{display:"flex",gap:10,alignItems:"center"}}>{children}</div>
+  </div>
+);}
+function IdentityHeader({C,dm,setDm,onLogout}){return(
+  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+    padding:"14px 20px 10px",background:C.surface,borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+    <Logo C={C} size={24}/>
+    <div style={{display:"flex",gap:10}}>
+      <button onClick={()=>setDm(d=>!d)} style={iconBtnS(C)}>{dm?"☀️":"🌙"}</button>
+      <button onClick={onLogout} style={iconBtnS(C)}><span style={{fontSize:15,color:"#EF4444"}}>↪</span></button>
+    </div>
+  </div>
+);}
+function iconBtnS(C){return{width:40,height:40,borderRadius:12,border:`1.5px solid ${C.border}`,
+  background:C.surface,display:"flex",alignItems:"center",justifyContent:"center",
+  fontSize:18,cursor:"pointer"};}
+function PillBtn({C,children,onClick,outline}){return(
+  <button onClick={onClick} style={{padding:"9px 20px",borderRadius:50,cursor:"pointer",
+    fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,
+    letterSpacing:1.5,display:"flex",alignItems:"center",gap:6,
+    border:outline?`1.5px solid ${C.border}`:"none",
+    background:outline?"transparent":C.accentBg,
+    color:outline?C.text:C.accentText}}>{children}</button>
+);}
+function AvatarBubble({name,C}){return(
+  <div style={{width:36,height:36,borderRadius:"50%",background:C.accentBg,
+    display:"flex",alignItems:"center",justifyContent:"center",
+    color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:14}}>
+    {name?name[0].toUpperCase():"?"}
+  </div>
+);}
+function Loading({C}){return(
+  <div style={{display:"flex",alignItems:"center",justifyContent:"center",
+    padding:"48px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",
+    letterSpacing:1,fontWeight:700}}>LOADING…</div>
+);}
+function DayGrid({days,getLessons,C,onLessonTap,showStudent,isStudent}){return(
+  <div style={{background:C.surface,margin:"14px 14px 0",borderRadius:20,
+    overflow:"hidden",border:`1px solid ${C.border}`}}>
+    {days.map((day,idx)=>{
+      const dl=getLessons(day);
+      const isLast=idx===days.length-1;
+      return(
+        <div key={day} style={{display:"flex",borderBottom:isLast?"none":`1px solid ${C.border}`,minHeight:76}}>
+          <div style={{width:60,padding:"16px 0 16px 18px",flexShrink:0}}>
+            <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,
+              fontSize:12,letterSpacing:1.5,color:C.sub}}>{day}</span>
+          </div>
+          <div style={{flex:1,padding:"10px 12px 10px 8px",display:"flex",flexDirection:"column",gap:6}}>
+            {dl.length===0
+              ?<span style={{fontSize:11,color:C.border,letterSpacing:1,
+                  fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,paddingTop:4}}>NO PLANS</span>
+              :dl.map(l=>(
+                <div key={l.id} onClick={()=>onLessonTap&&onLessonTap(l)}
+                  style={{borderRadius:10,padding:"8px 12px",background:subjBg(l.subject),
+                    border:"1px solid rgba(0,0,0,.06)",cursor:onLessonTap?"pointer":"default",
+                    display:"flex",flexDirection:"column",gap:2}}>
+                  <div style={{fontSize:10,fontWeight:700,letterSpacing:.5,color:"#555",
+                    fontFamily:"'Barlow Condensed',sans-serif"}}>{timeLbl(l.from_hour)} – {timeLbl(l.to_hour)}</div>
+                  <div style={{fontSize:13,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",
+                    letterSpacing:.5,color:"#111"}}>{l.subject}</div>
+                  {showStudent&&l.student_name&&(
+                    <div style={{fontSize:11,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",
+                      fontWeight:700}}>👤 {l.student_name}</div>
+                  )}
+                  <span style={{fontSize:9,fontWeight:700,letterSpacing:1,padding:"2px 8px",
+                    borderRadius:20,display:"inline-block",marginTop:2,
+                    fontFamily:"'Barlow Condensed',sans-serif",
+                    background:l.online?"#DBEAFE":"#DCF5E4",color:l.online?"#1d4ed8":"#166634"}}>
+                    {l.online?"ONLINE":"OFFLINE"}
+                  </span>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      );
+    })}
+  </div>
+);}
+function ArchiveSearch({value,onChange,C}){return(
+  <div style={{margin:"14px 14px 10px",position:"relative"}}>
+    <span style={{position:"absolute",left:16,top:"50%",transform:"translateY(-50%)",fontSize:16,color:C.sub}}>🔍</span>
+    <input value={value} onChange={e=>onChange(e.target.value)} placeholder="Search collective database…"
+      style={{width:"100%",padding:"13px 16px 13px 44px",borderRadius:50,
+        border:`1.5px solid ${C.border}`,background:C.surface,color:C.text,
+        fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"'Barlow',sans-serif"}}/>
+  </div>
+);}
+function FilterRow({value,onChange,C}){return(
+  <div style={{display:"flex",margin:"0 14px 14px",background:C.surface,
+    borderRadius:50,padding:4,border:`1px solid ${C.border}`}}>
+    {["ALL","FAVORITES","SAVED"].map(f=>(
+      <button key={f} onClick={()=>onChange(f)} style={{flex:1,padding:"8px 0",borderRadius:50,
+        border:"none",cursor:"pointer",transition:"all .15s",
+        background:value===f?C.accentBg:"transparent",
+        color:value===f?C.accentText:C.sub,
+        fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1.5}}>
+        {f}
+      </button>
+    ))}
+  </div>
+);}
+function NoteGrid({notes,C,onLike,onSave}){return(
+  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,padding:"0 14px"}}>
+    {notes.length===0&&(
+      <div style={{gridColumn:"1/-1",textAlign:"center",padding:"32px 0",
+        color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+        NO MATERIALS YET
+      </div>
+    )}
+    {notes.map(note=>(
+      <div key={note.id} style={{background:C.surface,borderRadius:18,overflow:"hidden",border:`1px solid ${C.border}`}}>
+        <div style={{height:140,position:"relative",overflow:"hidden",background:note.cover_color||"#eee"}}>
+          {note.cover_url
+            ?<img src={note.cover_url} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}
+                onError={e=>{e.target.style.display="none";}}/>
+            :<div style={{width:"100%",height:"100%",background:note.cover_color||"#eee",
+                display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <span style={{fontSize:32,opacity:.35}}>📄</span>
+              </div>
+          }
+          {note.rating>0&&(
+            <div style={{position:"absolute",top:10,left:10,background:"rgba(255,255,255,.92)",
+              borderRadius:50,padding:"3px 10px",fontSize:12,fontWeight:800,
+              fontFamily:"'Barlow Condensed',sans-serif",color:"#111",
+              display:"flex",alignItems:"center",gap:3}}>{note.rating}★</div>
+          )}
+          <div style={{position:"absolute",bottom:10,right:10,display:"flex",gap:6}}>
+            {[{act:()=>onLike(note.id),on:note.liked,a:"❤️",b:"🤍"},
+              {act:()=>onSave(note.id),on:note.saved,a:"🔖",b:"🏷️"}].map((btn,i)=>(
+              <button key={i} onClick={btn.act} style={{width:34,height:34,borderRadius:"50%",
+                background:"rgba(255,255,255,.92)",border:"none",cursor:"pointer",
+                display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>
+                {btn.on?btn.a:btn.b}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{padding:"10px 12px 12px"}}>
+          <div style={{fontSize:9,fontWeight:800,letterSpacing:1.5,color:C.sub,
+            fontFamily:"'Barlow Condensed',sans-serif",marginBottom:4,display:"inline-block",
+            border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px"}}>
+            {note.subject?.toUpperCase()}
+          </div>
+          <div style={{fontSize:12,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",
+            letterSpacing:.3,lineHeight:1.25,color:C.text,marginBottom:4}}>{note.title}</div>
+          <div style={{fontSize:10,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",
+            fontWeight:700,letterSpacing:.3}}>TUTOR: {note.tutor_name?.toUpperCase()}</div>
+          <div style={{fontSize:9,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",
+            fontWeight:700,marginTop:4}}>{agoLabel(note.created_at)}</div>
+        </div>
+      </div>
+    ))}
+  </div>
+);}
+function ProfileCard({profile,editP,setEditP,editing,pfpRef,C}){
+  const src=editP.pfp_local||profile.pfp_url||null;
+  return(
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:24,
+      margin:"0 14px 16px",padding:"28px 20px 20px",
+      display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
+      <div onClick={()=>editing&&pfpRef.current.click()}
+        style={{width:96,height:96,borderRadius:"50%",background:C.surfaceAlt,
+          border:`2px solid ${C.border}`,overflow:"hidden",
+          display:"flex",alignItems:"center",justifyContent:"center",
+          position:"relative",cursor:editing?"pointer":"default"}}>
+        {src?<img src={src} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="pfp"/>
+            :<span style={{fontSize:40}}>👤</span>}
+        <div style={{position:"absolute",bottom:0,right:0,width:28,height:28,borderRadius:"50%",
+          background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>📷</div>
+      </div>
+      <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,
+        fontSize:24,letterSpacing:2,color:C.text,textAlign:"center"}}>{profile.name||"YOUR NAME"}</div>
+      <div style={{fontSize:12,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>
+        {[profile.age&&`${profile.age} YRS`,profile.grade||profile.curriculum_level].filter(Boolean).join(" • ")||"—"}
+      </div>
+    </div>
+  );
+}
+function ConfigCard({C,editP,setEditP,editing,profile,onToggle,isStudent,isTutor,saving}){
+  const sFields=[
+    {label:"CALLSIGN",key:"name",       icon:"👤",type:"text",  ph:"Full Name"},
+    {label:"ZONE",    key:"location",   icon:"📍",type:"text",  ph:"City, Region"},
+    {label:"AGE",     key:"age",        icon:"🎂",type:"number",ph:"Years"},
+    {label:"GENDER",  key:"gender",     icon:"⚧", items:GENDERS},
+    {label:"ACADEMIC GRADE",key:"grade",icon:"🎓",items:STUDENT_GRADES},
+  ];
+  const tFields=[
+    {label:"CALLSIGN",key:"name",              icon:"👤",type:"text",  ph:"Full Name"},
+    {label:"ZONE",    key:"location",          icon:"📍",type:"text",  ph:"City, Region"},
+    {label:"AGE",     key:"age",               icon:"🎂",type:"number",ph:"Years"},
+    {label:"GENDER",  key:"gender",            icon:"⚧", items:GENDERS},
+    {label:"CURRICULUM SPECIALIZATION",key:"curriculum_level",icon:"🎓",items:LEVELS},
+    {label:"HOURLY RATE (KES)",key:"hourly_rate",icon:"💰",type:"number",ph:"e.g. 800"},
+  ];
+  const fields=isTutor?tFields:sFields;
+  return(
+    <div style={{background:C.surface,borderRadius:20,margin:"0 14px",padding:"20px 18px",border:`1px solid ${C.border}`}}>
+      <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:18,
+        letterSpacing:2,textAlign:"center",color:C.text,marginBottom:2}}>CONFIGURATION</div>
+      <div style={{fontSize:10,color:C.sub,textAlign:"center",letterSpacing:1.5,
+        fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
+        marginBottom:20,textTransform:"uppercase"}}>ADJUST YOUR IDENTITY DETAILS.</div>
+      {fields.map(f=>(
+        <div key={f.key} style={{marginBottom:16}}>
+          <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,
+            fontFamily:"'Barlow Condensed',sans-serif",marginBottom:8,
+            display:"flex",alignItems:"center",gap:6,textTransform:"uppercase"}}>
+            {f.icon} {f.label}
+          </div>
+          {editing
+            ?f.items
+              ?<Picker value={editP[f.key]||""} onChange={v=>setEditP(p=>({...p,[f.key]:v}))}
+                  items={f.items} placeholder="Choose…" C={C}/>
+              :<input type={f.type} placeholder={f.ph} value={editP[f.key]||""}
+                  onChange={e=>setEditP(p=>({...p,[f.key]:e.target.value}))}
+                  style={{width:"100%",background:"transparent",border:"none",
+                    borderBottom:`1px solid ${C.text}`,padding:"8px 0",
+                    fontSize:15,color:C.text,fontFamily:"'Barlow',sans-serif",outline:"none"}}/>
+            :<div style={{borderBottom:`1px solid ${C.border}`,padding:"8px 0",fontSize:15,
+                color:C.text,fontFamily:"'Barlow',sans-serif",display:"flex",alignItems:"center",gap:10}}>
+                <span style={{color:C.sub,fontSize:14}}>{f.icon}</span>
+                <span>{profile[f.key]||"—"}</span>
+              </div>
+          }
+        </div>
+      ))}
+      <button onClick={onToggle} style={{width:"100%",padding:"15px",borderRadius:50,border:"none",
+        background:C.accentBg,color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",
+        fontWeight:800,fontSize:14,letterSpacing:2,cursor:"pointer",
+        display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:16}}>
+        {saving?"SAVING…":editing?"✓  SAVE IDENTITY":"✏  EDIT IDENTITY"}
+      </button>
+    </div>
+  );
+}
+function BottomNav({tab,setTab,C}){
+  const tabs=[
+    {id:"timetable",label:"TIMETABLE",icon:<CalIcon/>},
+    {id:"archive",  label:"ARCHIVE",  icon:<BookIcon/>},
+    {id:"identity", label:"IDENTITY", icon:<UserIcon/>},
+  ];
+  return(
+    <div style={{position:"absolute",bottom:0,left:0,right:0,background:C.surface,
+      borderTop:`1px solid ${C.border}`,borderRadius:"20px 20px 0 0",
+      display:"flex",padding:"6px 0 10px",flexShrink:0}}>
+      {tabs.map(n=>(
+        <button key={n.id} onClick={()=>setTab(n.id)} style={{flex:1,border:"none",
+          background:"transparent",cursor:"pointer",display:"flex",flexDirection:"column",
+          alignItems:"center",gap:4,padding:"8px 0",color:tab===n.id?C.text:C.sub,
+          fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,
+          fontSize:10,letterSpacing:1.5,transition:"color .15s"}}>
+          {n.icon}{n.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+function Modal({children,onClose,C}){return(
+  <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,
+    display:"flex",alignItems:"flex-end",justifyContent:"center"}}
+    onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",
+      maxWidth:430,padding:"24px 22px 36px",maxHeight:"88vh",overflowY:"auto"}}>
+      {children}
+    </div>
+  </div>
+);}
+function MTitle({children}){return(
+  <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,
+    letterSpacing:1,marginBottom:4,display:"flex",alignItems:"center",gap:8}}>{children}</div>
+);}
+function MSub({children,C}){return <div style={{fontSize:13,color:C.sub,marginBottom:20}}>{children}</div>;}
+function ML({children,C}){return(
+  <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,marginBottom:6,
+    textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif"}}>{children}</div>
+);}
+function SaveBtn({C,children,onClick,loading}){return(
+  <button onClick={onClick} disabled={loading} style={{width:"100%",padding:"15px",borderRadius:50,border:"none",
+    background:C.accentBg,color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",
+    fontWeight:800,fontSize:14,letterSpacing:2,cursor:loading?"not-allowed":"pointer",opacity:loading?.7:1,
+    display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:4}}>
+    {loading?"SAVING…":children}
+  </button>
+);}
+function CancelBtn({C,children,onClick}){return(
+  <button onClick={onClick} style={{width:"100%",padding:"14px",borderRadius:50,
+    border:`1.5px solid ${C.border}`,background:"transparent",color:C.text,
+    fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,
+    letterSpacing:1,cursor:"pointer",marginTop:10}}>{children}</button>
+);}
+function ModeRow({online,setOnline,C}){return(
+  <div style={{display:"flex",gap:10,marginBottom:14}}>
+    {[["📍 OFFLINE",false],["🌐 ONLINE",true]].map(([lbl,val])=>(
+      <button key={lbl} onClick={()=>setOnline(val)} style={{flex:1,padding:"11px",borderRadius:12,
+        border:`1.5px solid ${online===val?C.text:C.border}`,
+        background:online===val?C.accentBg:"transparent",
+        color:online===val?C.accentText:C.text,
+        fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,
+        letterSpacing:1,cursor:"pointer"}}>{lbl}</button>
+    ))}
+  </div>
+);}
+function Empty({children,C}){return(
+  <div style={{textAlign:"center",padding:"24px 0",color:C.sub,
+    fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{children}</div>
+);}
+function FL({children}){return(
+  <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:"#888",marginBottom:6,
+    textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif",marginTop:4}}>{children}</div>
+);}
+function FI({C,placeholder,value,onChange,type="text"}){return(
+  <input type={type} placeholder={placeholder} value={value} onChange={onChange}
+    style={{width:"100%",padding:"13px 16px",borderRadius:14,border:`1.5px solid ${C.border}`,
+      background:C.surfaceAlt,color:C.text,fontSize:14,outline:"none",
+      boxSizing:"border-box",fontFamily:"'Barlow',sans-serif",marginBottom:14}}/>
+);}
+function JoinBtn({onClick,disabled,loading}){return(
+  <button onClick={onClick} disabled={disabled} style={{width:"100%",padding:"16px",borderRadius:50,
+    border:"none",background:disabled?"#AAAAAA":"#111",color:"#fff",
+    fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:15,
+    letterSpacing:2,cursor:disabled?"not-allowed":"pointer",
+    display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginTop:8}}>
+    {loading?"JOINING…":"JOIN NETWORK"} {!loading&&<span style={{fontSize:16}}>→</span>}
+  </button>
+);}
+function mi(C){return{width:"100%",padding:"13px 16px",borderRadius:14,
+  border:`1.5px solid ${C.border}`,background:C.surfaceAlt,color:C.text,fontSize:14,
+  outline:"none",boxSizing:"border-box",marginBottom:14,fontFamily:"'Barlow',sans-serif"};}
+function smBtn(bg,color,border){return{background:bg,border:`1px solid ${border}`,borderRadius:8,
+  padding:"6px 12px",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",
+  fontWeight:800,fontSize:11,letterSpacing:1,color};}
+function acBtn(bg){return{flex:1,padding:"15px",borderRadius:50,border:"none",
+  background:bg,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",
+  fontWeight:800,fontSize:14,letterSpacing:2,cursor:"pointer",
+  display:"flex",alignItems:"center",justifyContent:"center",gap:8};}
+function roleBtnStyle(C,active){return{background:active?C.surface:C.surfaceAlt,
+  border:`1.5px solid ${active?"#111":C.border}`,borderRadius:18,padding:"28px 12px",
+  cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,
+  transition:"all .15s",fontFamily:"inherit"};}
+
+/* ── SVG ICONS ── */
+function GradCapIcon({color="#888"}){return(
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 10l-10-7L2 10l10 7 10-7z"/><path d="M6 12v5c3.33 2 8.67 2 12 0v-5"/>
+  </svg>
+);}
+function PersonCircleIcon({color="#111"}){return(
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round">
+    <circle cx="12" cy="12" r="10"/><circle cx="12" cy="8" r="3"/>
+    <path d="M6.168 18.849A4 4 0 0 1 10 16h4a4 4 0 0 1 3.834 2.855"/>
+  </svg>
+);}
+function CalIcon(){return(
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+    <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+    <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+  </svg>
+);}
+function BookIcon(){return(
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+  </svg>
+);}
+function UserIcon(){return(
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+  </svg>
+);}
