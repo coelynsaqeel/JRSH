@@ -102,8 +102,8 @@ const SAMPLE_LESSONS_STUDENT=[
   {id:"sl1",student_id:"sample-s1",subject:"Mathematics",day:"MON",from_hour:8,to_hour:9,description:"Need help with quadratic equations.",online:true,start_ts:SAMPLE_START_TS,_accepted:true,_tutorName:"Dr. Jane Mwangi"},
 ];
 const SAMPLE_LESSONS_TUTOR=[
-  {id:"sl1",tutor_id:"sample-t1",student_id:"sample-s1",student_name:"Amara Wanjiku",subject:"Mathematics",day:"MON",from_hour:8,to_hour:9,description:"Need help with quadratic equations.",online:true,start_ts:SAMPLE_START_TS,status:"accepted"},
-  {id:"sl2",tutor_id:"sample-t1",student_id:"sample-s2",student_name:"Kofi Mensah",subject:"Biology",day:"WED",from_hour:14,to_hour:15,description:"Help with cell biology chapter.",online:false,start_ts:null,status:"pending"},
+  {id:"sl1",tutor_id:"sample-t1",student_id:"sample-s1",student_name:"Amara Wanjiku",student_age:17,student_gender:"Female",student_location:"Nairobi, Westlands",student_grade:"Grade 10",subject:"Mathematics",day:"MON",from_hour:8,to_hour:9,description:"Need help with quadratic equations.",online:true,start_ts:SAMPLE_START_TS,status:"accepted"},
+  {id:"sl2",tutor_id:"sample-t1",student_id:"sample-s2",student_name:"Kofi Mensah",student_age:16,student_gender:"Male",student_location:"Nairobi, South B",student_grade:"Grade 9",subject:"Biology",day:"WED",from_hour:14,to_hour:15,description:"Help with cell biology chapter.",online:false,start_ts:null,status:"pending"},
 ];
 const SAMPLE_TUTORS=[
   {id:"sample-t1",name:"Dr. Jane Mwangi",age:34,gender:"Female",location:"Nairobi, Karen",role:"tutor",curriculum_level:"Senior Secondary",hourly_rate_online:900,hourly_rate_offline:700,subjects_taught:["Mathematics","Chemistry","Physics"]},
@@ -117,7 +117,7 @@ const SAMPLE_NOTES=[
 ];
 
 /* ══ HELPERS ══ */
-function timeLbl(h){if(h===12)return"12:00";return h>12?String(h-12).padStart(2,"0")+":00":String(h).padStart(2,"0")+":00";}
+function timeLbl(h){const hh=Math.floor(h),mm=Math.round((h-hh)*60);const period=hh>=12?"PM":"AM";const h12=hh%12||12;return String(h12).padStart(2,"0")+":"+String(mm).padStart(2,"0")+" "+period;}
 function subjBg(s){const p=["#F0F4FF","#FFF0F6","#F0FFF4","#FFFBF0","#F5F0FF","#FFF5F0","#F0FFFE","#FFF0F0"];let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))&0xffff;return p[h%p.length];}
 function agoLabel(ts){const diff=Date.now()-new Date(ts).getTime();const m=Math.floor(diff/60000),hr=Math.floor(m/60),d=Math.floor(hr/24),w=Math.floor(d/7);if(w>0)return w+"W AGO";if(d>0)return d+"D AGO";if(hr>0)return hr+"H AGO";return"JUST NOW";}
 const lC=()=>({bg:"#F5F5F5",surface:"#FFFFFF",surfaceAlt:"#F2F2F2",border:"#EBEBEB",text:"#111111",sub:"#888888",accentBg:"#111111",accentText:"#FFFFFF"});
@@ -326,9 +326,9 @@ function WelcomeScreen({onSelect}){
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M22 10l-10-7L2 10l10 7 10-7z"/><path d="M6 12v5c3.33 2 8.67 2 12 0v-5"/></svg>
               <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:12,letterSpacing:2,color:"#888"}}>STUDENT</span>
             </button>
-            <button onClick={()=>onSelect("tutor")} style={{background:C.surface,border:"2px solid #111",borderRadius:18,padding:"24px 12px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:8,fontFamily:"inherit"}}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#111" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="8" r="3"/><path d="M6.168 18.849A4 4 0 0 1 10 16h4a4 4 0 0 1 3.834 2.855"/></svg>
-              <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:2,color:"#111"}}>TUTOR</span>
+            <button onClick={()=>onSelect("tutor")} style={{background:C.surfaceAlt,border:"1.5px solid "+C.border,borderRadius:18,padding:"24px 12px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:8,fontFamily:"inherit"}}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="8" r="3"/><path d="M6.168 18.849A4 4 0 0 1 10 16h4a4 4 0 0 1 3.834 2.855"/></svg>
+              <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:12,letterSpacing:2,color:"#888"}}>TUTOR</span>
             </button>
           </div>
         </div>
@@ -542,10 +542,8 @@ function StudentApp({user,onLogout}){
   async function handleRequestTutor(tutor,lesson){
     const key=tutor.id+"-"+lesson.id;
     if(requested.has(key))return;
-    try{
-      if(!isSample)await sb.post("tutor_requests",{lesson_id:lesson.id,student_id:user.id,tutor_id:tutor.id,subject:lesson.subject,day:lesson.day,from_hour:lesson.from_hour,to_hour:lesson.to_hour,online:lesson.online,description:lesson.description,student_name:user.name,status:"pending"});
-      setRequested(s=>new Set([...s,key]));
-    }catch(e){}
+    setRequested(s=>new Set([...s,key]));
+    if(!isSample){try{await sb.post("tutor_requests",{lesson_id:lesson.id,student_id:user.id,tutor_id:tutor.id,subject:lesson.subject,day:lesson.day,from_hour:lesson.from_hour,to_hour:lesson.to_hour,online:lesson.online,description:lesson.description,student_name:user.name,status:"pending"});}catch(e){}}
   }
 
   async function handleInteraction(noteId,field){
@@ -622,7 +620,7 @@ function StudentApp({user,onLogout}){
       </>}
 
       {tab==="archive"&&<>
-        <Hdr C={C} dm={dm}><AvaBubble name={profile.name} C={C}/></Hdr>
+        <Hdr C={C} dm={dm}/>
         <Scroll>
           <ArchSearch value={archSearch} onChange={setArchSearch} C={C}/>
           <FilterRow value={archFilter} onChange={setArchFilter} C={C}/>
@@ -631,7 +629,7 @@ function StudentApp({user,onLogout}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm} onLogout={onLogout}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
@@ -647,9 +645,9 @@ function StudentApp({user,onLogout}){
         <MT>📅 New Session</MT><MS C={C}>Configure the slot.</MS>
         <ML C={C}>SUBJECT</ML><Picker value={addForm.subject} onChange={v=>setAddForm(f=>({...f,subject:v}))} items={SUBJECTS} placeholder="Select Subject" C={C}/>
         <ML C={C}>DAY</ML><Picker value={addForm.day} onChange={v=>setAddForm(f=>({...f,day:v}))} items={DAYS.map((d,i)=>({label:d+" – "+DAY_FULL[i],value:d}))} placeholder="Select Day" C={C}/>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-          <div><ML C={C}>FROM</ML><Picker value={String(addForm.from)} onChange={v=>setAddForm(f=>({...f,from:+v}))} items={HOURS.map(h=>({label:timeLbl(h),value:String(h)}))} placeholder="From" C={C}/></div>
-          <div><ML C={C}>TO</ML><Picker value={String(addForm.to)} onChange={v=>setAddForm(f=>({...f,to:+v}))} items={HOURS.map(h=>({label:timeLbl(h),value:String(h)}))} placeholder="To" C={C}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+          <TimePicker label="FROM" value={addForm.from} onChange={v=>setAddForm(f=>({...f,from:v}))} C={C}/>
+          <TimePicker label="TO" value={addForm.to} onChange={v=>setAddForm(f=>({...f,to:v}))} C={C}/>
         </div>
         <ML C={C}>NOTE FOR TUTOR</ML>
         <input style={miSty(C)} placeholder="Brief note…" value={addForm.desc} onChange={e=>setAddForm(f=>({...f,desc:e.target.value}))}/>
@@ -665,9 +663,9 @@ function StudentApp({user,onLogout}){
             <MT>✏️ Edit Session</MT><MS C={C}>Modify details.</MS>
             <ML C={C}>SUBJECT</ML><Picker value={editLesson.subject} onChange={v=>setEditLesson(l=>({...l,subject:v}))} items={SUBJECTS} placeholder="Select" C={C}/>
             <ML C={C}>DAY</ML><Picker value={editLesson.day} onChange={v=>setEditLesson(l=>({...l,day:v}))} items={DAYS.map((d,i)=>({label:d+" – "+DAY_FULL[i],value:d}))} placeholder="Day" C={C}/>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              <div><ML C={C}>FROM</ML><Picker value={String(editLesson.from_hour)} onChange={v=>setEditLesson(l=>({...l,from_hour:+v}))} items={HOURS.map(h=>({label:timeLbl(h),value:String(h)}))} placeholder="From" C={C}/></div>
-              <div><ML C={C}>TO</ML><Picker value={String(editLesson.to_hour)} onChange={v=>setEditLesson(l=>({...l,to_hour:+v}))} items={HOURS.map(h=>({label:timeLbl(h),value:String(h)}))} placeholder="To" C={C}/></div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              <TimePicker label="FROM" value={editLesson.from_hour} onChange={v=>setEditLesson(l=>({...l,from_hour:v}))} C={C}/>
+              <TimePicker label="TO" value={editLesson.to_hour} onChange={v=>setEditLesson(l=>({...l,to_hour:v}))} C={C}/>
             </div>
             <ML C={C}>MODE</ML><ModeRow online={editLesson.online} C={C} setOnline={v=>setEditLesson(l=>({...l,online:v}))}/>
             <SvBtn C={C} onClick={handleSaveEdit} loading={saving}>✓ SAVE</SvBtn>
@@ -922,7 +920,7 @@ function TutorApp({user,onLogout}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)} onLogout={onLogout}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
@@ -1021,7 +1019,7 @@ function TutorApp({user,onLogout}){
 function Shell({C,children}){return <div style={{fontFamily:"Barlow,sans-serif",background:C.bg,color:C.text,height:"100vh",maxWidth:430,margin:"0 auto",display:"flex",flexDirection:"column",overflow:"hidden",position:"relative"}}>{children}</div>;}
 function Scroll({children}){return <div style={{flex:1,overflowY:"auto",paddingBottom:72}}>{children}</div>;}
 function Hdr({C,dm,children}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{children}</div></div>);}
-function IdentHdr({C,dm,setDm,onWallet}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{onWallet&&<button onClick={onWallet} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:"#111",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>💰</button>}<button onClick={()=>setDm(d=>!d)} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:C.surface,fontSize:16,cursor:"pointer"}}>{dm?"☀️":"🌙"}</button></div></div>);}
+function IdentHdr({C,dm,setDm,onWallet,onLogout}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{onWallet&&<button onClick={onWallet} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:"#111",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>💰</button>}<button onClick={()=>setDm(d=>!d)} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:C.surface,fontSize:16,cursor:"pointer"}}>{dm?"☀️":"🌙"}</button>{onLogout&&<button onClick={onLogout} style={{width:36,height:36,borderRadius:10,border:"1.5px solid #EF4444",background:"transparent",fontSize:15,cursor:"pointer",color:"#EF4444",display:"flex",alignItems:"center",justifyContent:"center"}}>↪</button>}</div></div>);}
 function PBtn({C,children,onClick,outline}){return <button onClick={onClick} style={{padding:"9px 20px",borderRadius:50,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1.5,display:"flex",alignItems:"center",gap:6,border:outline?"1.5px solid "+C.border:"none",background:outline?"transparent":C.accentBg,color:outline?C.text:C.accentText}}>{children}</button>;}
 function AvaBubble({name,C}){return <div style={{width:36,height:36,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:14}}>{name?name[0].toUpperCase():"?"}</div>;}
 function Ldg({C}){return <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}>LOADING…</div>;}
@@ -1076,7 +1074,11 @@ function StudentProfileModal({lesson,C,onClose}){
           {label:"DAY",value:lesson.day},
           {label:"SUBJECT",value:lesson.subject},
           {label:"STATUS",value:(lesson.status||"").toUpperCase()},
-        ].map(row=>(
+          lesson.student_age&&{label:"AGE",value:lesson.student_age+" yrs"},
+          lesson.student_gender&&{label:"GENDER",value:lesson.student_gender},
+          lesson.student_location&&{label:"LOCATION",value:lesson.student_location},
+          (lesson.student_grade||lesson.student_level)&&{label:"LEVEL",value:lesson.student_grade||lesson.student_level},
+        ].filter(Boolean).map(row=>(
           <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid "+C.border}}>
             <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
             <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
@@ -1159,9 +1161,7 @@ function ConfCard({C,editP,setEditP,editing,profile,onToggle,isStudent,isTutor,s
       {!editing&&isTutor&&onWallet&&<button onClick={onWallet} style={{width:"100%",padding:"14px",borderRadius:50,border:"none",background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:2,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:10}}>
         💰 WALLET
       </button>}
-      {!editing&&<button onClick={onLogout} style={{width:"100%",padding:"14px",borderRadius:50,border:"1.5px solid #EF4444",background:"transparent",color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:2,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:10}}>
-        ↪ SIGN OUT
-      </button>}
+
     </div>
   );
 }
@@ -1236,6 +1236,53 @@ function MS({children,C}){return <div style={{fontSize:13,color:C.sub,marginBott
 function ML({children,C}){return <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,marginBottom:6,textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif"}}>{children}</div>;}
 function SvBtn({C,children,onClick,loading}){return <button onClick={onClick} disabled={loading} style={{width:"100%",padding:"15px",borderRadius:50,border:"none",background:C.accentBg,color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,letterSpacing:2,cursor:loading?"not-allowed":"pointer",opacity:loading?.7:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:4}}>{loading?"SAVING…":children}</button>;}
 function CnBtn({C,children,onClick}){return <button onClick={onClick} style={{width:"100%",padding:"14px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,letterSpacing:1,cursor:"pointer",marginTop:10}}>{children}</button>;}
+function TimePicker({value,onChange,label,C}){
+  // value is decimal hours e.g. 8.5 = 8:30
+  const totalMins=Math.round(value*60);
+  const hVal=Math.floor(totalMins/60);
+  const mVal=totalMins%60;
+  const period=hVal>=12?"PM":"AM";
+  const h12=hVal%12||12;
+  function setH12(v){
+    let h=parseInt(v)||12;
+    if(h<1)h=1;if(h>12)h=12;
+    const h24=period==="PM"?(h===12?12:h+12):(h===12?0:h);
+    onChange((h24*60+mVal)/60);
+  }
+  function setMin(v){
+    let m=parseInt(v);
+    if(isNaN(m))m=0;
+    if(m<0)m=0;if(m>59)m=59;
+    onChange((hVal*60+m)/60);
+  }
+  function togglePeriod(){
+    const newH=period==="AM"?hVal+12:hVal-12;
+    onChange((newH*60+mVal)/60);
+  }
+  return(
+    <div>
+      {label&&<div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,marginBottom:6,textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif"}}>{label}</div>}
+      <div style={{display:"flex",alignItems:"center",gap:4,background:C.surfaceAlt,borderRadius:12,border:"1.5px solid "+C.border,padding:"8px 10px"}}>
+        <input
+          type="number" min="1" max="12"
+          value={h12}
+          onChange={e=>setH12(e.target.value)}
+          style={{width:36,background:"transparent",border:"none",outline:"none",fontSize:22,fontWeight:900,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",textAlign:"center",padding:0}}
+        />
+        <span style={{fontSize:20,fontWeight:900,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:2}}>:</span>
+        <input
+          type="number" min="0" max="59"
+          value={String(mVal).padStart(2,"0")}
+          onChange={e=>setMin(e.target.value)}
+          style={{width:36,background:"transparent",border:"none",outline:"none",fontSize:22,fontWeight:900,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",textAlign:"center",padding:0}}
+        />
+        <button onClick={togglePeriod} style={{marginLeft:4,padding:"4px 10px",borderRadius:8,border:"1.5px solid "+C.border,background:C.surface,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:"pointer",letterSpacing:1}}>
+          {period}
+        </button>
+      </div>
+    </div>
+  );
+}
 function ModeRow({online,setOnline,C}){return(<div style={{display:"flex",gap:10,marginBottom:14}}>{[["📍 OFFLINE",false],["🌐 ONLINE",true]].map(([lbl,val])=><button key={lbl} onClick={()=>setOnline(val)} style={{flex:1,padding:"11px",borderRadius:12,border:"1.5px solid "+(online===val?C.text:C.border),background:online===val?C.accentBg:"transparent",color:online===val?C.accentText:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:"pointer"}}>{lbl}</button>)}</div>);}
 function FL({children}){return <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:"#888",marginBottom:6,textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif",marginTop:4}}>{children}</div>;}
 function FI({C,placeholder,value,onChange,type="text"}){return <input type={type} placeholder={placeholder} value={value} onChange={onChange} style={{width:"100%",padding:"13px 16px",borderRadius:14,border:"1.5px solid "+C.border,background:C.surfaceAlt,color:C.text,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"Barlow,sans-serif",marginBottom:14}}/>;}
