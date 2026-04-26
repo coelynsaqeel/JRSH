@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>JRSH</title>
     <link rel="apple-touch-icon" href="data:image/png;base64,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"/>
   <meta name="theme-color" content="#000000"/>
@@ -82,11 +82,9 @@ const DAY_FULL=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","S
 const HOURS=Array.from({length:15},(_,i)=>i+6);
 const STUDENT_GRADES=["PP1","PP2","Grade 1","Grade 2","Grade 3","Grade 4","Grade 5","Grade 6","Grade 7","Grade 8","Grade 9","Grade 10","Grade 11","Grade 12"];
 const LEVELS=[
-  {label:"Pre-Primary → PP1 & PP2",value:"Pre-Primary",grades:["PP1","PP2"]},
-  {label:"Lower Primary → Grade 1, 2, 3",value:"Lower Primary",grades:["Grade 1","Grade 2","Grade 3"]},
-  {label:"Upper Primary → Grade 4, 5, 6",value:"Upper Primary",grades:["Grade 4","Grade 5","Grade 6"]},
-  {label:"Junior Secondary → Grade 7, 8, 9",value:"Junior Secondary",grades:["Grade 7","Grade 8","Grade 9"]},
-  {label:"Senior Secondary → Grade 10, 11, 12",value:"Senior Secondary",grades:["Grade 10","Grade 11","Grade 12"]},
+  {label:"Early Years Education: PP1 – Grade 3",value:"Early Years",grades:["PP1","PP2","Grade 1","Grade 2","Grade 3"]},
+  {label:"Middle School: Grade 4 – Grade 9",value:"Middle School",grades:["Grade 4","Grade 5","Grade 6","Grade 7","Grade 8","Grade 9"]},
+  {label:"Senior School: Grade 10 – Grade 12",value:"Senior School",grades:["Grade 10","Grade 11","Grade 12"]},
 ];
 const COVER_COLORS=["#c8e6c9","#b0bec5","#ffe0b2","#bbdefb","#f8bbd0","#d1c4e9","#ffe082","#b2dfdb"];
 
@@ -99,8 +97,8 @@ function gradeToLevel(grade){
 // Sample lesson: accepted, starts 2 minutes from now
 const SAMPLE_START_TS=Date.now()+(2*60*1000); // 2 minutes from page load
 const SAMPLE_LESSONS_STUDENT=[
-  {id:"sl1",student_id:"sample-s1",subject:"Mathematics",day:"MON",from_hour:8,to_hour:9,description:"Need help with quadratic equations.",online:true,start_ts:SAMPLE_START_TS,_accepted:true,_tutorName:"Dr. Jane Mwangi"},
-  {id:"sl3",student_id:"sample-s1",subject:"Biology",day:"WED",from_hour:14,to_hour:15,description:"Help with cell biology chapter.",online:false,start_ts:Date.now()+7200000,_accepted:true,_tutorName:"Mr. Samuel Otieno"},
+  {id:"sl1",student_id:"sample-s1",subject:"Mathematics",day:"MON",from_hour:8,to_hour:9,description:"Need help with quadratic equations.",online:true,start_ts:SAMPLE_START_TS,_accepted:true,_tutorName:"Dr. Jane Mwangi",_tutorObj:{id:"sample-t1",name:"Dr. Jane Mwangi",age:34,gender:"Female",location:"Nairobi, Karen",curriculum_level:"Senior School",hourly_rate_online:900,hourly_rate_offline:700,subjects_taught:["Mathematics","Chemistry","Physics"]}},
+  {id:"sl3",student_id:"sample-s1",subject:"Biology",day:"WED",from_hour:14,to_hour:15,description:"Help with cell biology chapter.",online:false,start_ts:Date.now()+7200000,_accepted:true,_tutorName:"Mr. Samuel Otieno",_tutorObj:{id:"sample-t4",name:"Mr. Samuel Otieno",age:31,gender:"Male",location:"Nairobi, Westlands",curriculum_level:"Senior School",hourly_rate_online:800,hourly_rate_offline:600,subjects_taught:["Biology","Chemistry"]}},
   {id:"sl4",student_id:"sample-s1",subject:"Chemistry",day:"FRI",from_hour:10,to_hour:11,description:"Periodic table and bonding.",online:false,start_ts:null,_accepted:false},
 ];
 const SAMPLE_LESSONS_TUTOR=[
@@ -108,9 +106,9 @@ const SAMPLE_LESSONS_TUTOR=[
   {id:"sl2",tutor_id:"sample-t1",student_id:"sample-s2",student_name:"Kofi Mensah",student_age:16,student_gender:"Male",student_location:"Nairobi, South B",student_grade:"Grade 9",subject:"Biology",day:"WED",from_hour:14,to_hour:15,description:"Help with cell biology chapter.",online:false,start_ts:null,status:"pending"},
 ];
 const SAMPLE_TUTORS=[
-  {id:"sample-t1",name:"Dr. Jane Mwangi",age:34,gender:"Female",location:"Nairobi, Karen",role:"tutor",curriculum_level:"Senior Secondary",hourly_rate_online:900,hourly_rate_offline:700,subjects_taught:["Mathematics","Chemistry","Physics"]},
-  {id:"sample-t2",name:"Prof. David Otieno",age:42,gender:"Male",location:"Kisumu, Milimani",role:"tutor",curriculum_level:"Junior Secondary",hourly_rate_online:700,hourly_rate_offline:550,subjects_taught:["Mathematics","Biology","Integrated Science"]},
-  {id:"sample-t3",name:"Ms. Fatuma Hassan",age:29,gender:"Female",location:"Mombasa, Nyali",role:"tutor",curriculum_level:"Upper Primary",hourly_rate_online:600,hourly_rate_offline:450,subjects_taught:["English","Kiswahili","Life Skills Education"]},
+  {id:"sample-t1",name:"Dr. Jane Mwangi",age:34,gender:"Female",location:"Nairobi, Karen",role:"tutor",curriculum_level:"Senior School",hourly_rate_online:900,hourly_rate_offline:700,subjects_taught:["Mathematics","Chemistry","Physics"]},
+  {id:"sample-t2",name:"Prof. David Otieno",age:42,gender:"Male",location:"Kisumu, Milimani",role:"tutor",curriculum_level:"Middle School",hourly_rate_online:700,hourly_rate_offline:550,subjects_taught:["Mathematics","Biology","Integrated Science"]},
+  {id:"sample-t3",name:"Ms. Fatuma Hassan",age:29,gender:"Female",location:"Mombasa, Nyali",role:"tutor",curriculum_level:"Middle School",hourly_rate_online:600,hourly_rate_offline:450,subjects_taught:["English","Kiswahili","Life Skills Education"]},
 ];
 const SAMPLE_NOTES=[
   {id:"sn1",title:"MATHEMATICS GRADE 10 — ALGEBRA",subject:"Mathematics",tutor_name:"Dr. Jane Mwangi",created_at:new Date(Date.now()-2*86400000).toISOString(),rating:4.8,cover_color:"#c8e6c9",cover_url:null,pdf_url:null},
@@ -209,48 +207,62 @@ function CancelModal({onCancel,onClose,C}){
 
 /* ══ PDF VIEWER ══ */
 function PdfViewer({note,onClose,C}){
+  const containerRef=React.useRef();
   const canvasRef=React.useRef();
   const [pdf,setPdf]=React.useState(null);
   const [page,setPage]=React.useState(1);
   const [total,setTotal]=React.useState(0);
   const [loading,setLoading]=React.useState(true);
   const [err,setErr]=React.useState("");
+  const [zoom,setZoom]=React.useState(1);
+  const [pan,setPan]=React.useState({x:0,y:0});
   const renderTask=React.useRef(null);
+  const lastTouch=React.useRef(null);
+  const lastPinchDist=React.useRef(null);
+  const panStart=React.useRef(null);
+
   React.useEffect(()=>{
     if(!note.pdf_url)return;
-    setLoading(true);setErr("");
+    setLoading(true);setErr("");setZoom(1);setPan({x:0,y:0});
     const loadPdf=async()=>{
       try{
-        // Load pdf.js dynamically if not already loaded
         if(!window.pdfjsLib){
           await new Promise((res,rej)=>{
             const s=document.createElement('script');
             s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-            s.onload=res;s.onerror=rej;
-            document.head.appendChild(s);
+            s.onload=res;s.onerror=rej;document.head.appendChild(s);
           });
           window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         }
-        const loadingTask=window.pdfjsLib.getDocument(note.pdf_url);
-        const pdfDoc=await loadingTask.promise;
+        const pdfDoc=await window.pdfjsLib.getDocument(note.pdf_url).promise;
         setPdf(pdfDoc);setTotal(pdfDoc.numPages);setPage(1);setLoading(false);
       }catch(e){setErr("Could not load PDF.");setLoading(false);}
     };
     loadPdf();
   },[note.pdf_url]);
+
   React.useEffect(()=>{
-    if(!pdf||!canvasRef.current)return;
+    if(!pdf||!canvasRef.current||!containerRef.current)return;
     let cancelled=false;
     const render=async()=>{
       try{
         const pg=await pdf.getPage(page);
         if(cancelled)return;
-        const viewport=pg.getViewport({scale:Math.min(canvasRef.current.offsetWidth/pg.getViewport({scale:1}).width,2)});
+        const W=containerRef.current.offsetWidth;
+        const H=containerRef.current.offsetHeight;
+        const baseVP=pg.getViewport({scale:1});
+        // Fill container: pick scale that makes page fill width or height
+        const scaleW=W/baseVP.width;
+        const scaleH=H/baseVP.height;
+        const baseScale=Math.max(scaleW,scaleH);
+        const viewport=pg.getViewport({scale:baseScale*window.devicePixelRatio});
         const canvas=canvasRef.current;
         canvas.height=viewport.height;
         canvas.width=viewport.width;
+        canvas.style.width=viewport.width/window.devicePixelRatio+"px";
+        canvas.style.height=viewport.height/window.devicePixelRatio+"px";
         const ctx=canvas.getContext('2d');
-        if(renderTask.current)renderTask.current.cancel();
+        if(renderTask.current){try{renderTask.current.cancel();}catch(e){}}
         renderTask.current=pg.render({canvasContext:ctx,viewport});
         await renderTask.current.promise;
       }catch(e){}
@@ -258,26 +270,68 @@ function PdfViewer({note,onClose,C}){
     render();
     return()=>{cancelled=true;};
   },[pdf,page]);
+
+  // Touch handlers for pinch-zoom and pan
+  function onTouchStart(e){
+    if(e.touches.length===2){
+      const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+      lastPinchDist.current=d;
+      panStart.current=null;
+    } else if(e.touches.length===1){
+      panStart.current={x:e.touches[0].clientX-pan.x,y:e.touches[0].clientY-pan.y};
+      lastPinchDist.current=null;
+    }
+  }
+  function onTouchMove(e){
+    e.preventDefault();
+    if(e.touches.length===2&&lastPinchDist.current!=null){
+      const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+      const ratio=d/lastPinchDist.current;
+      lastPinchDist.current=d;
+      setZoom(z=>Math.min(5,Math.max(1,z*ratio)));
+    } else if(e.touches.length===1&&panStart.current&&zoom>1){
+      setPan({x:e.touches[0].clientX-panStart.current.x,y:e.touches[0].clientY-panStart.current.y});
+    }
+  }
+  function onTouchEnd(){lastPinchDist.current=null;}
+  function doubleTap(){setZoom(z=>z>1?1:2.5);setPan({x:0,y:0});}
+
   return(
-    <div style={{position:"fixed",inset:0,zIndex:300,background:"#111",display:"flex",flexDirection:"column"}}>
-      <div style={{background:"#1a1a1a",padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,borderBottom:"1px solid #333"}}>
+    <div style={{position:"fixed",inset:0,zIndex:300,background:"#000",display:"flex",flexDirection:"column"}}>
+      {/* Header */}
+      <div style={{background:"#111",padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,borderBottom:"1px solid #222"}}>
         <div style={{flex:1,minWidth:0}}>
           <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{note.title}</div>
-          <div style={{color:"#888",fontSize:10,marginTop:1,fontFamily:"'Barlow Condensed',sans-serif"}}>{note.subject} · {note.tutor_name}</div>
+          <div style={{color:"#666",fontSize:10,marginTop:1,fontFamily:"'Barlow Condensed',sans-serif"}}>{note.subject} · {note.tutor_name}{total>0?" · "+total+" pages":""}</div>
         </div>
-        <button onClick={onClose} style={{marginLeft:12,background:"#333",border:"none",borderRadius:8,padding:"8px 14px",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:"pointer",flexShrink:0}}>✕ CLOSE</button>
+        <button onClick={onClose} style={{marginLeft:12,background:"#222",border:"1px solid #444",borderRadius:8,padding:"8px 14px",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:"pointer",flexShrink:0}}>✕ CLOSE</button>
       </div>
-      <div style={{flex:1,overflow:"auto",display:"flex",flexDirection:"column",alignItems:"center",padding:"16px 12px",gap:0}}>
-        {!note.pdf_url&&<div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#555"}}><div style={{fontSize:48,marginBottom:16}}>📄</div><div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:16,color:"#888"}}>NO PDF ATTACHED</div></div>}
-        {note.pdf_url&&loading&&<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#888",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>Loading PDF…</div>}
-        {note.pdf_url&&err&&<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{err}</div>}
-        {note.pdf_url&&!loading&&!err&&<canvas ref={canvasRef} style={{maxWidth:"100%",borderRadius:8,boxShadow:"0 4px 24px rgba(0,0,0,.5)"}}/>}
+      {/* PDF canvas area — fills everything */}
+      <div
+        ref={containerRef}
+        style={{flex:1,overflow:"hidden",position:"relative",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none"}}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onDoubleClick={doubleTap}
+      >
+        {!note.pdf_url&&<div style={{display:"flex",flexDirection:"column",alignItems:"center",color:"#444"}}><div style={{fontSize:48,marginBottom:12}}>📄</div><div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:15,color:"#666"}}>NO PDF ATTACHED</div></div>}
+        {note.pdf_url&&loading&&<div style={{color:"#666",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:14}}>Loading PDF…</div>}
+        {note.pdf_url&&err&&<div style={{color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{err}</div>}
+        {note.pdf_url&&!loading&&!err&&(
+          <div style={{transform:`scale(${zoom}) translate(${pan.x/zoom}px,${pan.y/zoom}px)`,transformOrigin:"center center",transition:lastPinchDist.current?"none":"transform .1s",willChange:"transform",display:"flex",alignItems:"center",justifyContent:"center",width:"100%",height:"100%"}}>
+            <canvas ref={canvasRef} style={{display:"block",maxWidth:"100%",maxHeight:"100%"}}/>
+          </div>
+        )}
+        {zoom>1&&<div style={{position:"absolute",top:10,right:10,background:"rgba(0,0,0,.5)",borderRadius:8,padding:"3px 10px",color:"#fff",fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,pointerEvents:"none"}}>{Math.round(zoom*100)}%</div>}
+        {!loading&&!err&&total>0&&<div style={{position:"absolute",bottom:10,left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,.55)",borderRadius:20,padding:"4px 14px",color:"#fff",fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,pointerEvents:"none"}}>{page} / {total}</div>}
       </div>
+      {/* Nav bar */}
       {total>1&&!loading&&!err&&(
-        <div style={{background:"#1a1a1a",padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"center",gap:16,flexShrink:0,borderTop:"1px solid #333"}}>
-          <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1} style={{background:page===1?"#222":"#444",border:"none",borderRadius:8,padding:"8px 16px",color:page===1?"#555":"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:page===1?"default":"pointer"}}>‹ PREV</button>
-          <span style={{color:"#888",fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,fontWeight:700}}>{page} / {total}</span>
-          <button onClick={()=>setPage(p=>Math.min(total,p+1))} disabled={page===total} style={{background:page===total?"#222":"#444",border:"none",borderRadius:8,padding:"8px 16px",color:page===total?"#555":"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:page===total?"default":"pointer"}}>NEXT ›</button>
+        <div style={{background:"#111",padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"center",gap:16,flexShrink:0,borderTop:"1px solid #222"}}>
+          <button onClick={()=>{setPage(p=>Math.max(1,p-1));setZoom(1);setPan({x:0,y:0});}} disabled={page===1} style={{background:"#222",border:"1px solid "+(page===1?"#333":"#555"),borderRadius:8,padding:"9px 20px",color:page===1?"#444":"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:page===1?"default":"pointer"}}>‹ PREV</button>
+          <span style={{color:"#888",fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,fontWeight:700,minWidth:50,textAlign:"center"}}>{page} / {total}</span>
+          <button onClick={()=>{setPage(p=>Math.min(total,p+1));setZoom(1);setPan({x:0,y:0});}} disabled={page===total} style={{background:"#222",border:"1px solid "+(page===total?"#333":"#555"),borderRadius:8,padding:"9px 20px",color:page===total?"#444":"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:page===total?"default":"pointer"}}>NEXT ›</button>
         </div>
       )}
     </div>
@@ -502,6 +556,7 @@ function StudentApp({user,onLogout}){
   const [acceptedMap,setAcceptedMap]=useState(isSample?{"sl1":true,"sl3":true}:{});
   const [showAdd,setShowAdd]=useState(false);
   const [showManage,setShowManage]=useState(false);
+  const [showTutorProfile,setShowTutorProfile]=React.useState(null);
   const [showTutors,setShowTutors]=useState(null);
   const [editLesson,setEditLesson]=useState(null);
   const [requested,setRequested]=useState(new Set());
@@ -597,6 +652,9 @@ function StudentApp({user,onLogout}){
     const key=tutor.id+"-"+lesson.id;
     if(requested.has(key))return;
     setRequested(s=>new Set([...s,key]));
+    // Mark lesson orange (pending) and store tutor info
+    setLessons(ls=>ls.map(l=>l.id===lesson.id?{...l,_pending:true,_accepted:false,_tutorName:tutor.name,_tutorId:tutor.id,_tutorObj:tutor}:l));
+    setShowTutors(null); // close modal
     if(!isSample){try{await sb.post("tutor_requests",{lesson_id:lesson.id,student_id:user.id,tutor_id:tutor.id,subject:lesson.subject,day:lesson.day,from_hour:lesson.from_hour,to_hour:lesson.to_hour,online:lesson.online,description:lesson.description,student_name:user.name,status:"pending"});}catch(e){}}
   }
 
@@ -665,18 +723,21 @@ function StudentApp({user,onLogout}){
         <Hdr C={C} dm={dm}><PBtn outline C={C} onClick={()=>setShowManage(true)}>MANAGE</PBtn><PBtn C={C} onClick={()=>setShowAdd(true)}>ADD SLOT</PBtn></Hdr>
         <Scroll>
           {loadingL?<Ldg C={C}/>:
-            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>setShowTutors(l)}
+            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>{if(l._tutorObj&&(l._pending||l._accepted||acceptedMap[l.id])){setShowTutorProfile(l._tutorObj);}else{setShowTutors(l);}}}
               renderExtra={l=>{
-                if(!acceptedMap[l.id])return null;
+                const isPending=l._pending&&!l._accepted&&!acceptedMap[l.id];
+                const isAccepted=l._accepted||acceptedMap[l.id];
+                if(!isPending&&!isAccepted)return null;
                 const tutorName=l._tutorName||null;
                 const startStr=l.start_ts?new Date(l.start_ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):timeLbl(l.from_hour);
                 const endMs=l.start_ts?(l.start_ts+(l.to_hour-l.from_hour)*3600000):null;
                 const endStr=endMs?new Date(endMs).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):timeLbl(l.to_hour);
                 return(
                   <div style={{marginTop:3,display:"flex",flexDirection:"column",gap:2}}>
-                    {tutorName&&<div style={{fontSize:9,fontWeight:800,color:"#166634",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>✓ {tutorName}</div>}
-                    <div style={{fontSize:9,fontWeight:700,color:"#555",fontFamily:"'Barlow Condensed',sans-serif"}}>🕐 {startStr} → {endStr}</div>
-                    <LessonTimer lesson={l} C={C}/>
+                    {isPending&&<div style={{fontSize:9,fontWeight:800,color:"#E65100",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>⏳ Awaiting {tutorName||"tutor"}</div>}
+                    {isAccepted&&tutorName&&<div style={{fontSize:9,fontWeight:800,color:"#166634",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>✓ {tutorName}</div>}
+                    {isAccepted&&<div style={{fontSize:9,fontWeight:700,color:"#555",fontFamily:"'Barlow Condensed',sans-serif"}}>🕐 {startStr} → {endStr}</div>}
+                    {isAccepted&&<LessonTimer lesson={l} C={C}/>}
                   </div>
                 );
               }}/>
@@ -685,7 +746,7 @@ function StudentApp({user,onLogout}){
       </>}
 
       {tab==="archive"&&<>
-        <Hdr C={C} dm={dm}/>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/></div>
         <Scroll>
           <ArchSearch value={archSearch} onChange={setArchSearch} C={C}/>
           <FilterRow value={archFilter} onChange={setArchFilter} C={C}/>
@@ -757,6 +818,45 @@ function StudentApp({user,onLogout}){
         )}
       </Modal>}
 
+      {showTutorProfile&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)setShowTutorProfile(null);}}>
+          <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"24px 22px 36px",maxHeight:"88vh",overflowY:"auto"}}>
+            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
+              <div style={{width:60,height:60,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{showTutorProfile.name?showTutorProfile.name[0].toUpperCase():"?"}</span>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{showTutorProfile.name}</div>
+                <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{showTutorProfile.curriculum_level}</div>
+              </div>
+              <a href={"tel:"+(showTutorProfile.phone||"")} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",textDecoration:"none",flexShrink:0}}>
+                <span style={{fontSize:20}}>📞</span>
+              </a>
+            </div>
+            {[
+              {label:"MODE",value:showTutorProfile.online?"🌐 Online":"📍 Offline"},
+              {label:"LEVEL",value:showTutorProfile.curriculum_level},
+              showTutorProfile.age&&{label:"AGE",value:showTutorProfile.age+" yrs"},
+              showTutorProfile.gender&&{label:"GENDER",value:showTutorProfile.gender},
+              showTutorProfile.location&&{label:"ZONE",value:showTutorProfile.location},
+              showTutorProfile.hourly_rate_online&&{label:"ONLINE RATE",value:"KES "+showTutorProfile.hourly_rate_online+"/hr"},
+              showTutorProfile.hourly_rate_offline&&{label:"OFFLINE RATE",value:"KES "+showTutorProfile.hourly_rate_offline+"/hr"},
+            ].filter(Boolean).map(row=>(
+              <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid "+C.border}}>
+                <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
+                <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
+              </div>
+            ))}
+            {showTutorProfile.subjects_taught&&(
+              <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border}}>
+                <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:8}}>SUBJECTS</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{showTutorProfile.subjects_taught.map(s=><span key={s} style={{fontSize:10,fontWeight:800,padding:"3px 10px",borderRadius:20,background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif"}}>{s}</span>)}</div>
+              </div>
+            )}
+            <button onClick={()=>setShowTutorProfile(null)} style={{marginTop:18,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
+          </div>
+        </div>
+      )}
       {showTutors&&<Modal onClose={()=>setShowTutors(null)} C={C}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
           <span style={{fontSize:20}}>{showTutors.online?"🌐":"📍"}</span>
@@ -817,6 +917,7 @@ function TutorApp({user,onLogout}){
   const [archSearch,setArchSearch]=useState("");
   const [interactions,setInteractions]=useState({});
   const [showPublish,setShowPublish]=useState(false);
+  const [showCoverEdit,setShowCoverEdit]=useState(false);
   const [pubForm,setPubForm]=useState({title:"",subject:"",file:null,coverPreview:null,coverFile:null});
   const [publishing,setPublishing]=useState(false);
   const [profile,setProfile]=useState(user);
@@ -1073,6 +1174,16 @@ function TutorApp({user,onLogout}){
         )}
       </Modal>}
 
+      {showCoverEdit&&pubForm.coverPreview&&<CoverEditPage
+        src={pubForm.coverPreview}
+        pos={pubForm.coverPos||{x:50,y:50}}
+        onSave={(pos)=>{setPubForm(p=>({...p,coverPos:pos}));setShowCoverEdit(false);}}
+        onChangeCover={()=>coverRef.current.click()}
+        onClose={()=>setShowCoverEdit(false)}
+        noteTitle={pubForm.title}
+        noteSubject={pubForm.subject}
+        C={C}
+      />}
       {showPublish&&<Modal onClose={()=>setShowPublish(false)} C={C}>
         <MT>📤 Publish Material</MT><MS C={C}>Share study resources with students.</MS>
         <ML C={C}>COVER IMAGE</ML>
@@ -1083,7 +1194,7 @@ function TutorApp({user,onLogout}){
               src={pubForm.coverPreview}
               pos={pubForm.coverPos||{x:50,y:50}}
               onPosChange={pos=>setPubForm(p=>({...p,coverPos:pos}))}
-              onChangeCover={()=>coverRef.current.click()}
+              onChangeCover={()=>pubForm.coverPreview?setShowCoverEdit(true):coverRef.current.click()}
             />
             <div style={{padding:"10px 12px 12px"}}>
               <div style={{fontSize:10,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,letterSpacing:1}}>{pubForm.subject||"SUBJECT"}</div>
@@ -1092,7 +1203,7 @@ function TutorApp({user,onLogout}){
           </div>
           {pubForm.coverPreview&&<div style={{fontSize:9,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,textAlign:"center",marginBottom:6}}>✋ DRAG IMAGE TO REPOSITION · TAP TO CHANGE</div>}
         </div>
-        <input type="file" accept="image/*" ref={coverRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setPubForm(p=>({...p,coverPreview:ev.target.result,coverFile:f,coverPos:{x:50,y:50}}));r.readAsDataURL(f);}}/>
+        <input type="file" accept="image/*" ref={coverRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{setPubForm(p=>({...p,coverPreview:ev.target.result,coverFile:f,coverPos:{x:50,y:50}}));setShowCoverEdit(true);};r.readAsDataURL(f);}}/>
         <ML C={C}>TITLE</ML>
         <input style={miSty(C)} placeholder="e.g. Algebra Chapter 3" value={pubForm.title} onChange={e=>setPubForm(f=>({...f,title:e.target.value}))}/>
         <ML C={C}>SUBJECT</ML>
@@ -1131,7 +1242,7 @@ function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
             <div style={{flex:1,padding:"8px 10px 8px 6px",display:"flex",flexDirection:"column",gap:5}}>
               {dl.length===0?<span style={{fontSize:10,color:C.border,letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,paddingTop:4}}>NO PLANS</span>:
                 dl.map(l=>(
-                  <div key={l.id} onClick={()=>onTap&&onTap(l)} style={{borderRadius:10,padding:"6px 10px",background:subjBg(l.subject),border:"1px solid rgba(0,0,0,.06)",cursor:onTap?"pointer":"default",display:"flex",flexDirection:"column",gap:1}}>
+                  <div key={l.id} onClick={()=>onTap&&onTap(l)} style={{borderRadius:10,padding:"6px 10px",background:l._pending?"#FFF3E0":l._accepted?"#E8F5E9":subjBg(l.subject),border:"1px solid "+(l._pending?"#FFB74D":l._accepted?"#66BB6A":"rgba(0,0,0,.06)"),cursor:onTap?"pointer":"default",display:"flex",flexDirection:"column",gap:1}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                       <div style={{display:"flex",alignItems:"center",gap:5}}>
                         <span style={{fontSize:13}}>{l.online?"🌐":"📍"}</span>
@@ -1196,12 +1307,75 @@ function StudentProfileModal({lesson,C,onClose}){
     </div>
   );
 }
-function CoverEditor({src,pos,onPosChange,onChangeCover}){
-  const containerRef=React.useRef();
+function CoverEditPage({src,pos,onSave,onChangeCover,onClose,noteTitle,noteSubject,C}){
+  const [curPos,setCurPos]=React.useState(pos);
+  const imgRef=React.useRef();
   const dragging=React.useRef(false);
   const last=React.useRef({x:0,y:0});
-  const posRef=React.useRef(pos);
-  posRef.current=pos;
+  // Preview card dimensions
+  const CARD_H=140;
+
+  function startDrag(cx,cy){dragging.current=true;last.current={x:cx,y:cy};}
+  function moveDrag(cx,cy){
+    if(!dragging.current||!imgRef.current)return;
+    const dx=cx-last.current.x;
+    const dy=cy-last.current.y;
+    last.current={x:cx,y:cy};
+    const rect=imgRef.current.getBoundingClientRect();
+    const percX=dx/rect.width*100*2;
+    const percY=dy/rect.height*100*2;
+    setCurPos(p=>({x:Math.min(100,Math.max(0,p.x-percX)),y:Math.min(100,Math.max(0,p.y-percY))}));
+  }
+  function endDrag(){dragging.current=false;}
+
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:400,background:C.bg,display:"flex",flexDirection:"column"}}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}>
+        <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,color:C.text}}>EDIT COVER</div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={onChangeCover} style={{padding:"8px 14px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,cursor:"pointer",letterSpacing:1}}>CHANGE IMAGE</button>
+          <button onClick={()=>onSave(curPos)} style={{padding:"8px 18px",borderRadius:50,border:"none",background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,cursor:"pointer",letterSpacing:1}}>DONE ✓</button>
+        </div>
+      </div>
+
+      {/* Full image — drag to set focal point */}
+      <div style={{flex:1,overflow:"hidden",position:"relative",background:"#000",touchAction:"none"}}
+        onMouseDown={e=>{startDrag(e.clientX,e.clientY);e.preventDefault();}}
+        onMouseMove={e=>moveDrag(e.clientX,e.clientY)}
+        onMouseUp={endDrag} onMouseLeave={endDrag}
+        onTouchStart={e=>{const t=e.touches[0];startDrag(t.clientX,t.clientY);}}
+        onTouchMove={e=>{const t=e.touches[0];moveDrag(t.clientX,t.clientY);e.preventDefault();}}
+        onTouchEnd={endDrag}
+      >
+        <img ref={imgRef} src={src} draggable={false} style={{width:"100%",height:"100%",objectFit:"contain",pointerEvents:"none",userSelect:"none"}}/>
+        {/* Crosshair showing focal point */}
+        <div style={{position:"absolute",top:`${curPos.y}%`,left:`${curPos.x}%`,transform:"translate(-50%,-50%)",pointerEvents:"none"}}>
+          <div style={{width:40,height:40,borderRadius:"50%",border:"2px solid #fff",boxShadow:"0 0 0 1px rgba(0,0,0,.5)",background:"rgba(255,255,255,.15)"}}/>
+          <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:4,height:4,borderRadius:"50%",background:"#fff"}}/>
+        </div>
+        <div style={{position:"absolute",top:12,left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,.6)",borderRadius:20,padding:"5px 16px",color:"#fff",fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,whiteSpace:"nowrap",pointerEvents:"none"}}>
+          DRAG TO SET FOCAL POINT
+        </div>
+      </div>
+
+      {/* Live card preview at bottom */}
+      <div style={{flexShrink:0,background:C.surface,borderTop:"1px solid "+C.border,padding:"14px 16px"}}>
+        <div style={{fontSize:9,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,marginBottom:8,textAlign:"center"}}>CARD PREVIEW</div>
+        <div style={{background:C.surface,borderRadius:16,overflow:"hidden",border:"1px solid "+C.border,maxWidth:200,margin:"0 auto"}}>
+          <div style={{height:CARD_H,overflow:"hidden"}}>
+            <img src={src} alt="cover" draggable={false} style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:`${curPos.x}% ${curPos.y}%`,pointerEvents:"none"}}/>
+          </div>
+          <div style={{padding:"8px 10px 10px"}}>
+            <div style={{fontSize:9,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,letterSpacing:1}}>{noteSubject||"SUBJECT"}</div>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:12,color:C.text,marginTop:1,lineHeight:1.2}}>{noteTitle?noteTitle.toUpperCase():"TITLE"}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+function CoverEditor({src,pos,onPosChange,onChangeCover}){
   if(!src){
     return(
       <div onClick={onChangeCover} style={{height:140,background:"#f0f0f0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,cursor:"pointer"}}>
@@ -1210,53 +1384,10 @@ function CoverEditor({src,pos,onPosChange,onChangeCover}){
       </div>
     );
   }
-  function startDrag(clientX,clientY){dragging.current=true;last.current={x:clientX,y:clientY};}
-  function moveDrag(clientX,clientY){
-    if(!dragging.current)return;
-    const dx=clientX-last.current.x;
-    const dy=clientY-last.current.y;
-    last.current={x:clientX,y:clientY};
-    const rect=containerRef.current.getBoundingClientRect();
-    // Convert pixel drag to percentage change (sensitivity: 50px = 100%)
-    const pxToPercX=dx/(rect.width)*100*1.5;
-    const pxToPercY=dy/(rect.height)*100*2;
-    const newX=Math.min(100,Math.max(0,posRef.current.x-pxToPercX));
-    const newY=Math.min(100,Math.max(0,posRef.current.y-pxToPercY));
-    onPosChange({x:newX,y:newY});
-  }
-  function endDrag(){dragging.current=false;}
-  function handleClick(e){
-    // If barely moved, treat as change cover click
-    if(e.detail===2)onChangeCover();
-  }
   return(
-    <div
-      ref={containerRef}
-      style={{height:140,position:"relative",overflow:"hidden",cursor:"grab",userSelect:"none",touchAction:"none"}}
-      onMouseDown={e=>{startDrag(e.clientX,e.clientY);e.preventDefault();}}
-      onMouseMove={e=>moveDrag(e.clientX,e.clientY)}
-      onMouseUp={endDrag}
-      onMouseLeave={endDrag}
-      onTouchStart={e=>{const t=e.touches[0];startDrag(t.clientX,t.clientY);}}
-      onTouchMove={e=>{const t=e.touches[0];moveDrag(t.clientX,t.clientY);e.preventDefault();}}
-      onTouchEnd={endDrag}
-      onClick={handleClick}
-    >
-      <img
-        src={src}
-        alt="cover"
-        draggable={false}
-        style={{
-          position:"absolute",
-          width:"100%",
-          height:"100%",
-          objectFit:"cover",
-          objectPosition:`${pos.x}% ${pos.y}%`,
-          pointerEvents:"none"
-        }}
-      />
-      <div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,.55)",borderRadius:8,padding:"3px 10px",fontSize:9,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,pointerEvents:"none"}}>DRAG TO REPOSITION</div>
-      <div onClick={e=>{e.stopPropagation();onChangeCover();}} style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,.55)",borderRadius:8,padding:"3px 10px",fontSize:9,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,cursor:"pointer"}}>CHANGE</div>
+    <div onClick={onChangeCover} style={{height:140,position:"relative",overflow:"hidden",cursor:"pointer"}}>
+      <img src={src} alt="cover" draggable={false} style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:`${pos.x}% ${pos.y}%`,pointerEvents:"none"}}/>
+      <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,.55)",borderRadius:8,padding:"3px 10px",fontSize:9,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>✏ EDIT</div>
     </div>
   );
 }
@@ -1294,7 +1425,7 @@ function NoteGrid({notes,C,onLike,onSave,onOpen}){
 function ProfCard({profile,editP,setEditP,editing,pfpRef,C}){
   const src=editP.pfp_local||profile.pfp_url||null;
   return(
-    <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:24,margin:"0 14px 16px",padding:"18px 16px 16px",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
+    <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:24,margin:"0 14px 16px",padding:"16px 14px 14px",display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
       <div onClick={()=>editing&&pfpRef.current.click()} style={{width:96,height:96,borderRadius:"50%",background:C.surfaceAlt,border:"2px solid "+C.border,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",cursor:editing?"pointer":"default"}}>
         {src?<img src={src} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="pfp"/>:<span style={{fontSize:40}}>👤</span>}
         <div style={{position:"absolute",bottom:0,right:0,width:28,height:28,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>📷</div>
