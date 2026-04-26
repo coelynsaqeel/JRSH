@@ -146,6 +146,7 @@ function LessonTimer({lesson,C}){
   const label=phase==="countdown"?"STARTS IN":phase==="active"?"ENDS IN":"ENDED";
   return(
     <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4,padding:"4px 8px",borderRadius:8,background:color+"22",border:"1px solid "+color+"44"}}>
+      <span style={{fontSize:11}}>{lesson.online?"🌐":"📍"}</span>
       <div style={{width:6,height:6,borderRadius:"50%",background:color,animation:phase==="active"?"pulse 1s infinite":"none"}}/>
       <span style={{fontSize:9,fontWeight:800,color,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{label}</span>
       <span style={{fontSize:12,fontWeight:900,color,fontFamily:"'Barlow Condensed',sans-serif"}}>{phase==="ended"?"DONE":fmt(secs)}</span>
@@ -576,11 +577,18 @@ function StudentApp({user,onLogout}){
 
   const studentLevel=gradeToLevel(user.grade||profile.grade);
   const getLessonsForDay=d=>lessons.filter(l=>l.day===d).sort((a,b)=>a.from_hour-b.from_hour);
-  const getMatchingTutors=lesson=>tutors.filter(t=>{
-    const levelMatch=t.curriculum_level===studentLevel;
-    const subjectMatch=t.subjects_taught&&t.subjects_taught.includes(lesson.subject);
-    return levelMatch&&subjectMatch;
-  });
+  const getMatchingTutors=lesson=>{
+    const exact=tutors.filter(t=>{
+      const levelMatch=t.curriculum_level===studentLevel;
+      const subjectMatch=t.subjects_taught&&t.subjects_taught.includes(lesson.subject);
+      return levelMatch&&subjectMatch;
+    });
+    // In sample/demo mode or when no exact match, show all tutors who teach the subject,
+    // then fall back to all tutors so the UI is never empty
+    if(exact.length>0)return exact;
+    const subjectOnly=tutors.filter(t=>t.subjects_taught&&t.subjects_taught.includes(lesson.subject));
+    return subjectOnly.length>0?subjectOnly:tutors;
+  };
   const filteredNotes=()=>{
     let n=notes.map(note=>({...note,...(interactions[note.id]||{liked:false,saved:false})}));
     if(archFilter==="FAVORITES")n=n.filter(x=>x.liked);
@@ -687,25 +695,37 @@ function StudentApp({user,onLogout}){
       </Modal>}
 
       {showTutors&&<Modal onClose={()=>setShowTutors(null)} C={C}>
-        <div style={{fontSize:10,fontWeight:800,letterSpacing:2,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:4}}>SUBJECT</div>
-        <MT>{showTutors.subject}</MT>
-        <MS C={C}>{showTutors.day} · {timeLbl(showTutors.from_hour)} – {timeLbl(showTutors.to_hour)} · {showTutors.online?"ONLINE":"OFFLINE"}</MS>
-        <div style={{fontSize:10,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,marginBottom:12}}>TUTORS FOR {studentLevel?.toUpperCase()||"YOUR LEVEL"}</div>
-        {getMatchingTutors(showTutors).length===0&&<Empty C={C}>NO TUTORS FOR THIS SUBJECT & LEVEL YET</Empty>}
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+          <span style={{fontSize:20}}>{showTutors.online?"🌐":"📍"}</span>
+          <div>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:18,color:C.text}}>{showTutors.subject}</div>
+            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{showTutors.day} · {timeLbl(showTutors.from_hour)}–{timeLbl(showTutors.to_hour)} · {showTutors.online?"Online":"Offline"}</div>
+          </div>
+        </div>
+        <div style={{fontSize:10,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,marginBottom:14,paddingBottom:12,borderBottom:"1px solid "+C.border}}>AVAILABLE TUTORS</div>
+        {getMatchingTutors(showTutors).length===0&&<Empty C={C}>NO TUTORS AVAILABLE YET</Empty>}
         {getMatchingTutors(showTutors).map(tutor=>{
           const key=tutor.id+"-"+showTutors.id;
           const done=requested.has(key);
           const rate=showTutors.online?tutor.hourly_rate_online:tutor.hourly_rate_offline;
+          const initials=(tutor.name||"?").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
           return(
-            <div key={tutor.id} style={{background:C.surfaceAlt,borderRadius:16,padding:"14px 16px",marginBottom:10,border:"1px solid "+C.border,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
-              <div style={{flex:1}}>
-                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,color:C.text}}>{tutor.name}</div>
-                <div style={{fontSize:12,color:C.sub,marginTop:2}}>{tutor.age&&tutor.age+" yrs · "}{tutor.gender&&tutor.gender+" · "}{tutor.location}</div>
-                {tutor.subjects_taught&&<div style={{fontSize:11,color:C.sub,marginTop:3}}>{tutor.subjects_taught.join(", ")}</div>}
-                {rate&&<div style={{fontSize:14,fontWeight:800,color:"#22C55E",marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>KES {rate}/hr · {showTutors.online?"Online":"Offline"}</div>}
+            <div key={tutor.id} style={{background:C.surfaceAlt,borderRadius:16,padding:"14px 14px",marginBottom:10,border:"1px solid "+C.border}}>
+              <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
+                {/* Avatar */}
+                <div style={{width:48,height:48,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,color:C.accentText}}>{initials}</span>
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,color:C.text}}>{tutor.name}</div>
+                  <div style={{fontSize:11,color:C.sub,marginTop:1,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{[tutor.age&&tutor.age+" yrs",tutor.gender,tutor.location].filter(Boolean).join(" · ")}</div>
+                  <div style={{fontSize:10,color:C.sub,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:.5}}>{tutor.curriculum_level}</div>
+                  {tutor.subjects_taught&&<div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:6}}>{tutor.subjects_taught.map(s=><span key={s} style={{fontSize:9,fontWeight:800,padding:"2px 7px",borderRadius:20,background:s===showTutors.subject?"#111":"rgba(0,0,0,.07)",color:s===showTutors.subject?"#fff":"#555",fontFamily:"'Barlow Condensed',sans-serif"}}>{s}</span>)}</div>}
+                  {rate&&<div style={{fontSize:13,fontWeight:900,color:"#16a34a",marginTop:8,fontFamily:"'Barlow Condensed',sans-serif"}}>KES {rate.toLocaleString()}/hr</div>}
+                </div>
               </div>
-              <button onClick={()=>handleRequestTutor(tutor,showTutors)} style={{padding:"9px 16px",borderRadius:50,cursor:"pointer",whiteSpace:"nowrap",border:"1.5px solid "+(done?"#22C55E":C.text),background:done?"#22C55E":C.accentBg,color:done?"#fff":C.accentText,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1}}>
-                {done?"✓ SENT":"REQUEST"}
+              <button onClick={()=>handleRequestTutor(tutor,showTutors)} style={{marginTop:12,width:"100%",padding:"11px",borderRadius:50,cursor:"pointer",border:"none",background:done?"#22C55E":"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1.5}}>
+                {done?"✓ REQUEST SENT":"REQUEST THIS TUTOR →"}
               </button>
             </div>
           );
@@ -902,7 +922,7 @@ function TutorApp({user,onLogout}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
@@ -1001,7 +1021,7 @@ function TutorApp({user,onLogout}){
 function Shell({C,children}){return <div style={{fontFamily:"Barlow,sans-serif",background:C.bg,color:C.text,height:"100vh",maxWidth:430,margin:"0 auto",display:"flex",flexDirection:"column",overflow:"hidden",position:"relative"}}>{children}</div>;}
 function Scroll({children}){return <div style={{flex:1,overflowY:"auto",paddingBottom:72}}>{children}</div>;}
 function Hdr({C,dm,children}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{children}</div></div>);}
-function IdentHdr({C,dm,setDm}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><button onClick={()=>setDm(d=>!d)} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:C.surface,fontSize:16,cursor:"pointer"}}>{dm?"☀️":"🌙"}</button></div>);}
+function IdentHdr({C,dm,setDm,onWallet}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{onWallet&&<button onClick={onWallet} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:"#111",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>💰</button>}<button onClick={()=>setDm(d=>!d)} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:C.surface,fontSize:16,cursor:"pointer"}}>{dm?"☀️":"🌙"}</button></div></div>);}
 function PBtn({C,children,onClick,outline}){return <button onClick={onClick} style={{padding:"9px 20px",borderRadius:50,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1.5,display:"flex",alignItems:"center",gap:6,border:outline?"1.5px solid "+C.border:"none",background:outline?"transparent":C.accentBg,color:outline?C.text:C.accentText}}>{children}</button>;}
 function AvaBubble({name,C}){return <div style={{width:36,height:36,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:14}}>{name?name[0].toUpperCase():"?"}</div>;}
 function Ldg({C}){return <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}>LOADING…</div>;}
