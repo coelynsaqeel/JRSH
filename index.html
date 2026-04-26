@@ -856,12 +856,12 @@ function TutorApp({user,onLogout}){
     setPublishing(true);
     try{
       const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
-      const noteData={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_name:profile.name,created_at:new Date().toISOString(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:null};
+      const noteData={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_name:profile.name,created_at:new Date().toISOString(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pubForm.pdfDataUrl||null};
       if(!isSample){
         const [n]=await sb.post("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0});
         setNotes(ns=>[{...n},...ns]);
       }else{setNotes(ns=>[noteData,...ns]);}
-      setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null});setShowPublish(false);
+      setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null});setShowPublish(false);
     }catch(e){}finally{setPublishing(false);}
   }
 
@@ -959,9 +959,7 @@ function TutorApp({user,onLogout}){
                 <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{showReq.student_name||"Student"}</div>
                 <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{showReq.subject} · {showReq.day} {timeLbl(showReq.from_hour)}–{timeLbl(showReq.to_hour)}</div>
               </div>
-              <a href={"tel:"+(showReq.student_phone||"")} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",textDecoration:"none",flexShrink:0}} title="Call student">
-                <span style={{fontSize:20}}>📞</span>
-              </a>
+
             </div>
             {[
               {label:"MODE",value:showReq.online?"🌐 Online":"📍 Offline"},
@@ -1026,10 +1024,21 @@ function TutorApp({user,onLogout}){
       {showPublish&&<Modal onClose={()=>setShowPublish(false)} C={C}>
         <MT>📤 Publish Material</MT><MS C={C}>Share study resources with students.</MS>
         <ML C={C}>COVER IMAGE</ML>
-        <div onClick={()=>coverRef.current.click()} style={{height:140,borderRadius:14,border:"2px dashed "+C.border,marginBottom:14,overflow:"hidden",cursor:"pointer",background:pubForm.coverPreview?"transparent":C.surfaceAlt,display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
-          {pubForm.coverPreview?<img src={pubForm.coverPreview} alt="cover" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,color:C.sub}}><span style={{fontSize:28}}>🖼️</span><span style={{fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>TAP TO ADD COVER</span></div>}
-          {pubForm.coverPreview&&<div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,.5)",borderRadius:8,padding:"4px 10px",fontSize:10,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>CHANGE</div>}
+        <div style={{marginBottom:6}}>
+          <div style={{fontSize:9,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,marginBottom:6}}>PREVIEW — exactly as it appears on card</div>
+          {/* Exact NoteCard cover preview */}
+          <div style={{background:C.surface,borderRadius:18,overflow:"hidden",border:"1px solid "+C.border,marginBottom:10}}>
+            <div onClick={()=>coverRef.current.click()} style={{height:140,position:"relative",background:pubForm.coverPreview?"#000":C.surfaceAlt,cursor:"pointer",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {pubForm.coverPreview
+                ?<img src={pubForm.coverPreview} alt="cover" style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:"center top"}}/>
+                :<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,color:C.sub}}><span style={{fontSize:28}}>🖼️</span><span style={{fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>TAP TO SET COVER</span></div>}
+              {pubForm.coverPreview&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.0)",display:"flex",alignItems:"center",justifyContent:"center",opacity:0,transition:".2s"}} onMouseOver={e=>e.currentTarget.style.opacity=1} onMouseOut={e=>e.currentTarget.style.opacity=0}><span style={{background:"rgba(0,0,0,.6)",borderRadius:8,padding:"6px 14px",fontSize:11,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800}}>CHANGE COVER</span></div>}
+            </div>
+            <div style={{padding:"10px 12px 12px"}}>
+              <div style={{fontSize:10,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,letterSpacing:1}}>{pubForm.subject||"SUBJECT"}</div>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:13,color:C.text,marginTop:2,lineHeight:1.2}}>{pubForm.title?pubForm.title.toUpperCase():"NOTE TITLE APPEARS HERE"}</div>
+            </div>
+          </div>
         </div>
         <input type="file" accept="image/*" ref={coverRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setPubForm(p=>({...p,coverPreview:ev.target.result,coverFile:f}));r.readAsDataURL(f);}}/>
         <ML C={C}>TITLE</ML>
@@ -1041,7 +1050,7 @@ function TutorApp({user,onLogout}){
           {pubForm.file?<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}><span style={{fontSize:24}}>📄</span><span style={{fontSize:12,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,color:"#15803d"}}>{pubForm.file.name}</span><span style={{fontSize:10,color:"#15803d",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>TAP TO CHANGE</span></div>:
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,color:C.sub}}><span style={{fontSize:28}}>📎</span><span style={{fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>TAP TO ATTACH PDF</span></div>}
         </div>
-        <input type="file" accept=".pdf" ref={pdfRef} style={{display:"none"}} onChange={e=>setPubForm(f=>({...f,file:e.target.files[0]}))}/>
+        <input type="file" accept=".pdf" ref={pdfRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setPubForm(p=>({...p,file:f,pdfDataUrl:ev.target.result}));r.readAsDataURL(f);}}/>
         <SvBtn C={C} onClick={handlePublish} loading={publishing}>📤 PUBLISH</SvBtn>
         <CnBtn C={C} onClick={()=>setShowPublish(false)}>CANCEL</CnBtn>
       </Modal>}
