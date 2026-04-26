@@ -642,7 +642,7 @@ function StudentApp({user,onLogout}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm} onLogout={onLogout}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
@@ -933,7 +933,7 @@ function TutorApp({user,onLogout}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm} onLogout={onLogout}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
@@ -1053,7 +1053,7 @@ function TutorApp({user,onLogout}){
 function Shell({C,children}){return <div style={{fontFamily:"Barlow,sans-serif",background:C.bg,color:C.text,height:"100vh",maxWidth:430,margin:"0 auto",display:"flex",flexDirection:"column",overflow:"hidden",position:"relative"}}>{children}</div>;}
 function Scroll({children}){return <div style={{flex:1,overflowY:"auto",paddingBottom:72}}>{children}</div>;}
 function Hdr({C,dm,children}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{children}</div></div>);}
-function IdentHdr({C,dm,setDm,onWallet,onLogout}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{onWallet&&<button onClick={onWallet} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:"#111",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>💰</button>}<button onClick={()=>setDm(d=>!d)} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:C.surface,fontSize:16,cursor:"pointer"}}>{dm?"☀️":"🌙"}</button>{onLogout&&<button onClick={onLogout} style={{width:36,height:36,borderRadius:10,border:"1.5px solid #EF4444",background:"transparent",fontSize:15,cursor:"pointer",color:"#EF4444",display:"flex",alignItems:"center",justifyContent:"center"}}>↪</button>}</div></div>);}
+function IdentHdr({C,dm,setDm,onWallet}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{onWallet&&<button onClick={onWallet} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:"#111",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>💰</button>}<button onClick={()=>setDm(d=>!d)} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:C.surface,fontSize:16,cursor:"pointer"}}>{dm?"☀️":"🌙"}</button></div></div>);}
 function PBtn({C,children,onClick,outline}){return <button onClick={onClick} style={{padding:"9px 20px",borderRadius:50,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1.5,display:"flex",alignItems:"center",gap:6,border:outline?"1.5px solid "+C.border:"none",background:outline?"transparent":C.accentBg,color:outline?C.text:C.accentText}}>{children}</button>;}
 function AvaBubble({name,C}){return <div style={{width:36,height:36,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:14}}>{name?name[0].toUpperCase():"?"}</div>;}
 function Ldg({C}){return <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}>LOADING…</div>;}
