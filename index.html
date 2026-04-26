@@ -189,6 +189,62 @@ function CallDialog({lesson,onEnd,C}){
   );
 }
 
+/* ══ OFFLINE START BUTTON ══ */
+function OfflineStartButton({lesson,started,onStart,onDrop,onCancel,C}){
+  const GRACE=5*60; // 5 minutes in seconds
+  const [secs,setSecs]=React.useState(GRACE);
+  const [phase,setPhase]=React.useState("waiting"); // waiting | live
+  const startMs=lesson.start_ts||Date.now();
+
+  React.useEffect(()=>{
+    // Only show/countdown once lesson start time is reached
+    const now=Date.now();
+    if(now<startMs)return; // not yet time
+    if(started){setPhase("live");return;}
+    // Count down 5 min grace
+    const remaining=Math.max(0,GRACE-Math.floor((now-startMs)/1000));
+    if(remaining<=0){onDrop();return;}
+    setSecs(remaining);
+    const id=setInterval(()=>{
+      setSecs(s=>{
+        if(s<=1){clearInterval(id);onDrop();return 0;}
+        return s-1;
+      });
+    },1000);
+    return()=>clearInterval(id);
+  },[started,startMs]);
+
+  const now=Date.now();
+  if(now<startMs)return null; // lesson hasn't started yet, timer shows instead
+
+  const fmt=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
+
+  if(started){
+    return(
+      <button
+        onClick={e=>{e.stopPropagation();onCancel();}}
+        style={{marginTop:4,padding:"5px 12px",borderRadius:50,border:"1.5px solid #EF4444",background:"transparent",color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10,letterSpacing:1,cursor:"pointer",alignSelf:"flex-start"}}
+      >
+        CANCEL LESSON
+      </button>
+    );
+  }
+
+  return(
+    <div style={{marginTop:4,display:"flex",alignItems:"center",gap:6}}>
+      <button
+        onClick={e=>{e.stopPropagation();onStart();}}
+        style={{padding:"5px 14px",borderRadius:50,border:"none",background:"#22C55E",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10,letterSpacing:1,cursor:"pointer"}}
+      >
+        📍 START
+      </button>
+      <span style={{fontSize:9,fontWeight:800,color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif"}}>
+        drops in {fmt(secs)}
+      </span>
+    </div>
+  );
+}
+
 /* ══ CANCEL MODAL ══ */
 function CancelModal({onCancel,onClose,C}){
   return(
@@ -574,6 +630,8 @@ function StudentApp({user,onLogout}){
   const [profSaving,setProfSaving]=useState(false);
   const [openNote,setOpenNote]=useState(null);
   const [cancelLesson,setCancelLesson]=useState(null);
+  const [offlineStarted,setOfflineStarted]=useState({}); // lessonId -> true when student pressed START
+  const [offlineDropped,setOfflineDropped]=useState(new Set()); // lessonId -> dropped
   const [callLesson,setCallLesson]=useState(null);
   const pfpRef=useRef();
 
@@ -732,12 +790,32 @@ function StudentApp({user,onLogout}){
                 const startStr=l.start_ts?new Date(l.start_ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):timeLbl(l.from_hour);
                 const endMs=l.start_ts?(l.start_ts+(l.to_hour-l.from_hour)*3600000):null;
                 const endStr=endMs?new Date(endMs).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):timeLbl(l.to_hour);
+                const isOffline=!l.online;
+                const started=offlineStarted[l.id];
+                const dropped=offlineDropped.has(l.id);
                 return(
                   <div style={{marginTop:3,display:"flex",flexDirection:"column",gap:2}}>
                     {isPending&&<div style={{fontSize:9,fontWeight:800,color:"#E65100",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>⏳ Awaiting {tutorName||"tutor"}</div>}
                     {isAccepted&&tutorName&&<div style={{fontSize:9,fontWeight:800,color:"#166634",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>✓ {tutorName}</div>}
                     {isAccepted&&<div style={{fontSize:9,fontWeight:700,color:"#555",fontFamily:"'Barlow Condensed',sans-serif"}}>🕐 {startStr} → {endStr}</div>}
                     {isAccepted&&<LessonTimer lesson={l} C={C}/>}
+                    {isAccepted&&isOffline&&!dropped&&(
+                      <OfflineStartButton
+                        lesson={l}
+                        started={started}
+                        onStart={()=>{
+                          setOfflineStarted(s=>({...s,[l.id]:true}));
+                          try{const cur=JSON.parse(localStorage.getItem("jrsh_offline_started")||"[]");if(!cur.includes(l.id)){localStorage.setItem("jrsh_offline_started",JSON.stringify([...cur,l.id]));}}catch(e){}
+                        }}
+                        onDrop={()=>{
+                          setOfflineDropped(s=>{const n=new Set(s);n.add(l.id);return n;});
+                          setLessons(ls=>ls.filter(x=>x.id!==l.id));
+                        }}
+                        onCancel={()=>setCancelLesson(l)}
+                        C={C}
+                      />
+                    )}
+                    {dropped&&<div style={{fontSize:9,fontWeight:800,color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif"}}>⚠ Lesson dropped — tutor didn't arrive</div>}
                   </div>
                 );
               }}/>
@@ -949,6 +1027,15 @@ function TutorApp({user,onLogout}){
   const [openNote,setOpenNote]=useState(null);
   const [callLesson,setCallLesson]=useState(null);
   const [cancelReq,setCancelReq]=useState(null);
+  const [offlineStartedIds,setOfflineStartedIds]=useState(new Set()); // lessons student has started
+  React.useEffect(()=>{
+    function checkStarted(){
+      try{const ids=JSON.parse(localStorage.getItem("jrsh_offline_started")||"[]");setOfflineStartedIds(new Set(ids));}catch(e){}
+    }
+    checkStarted();
+    const id=setInterval(checkStarted,3000);
+    return()=>clearInterval(id);
+  },[]);
   const pfpRef=useRef();
   const pdfRef=useRef();
   const coverRef=useRef();
@@ -1071,7 +1158,23 @@ function TutorApp({user,onLogout}){
         <Scroll>
           {loadingR?<Ldg C={C}/>:
             <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} showStudent onTap={l=>setShowStudentProf(l)}
-              renderExtra={l=>(<LessonTimer lesson={l} C={C}/>)}/>
+              renderExtra={l=>{
+                const isOffline=!l.online;
+                const studentStarted=offlineStartedIds.has(l.id);
+                return(
+                  <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                    <LessonTimer lesson={l} C={C}/>
+                    {isOffline&&studentStarted&&(
+                      <button
+                        onClick={e=>{e.stopPropagation();setCancelReq(l);}}
+                        style={{marginTop:3,padding:"4px 12px",borderRadius:50,border:"1.5px solid #EF4444",background:"transparent",color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:9,letterSpacing:1,cursor:"pointer",alignSelf:"flex-start"}}
+                      >
+                        CANCEL LESSON
+                      </button>
+                    )}
+                  </div>
+                );
+              }}/>
           }
         </Scroll>
       </>}
