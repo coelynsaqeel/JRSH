@@ -526,15 +526,49 @@ function AppRoot(){
   const [screen,setScreen]=useState("welcome");
   const [role,setRole]=useState(null);
   const [user,setUser]=useState(null);
-  function handleJoin(u){setUser(u);setRole(u.role);setScreen("app");}
-  function handleLogout(){setUser(null);setScreen("welcome");}
+
+  // Back-navigation refs so StudentApp/TutorApp can register a "close modal" handler
+  const backHandlerRef=React.useRef(null);
+
+  function navTo(s){
+    window.history.pushState({screen:s},"",window.location.pathname);
+    setScreen(s);
+  }
+  function handleJoin(u){setUser(u);setRole(u.role);navTo("app");}
+  function handleLogout(){setUser(null);navTo("welcome");}
+
+  // Seed initial history entry so the very first popstate has somewhere to go
+  React.useEffect(()=>{
+    window.history.replaceState({screen:"welcome"},"",window.location.pathname);
+  },[]);
+
+  // Listen for Android/browser back button
+  React.useEffect(()=>{
+    function onPop(e){
+      // If a child registered a modal-close handler, call that first
+      if(backHandlerRef.current){
+        backHandlerRef.current();
+        backHandlerRef.current=null;
+        // Re-push so the stack depth is preserved for the next back press
+        window.history.pushState({screen},"",window.location.pathname);
+        return;
+      }
+      const target=(e.state&&e.state.screen)||"welcome";
+      if(target==="welcome"){setUser(null);setRole(null);setScreen("welcome");}
+      else if(target==="register"){setScreen("register");}
+      else{setScreen(target);}
+    }
+    window.addEventListener("popstate",onPop);
+    return()=>window.removeEventListener("popstate",onPop);
+  },[screen]);
+
   return(
     <>
-      {screen==="welcome"&&<WelcomeScreen onSelect={r=>{setRole(r);setScreen("register");}}/>}
-      {screen==="register"&&role==="student"&&<StudentRegister onBack={()=>setScreen("welcome")} onJoin={handleJoin}/>}
-      {screen==="register"&&role==="tutor"&&<TutorRegister onBack={()=>setScreen("welcome")} onJoin={handleJoin}/>}
-      {screen==="app"&&role==="student"&&user&&<StudentApp user={user} onLogout={handleLogout}/>}
-      {screen==="app"&&role==="tutor"&&user&&<TutorApp user={user} onLogout={handleLogout}/>}
+      {screen==="welcome"&&<WelcomeScreen onSelect={r=>{setRole(r);navTo("register");}}/>}
+      {screen==="register"&&role==="student"&&<StudentRegister onBack={()=>{window.history.back();}} onJoin={handleJoin}/>}
+      {screen==="register"&&role==="tutor"&&<TutorRegister onBack={()=>{window.history.back();}} onJoin={handleJoin}/>}
+      {screen==="app"&&role==="student"&&user&&<StudentApp user={user} onLogout={handleLogout} backHandlerRef={backHandlerRef}/>}
+      {screen==="app"&&role==="tutor"&&user&&<TutorApp user={user} onLogout={handleLogout} backHandlerRef={backHandlerRef}/>}
     </>
   );
 }
@@ -668,7 +702,7 @@ function TutorRegister({onBack,onJoin}){
 }
 
 /* ══ STUDENT APP ══ */
-function StudentApp({user,onLogout}){
+function StudentApp({user,onLogout,backHandlerRef}){
   const isSample=user.id&&user.id.startsWith("sample-");
   const [dm,setDm]=useState(false);
   const C=dm?dC():lC();
@@ -705,6 +739,21 @@ function StudentApp({user,onLogout}){
   const [offlineDropped,setOfflineDropped]=useState(new Set()); // lessonId -> dropped
   const [callLesson,setCallLesson]=useState(null);
   const pfpRef=useRef();
+
+  // Register back handler for open overlays/modals
+  useEffect(()=>{
+    if(!backHandlerRef)return;
+    if(openNote){backHandlerRef.current=()=>setOpenNote(null);return;}
+    if(showTutorProfile){backHandlerRef.current=()=>setShowTutorProfile(null);return;}
+    if(showTutors){backHandlerRef.current=()=>setShowTutors(null);return;}
+    if(showAdd){backHandlerRef.current=()=>setShowAdd(false);return;}
+    if(showManage){backHandlerRef.current=()=>setShowManage(false);return;}
+    if(showHistory){backHandlerRef.current=()=>setShowHistory(false);return;}
+    if(editLesson){backHandlerRef.current=()=>setEditLesson(null);return;}
+    if(cancelLesson){backHandlerRef.current=()=>setCancelLesson(null);return;}
+    if(profEdit){backHandlerRef.current=()=>setProfEdit(false);return;}
+    backHandlerRef.current=null;
+  },[backHandlerRef,openNote,showTutorProfile,showTutors,showAdd,showManage,showHistory,editLesson,cancelLesson,profEdit]);
 
   // Fetch data for real users
   useEffect(()=>{
@@ -1070,7 +1119,7 @@ function StudentApp({user,onLogout}){
 }
 
 /* ══ TUTOR APP ══ */
-function TutorApp({user,onLogout}){
+function TutorApp({user,onLogout,backHandlerRef}){
   const isSample=user.id&&user.id.startsWith("sample-");
   const [dm,setDm]=useState(false);
   const C=dm?dC():lC();
@@ -1138,6 +1187,22 @@ function TutorApp({user,onLogout}){
   const pfpRef=useRef();
   const pdfRef=useRef();
   const coverRef=useRef();
+
+  // Register back handler for open overlays/modals
+  useEffect(()=>{
+    if(!backHandlerRef)return;
+    if(openNote){backHandlerRef.current=()=>setOpenNote(null);return;}
+    if(showReq){backHandlerRef.current=()=>setShowReq(null);return;}
+    if(showPublish){backHandlerRef.current=()=>setShowPublish(false);return;}
+    if(editingNote){backHandlerRef.current=()=>setEditingNote(null);return;}
+    if(showWallet){backHandlerRef.current=()=>setShowWallet(false);return;}
+    if(showStudentProf){backHandlerRef.current=()=>setShowStudentProf(null);return;}
+    if(showManage){backHandlerRef.current=()=>setShowManage(false);return;}
+    if(showHistory){backHandlerRef.current=()=>setShowHistory(false);return;}
+    if(cancelReq){backHandlerRef.current=()=>setCancelReq(null);return;}
+    if(profEdit){backHandlerRef.current=()=>setProfEdit(false);return;}
+    backHandlerRef.current=null;
+  },[backHandlerRef,openNote,showReq,showPublish,editingNote,showWallet,showStudentProf,showManage,showHistory,cancelReq,profEdit]);
 
   useEffect(()=>{
     if(isSample)return;
