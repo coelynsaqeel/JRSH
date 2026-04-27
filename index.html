@@ -686,6 +686,7 @@ function StudentApp({user,onLogout}){
   const [editLesson,setEditLesson]=useState(null);
   const [requested,setRequested]=useState(new Set());
   const [addForm,setAddForm]=useState({subject:"",day:"MON",from:8,to:9,desc:"",online:false});
+  const [addErr,setAddErr]=useState("");
   const [saving,setSaving]=useState(false);
   const [tutors,setTutors]=useState(isSample?SAMPLE_TUTORS:[]);
   const [notes,setNotes]=useState(isSample?SAMPLE_NOTES:[]);
@@ -748,8 +749,24 @@ function StudentApp({user,onLogout}){
     return()=>clearInterval(interval);
   },[lessons,acceptedMap,callLesson]);
 
+  function hasOverlap(day,from,to,excludeId){
+    return lessons.some(l=>{
+      if(l.day!==day)return false;
+      if(excludeId&&l.id===excludeId)return false;
+      // Overlap if one starts before the other ends
+      return from<l.to_hour&&to>l.from_hour;
+    });
+  }
   async function handleAddLesson(){
     if(!addForm.subject||saving)return;
+    setAddErr("");
+    if(addForm.from>=addForm.to){setAddErr("Start time must be before end time.");return;}
+    if(hasOverlap(addForm.day,addForm.from,addForm.to)){
+      const clashing=lessons.filter(l=>l.day===addForm.day&&addForm.from<l.to_hour&&addForm.to>l.from_hour);
+      const names=clashing.map(l=>l.subject).join(", ");
+      setAddErr("This slot overlaps with: "+names+". Please choose a different time.");
+      return;
+    }
     setSaving(true);
     try{
       if(isSample){
@@ -759,7 +776,7 @@ function StudentApp({user,onLogout}){
         const [lesson]=await sb.post("lessons",{student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online});
         setLessons(l=>[...l,lesson]);
       }
-      setShowAdd(false);setAddForm({subject:"",day:"MON",from:8,to:9,desc:"",online:false});
+      setShowAdd(false);setAddForm({subject:"",day:"MON",from:8,to:9,desc:"",online:false});setAddErr("");
     }catch(e){}finally{setSaving(false);}
   }
 
@@ -927,6 +944,7 @@ function StudentApp({user,onLogout}){
         <input style={miSty(C)} placeholder="Brief note…" value={addForm.desc} onChange={e=>setAddForm(f=>({...f,desc:e.target.value}))}/>
         <ML C={C}>MODE</ML>
         <ModeRow online={addForm.online} C={C} setOnline={v=>setAddForm(f=>({...f,online:v}))}/>
+        {addErr&&<div style={{fontSize:11,color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginBottom:8,lineHeight:1.4}}>{addErr}</div>}
         <SvBtn C={C} onClick={handleAddLesson} loading={saving}>💾 SAVE SLOT</SvBtn>
         <CnBtn C={C} onClick={()=>setShowAdd(false)}>CANCEL</CnBtn>
       </Modal>}
@@ -1103,6 +1121,7 @@ function TutorApp({user,onLogout}){
   const [openNote,setOpenNote]=useState(null);
   const [notePages,setNotePages]=useState({});
   const [editingNote,setEditingNote]=useState(null);
+  const [showNoteEditCover,setShowNoteEditCover]=useState(false);
   const editCoverRef=React.useRef();
   const editPdfRef=React.useRef();
   const [callLesson,setCallLesson]=useState(null);
@@ -1157,11 +1176,32 @@ function TutorApp({user,onLogout}){
   const getLessonsForDay=d=>booked.filter(l=>l.day===d).sort((a,b)=>a.from_hour-b.from_hour);
 
   async function handleRespond(reqId,status){
-    if(reqSaving)return;setReqSaving(true);
+    if(reqSaving)return;
+    const req=requests.find(r=>r.id===reqId);
+    if(!req)return;
+    // Overlap check on accept
+    if(status==="accepted"){
+      const clash=booked.find(l=>
+        l.id!==reqId&&
+        l.day===req.day&&
+        req.from_hour<l.to_hour&&
+        req.to_hour>l.from_hour
+      );
+      if(clash){
+        alert(`Cannot accept — this overlaps with ${clash.subject} (${timeLbl(clash.from_hour)}–${timeLbl(clash.to_hour)}) on ${clash.day}. Decline this request or cancel the other session first.`);
+        return;
+      }
+    }
+    setReqSaving(true);
     try{
       if(!isSample)await sb.patch("tutor_requests","?id=eq."+reqId,{status});
-      setRequests(r=>r.map(x=>x.id===reqId?{...x,status}:x));
-      setShowReq(null); // stays on requests list; accepted item auto-drops from pending filter
+      if(status==="declined"){
+        // Remove declined requests from the list entirely
+        setRequests(r=>r.filter(x=>x.id!==reqId));
+      }else{
+        setRequests(r=>r.map(x=>x.id===reqId?{...x,status}:x));
+      }
+      setShowReq(null);
     }catch(e){}finally{setReqSaving(false);}
   }
 
@@ -1216,17 +1256,41 @@ function TutorApp({user,onLogout}){
   return(
     <Shell C={C}>
       {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))}/>}
+      {showNoteEditCover&&editingNote&&editingNote.cover_url&&<CoverEditPage
+        src={editingNote.cover_url}
+        pos={editingNote.cover_pos||{x:50,y:50}}
+        onSave={(pos)=>{setEditingNote(n=>({...n,cover_pos:pos}));setShowNoteEditCover(false);}}
+        onChangeCover={()=>editCoverRef.current&&editCoverRef.current.click()}
+        onClose={()=>setShowNoteEditCover(false)}
+        noteTitle={editingNote.title}
+        noteSubject={editingNote.subject}
+        C={C}
+      />}
       {editingNote&&<Modal onClose={()=>setEditingNote(null)} C={C}>
         <MT>✏️ Edit Note</MT><MS C={C}>Update your published material.</MS>
         <ML C={C}>TITLE</ML><FI C={C} value={editingNote.title} onChange={e=>setEditingNote(n=>({...n,title:e.target.value}))}/>
         <ML C={C}>COVER IMAGE</ML>
-        <CoverEditor
-          src={editingNote.cover_url||null}
-          pos={editingNote.cover_pos||{x:50,y:50}}
-          onPosChange={pos=>setEditingNote(n=>({...n,cover_pos:pos}))}
-          onChangeCover={()=>editCoverRef.current&&editCoverRef.current.click()}
-        />
-        <input type="file" accept="image/*" ref={editCoverRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditingNote(n=>({...n,cover_url:ev.target.result,cover_pos:{x:50,y:50}}));r.readAsDataURL(f);}}/>
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:9,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,marginBottom:6}}>PREVIEW — as it appears on card</div>
+          <div style={{background:C.surface,borderRadius:16,overflow:"hidden",border:"1px solid "+C.border}}>
+            {editingNote.cover_url
+              ?<div onClick={()=>setShowNoteEditCover(true)} style={{height:140,position:"relative",overflow:"hidden",cursor:"pointer"}}>
+                  <img src={editingNote.cover_url} alt="cover" draggable={false} style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:editingNote.cover_pos?`${editingNote.cover_pos.x}% ${editingNote.cover_pos.y}%`:"center",pointerEvents:"none"}}/>
+                  <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,.55)",borderRadius:8,padding:"3px 10px",fontSize:9,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>✏ EDIT</div>
+                </div>
+              :<div onClick={()=>editCoverRef.current&&editCoverRef.current.click()} style={{height:140,background:C.surfaceAlt,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,cursor:"pointer"}}>
+                  <span style={{fontSize:28}}>🖼️</span>
+                  <span style={{fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,color:C.sub}}>TAP TO SET COVER</span>
+                </div>
+            }
+            <div style={{padding:"8px 10px 10px"}}>
+              <div style={{fontSize:9,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,letterSpacing:1}}>{(editingNote.subject||"SUBJECT").toUpperCase()}</div>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:12,color:C.text,marginTop:1,lineHeight:1.2}}>{editingNote.title||"TITLE"}</div>
+            </div>
+          </div>
+          {editingNote.cover_url&&<button onClick={()=>editCoverRef.current&&editCoverRef.current.click()} style={{marginTop:8,fontSize:10,fontWeight:700,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",background:"none",border:"none",cursor:"pointer",padding:0}}>Change image →</button>}
+        </div>
+        <input type="file" accept="image/*" ref={editCoverRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{setEditingNote(n=>({...n,cover_url:ev.target.result,cover_pos:{x:50,y:50}}));setShowNoteEditCover(true);};r.readAsDataURL(f);}}/>
         <div style={{marginTop:10,display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>editPdfRef.current&&editPdfRef.current.click()} style={{padding:"9px 16px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,cursor:"pointer"}}>
             📎 {editingNote.pdf_url?"REPLACE PDF":"ATTACH PDF"}
