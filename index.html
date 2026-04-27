@@ -94,26 +94,58 @@ function gradeToLevel(grade){
 }
 
 /* ══ SAMPLE DATA ══ */
-// Sample lesson: accepted, starts 2 minutes from now
-const SAMPLE_START_TS=Date.now()+(2*60*1000); // 2 minutes from page load
+const NOW=Date.now();
+const MINS=60*1000;
+const HRS=3600*1000;
+const DAYS_MS=86400*1000;
+
+// Sample timestamps
+const SAMPLE_START_TS=NOW+(2*MINS);             // online lesson starts in 2 min (triggers call)
+const OFFLINE_NOW_TS=NOW-(30*1000);              // offline lesson started 30s ago → START button showing
+const OFFLINE_FUTURE_TS=NOW+(3*HRS);             // offline lesson in 3 hrs
+const OFFLINE_PAST_TS=NOW-(10*MINS);             // offline lesson 10 min ago → already dropped scenario
+
 const SAMPLE_LESSONS_STUDENT=[
-  {id:"sl1",student_id:"sample-s1",subject:"Mathematics",day:"MON",from_hour:8,to_hour:9,description:"Need help with quadratic equations.",online:true,start_ts:SAMPLE_START_TS,_accepted:true,_tutorName:"Dr. Jane Mwangi",_tutorObj:{id:"sample-t1",name:"Dr. Jane Mwangi",age:34,gender:"Female",location:"Nairobi, Karen",curriculum_level:"Senior School",hourly_rate_online:900,hourly_rate_offline:700,subjects_taught:["Mathematics","Chemistry","Physics"]}},
-  {id:"sl3",student_id:"sample-s1",subject:"Biology",day:"WED",from_hour:14,to_hour:15,description:"Help with cell biology chapter.",online:false,start_ts:Date.now()+7200000,_accepted:true,_tutorName:"Mr. Samuel Otieno",_tutorObj:{id:"sample-t4",name:"Mr. Samuel Otieno",age:31,gender:"Male",location:"Nairobi, Westlands",curriculum_level:"Senior School",hourly_rate_online:800,hourly_rate_offline:600,subjects_taught:["Biology","Chemistry"]}},
-  {id:"sl4",student_id:"sample-s1",subject:"Chemistry",day:"FRI",from_hour:10,to_hour:11,description:"Periodic table and bonding.",online:false,start_ts:null,_accepted:false},
+  // MON — Online, accepted, starts in 2 min → will auto-trigger call dialog
+  {id:"sl1",student_id:"sample-s1",subject:"Mathematics",day:"MON",from_hour:8,to_hour:9,description:"Need help with quadratic equations and factorisation.",online:true,start_ts:SAMPLE_START_TS,_accepted:true,_tutorName:"Dr. Jane Mwangi",_tutorObj:{id:"sample-t1",name:"Dr. Jane Mwangi",age:34,gender:"Female",location:"Nairobi, Karen",curriculum_level:"Senior School",hourly_rate_online:900,hourly_rate_offline:700,subjects_taught:["Mathematics","Chemistry","Physics"]}},
+  // TUE — Offline, accepted, starts NOW → shows START button with 5-min countdown
+  {id:"sl5",student_id:"sample-s1",subject:"Physics",day:"TUE",from_hour:10,to_hour:11,description:"Help with Newton's laws and motion problems.",online:false,start_ts:OFFLINE_NOW_TS,_accepted:true,_tutorName:"Mr. Samuel Otieno",_tutorObj:{id:"sample-t4",name:"Mr. Samuel Otieno",age:31,gender:"Male",location:"Nairobi, Westlands",curriculum_level:"Senior School",hourly_rate_online:800,hourly_rate_offline:600,subjects_taught:["Biology","Physics","Chemistry"]}},
+  // WED — Offline, accepted, future → shows timer "starts in"
+  {id:"sl3",student_id:"sample-s1",subject:"Biology",day:"WED",from_hour:14,to_hour:15,description:"Help with cell biology chapter — organelles and functions.",online:false,start_ts:OFFLINE_FUTURE_TS,_accepted:true,_tutorName:"Ms. Fatuma Hassan",_tutorObj:{id:"sample-t3",name:"Ms. Fatuma Hassan",age:29,gender:"Female",location:"Mombasa, Nyali",curriculum_level:"Senior School",hourly_rate_online:600,hourly_rate_offline:450,subjects_taught:["Biology","Chemistry","Life Skills Education"]}},
+  // THU — Pending request (orange) — awaiting tutor acceptance
+  {id:"sl6",student_id:"sample-s1",subject:"English",day:"THU",from_hour:9,to_hour:10,description:"Essay writing and grammar corrections.",online:true,start_ts:null,_pending:true,_accepted:false,_tutorName:"Prof. David Otieno",_tutorObj:{id:"sample-t2",name:"Prof. David Otieno",age:42,gender:"Male",location:"Kisumu, Milimani",curriculum_level:"Senior School",hourly_rate_online:700,hourly_rate_offline:550,subjects_taught:["English","Literature","History"]}},
+  // FRI — Unbooked slot, no tutor yet → tapping opens tutor list
+  {id:"sl4",student_id:"sample-s1",subject:"Chemistry",day:"FRI",from_hour:10,to_hour:11,description:"Periodic table, chemical bonding and reactions.",online:false,start_ts:null,_accepted:false},
 ];
+
 const SAMPLE_LESSONS_TUTOR=[
-  {id:"sl1",tutor_id:"sample-t1",student_id:"sample-s1",student_name:"Amara Wanjiku",student_age:17,student_gender:"Female",student_location:"Nairobi, Westlands",student_grade:"Grade 10",subject:"Mathematics",day:"MON",from_hour:8,to_hour:9,description:"Need help with quadratic equations.",online:true,start_ts:SAMPLE_START_TS,status:"accepted"},
-  {id:"sl2",tutor_id:"sample-t1",student_id:"sample-s2",student_name:"Kofi Mensah",student_age:16,student_gender:"Male",student_location:"Nairobi, South B",student_grade:"Grade 9",subject:"Biology",day:"WED",from_hour:14,to_hour:15,description:"Help with cell biology chapter.",online:false,start_ts:null,status:"pending"},
+  // MON — Online, accepted, starts in 2 min (same as student sl1)
+  {id:"sl1",tutor_id:"sample-t1",student_id:"sample-s1",student_name:"Amara Wanjiku",student_age:17,student_gender:"Female",student_location:"Nairobi, Westlands",student_grade:"Grade 11",subject:"Mathematics",day:"MON",from_hour:8,to_hour:9,description:"Need help with quadratic equations and factorisation.",online:true,start_ts:SAMPLE_START_TS,status:"accepted"},
+  // TUE — Offline, accepted, NOW → student sees START button; tutor sees CANCEL after student starts
+  {id:"sl5",tutor_id:"sample-t1",student_id:"sample-s3",student_name:"Grace Oduya",student_age:16,student_gender:"Female",student_location:"Nairobi, Upperhill",student_grade:"Grade 10",subject:"Physics",day:"TUE",from_hour:10,to_hour:11,description:"Help with Newton's laws and motion problems.",online:false,start_ts:OFFLINE_NOW_TS,status:"accepted"},
+  // WED — Offline, accepted, future
+  {id:"sl3",tutor_id:"sample-t1",student_id:"sample-s2",student_name:"Kofi Mensah",student_age:16,student_gender:"Male",student_location:"Nairobi, South B",student_grade:"Grade 10",subject:"Biology",day:"WED",from_hour:14,to_hour:15,description:"Help with cell biology chapter.",online:false,start_ts:OFFLINE_FUTURE_TS,status:"accepted"},
+  // THU — Pending request → shows in REQUESTS tab for tutor to accept/decline
+  {id:"sl6",tutor_id:"sample-t1",student_id:"sample-s4",student_name:"Aisha Kamau",student_age:17,student_gender:"Female",student_location:"Nairobi, Kilimani",student_grade:"Grade 11",subject:"English",day:"THU",from_hour:9,to_hour:10,description:"Essay writing and grammar corrections. Need help before my exam next week.",online:true,start_ts:null,status:"pending"},
+  // SAT — Another pending request
+  {id:"sl7",tutor_id:"sample-t1",student_id:"sample-s5",student_name:"Brian Ochieng",student_age:15,student_gender:"Male",student_location:"Nairobi, Eastleigh",student_grade:"Grade 9",subject:"Mathematics",day:"SAT",from_hour:11,to_hour:12,description:"Need help with algebra and simultaneous equations.",online:false,start_ts:null,status:"pending"},
 ];
+
 const SAMPLE_TUTORS=[
   {id:"sample-t1",name:"Dr. Jane Mwangi",age:34,gender:"Female",location:"Nairobi, Karen",role:"tutor",curriculum_level:"Senior School",hourly_rate_online:900,hourly_rate_offline:700,subjects_taught:["Mathematics","Chemistry","Physics"]},
-  {id:"sample-t2",name:"Prof. David Otieno",age:42,gender:"Male",location:"Kisumu, Milimani",role:"tutor",curriculum_level:"Middle School",hourly_rate_online:700,hourly_rate_offline:550,subjects_taught:["Mathematics","Biology","Integrated Science"]},
-  {id:"sample-t3",name:"Ms. Fatuma Hassan",age:29,gender:"Female",location:"Mombasa, Nyali",role:"tutor",curriculum_level:"Middle School",hourly_rate_online:600,hourly_rate_offline:450,subjects_taught:["English","Kiswahili","Life Skills Education"]},
+  {id:"sample-t2",name:"Prof. David Otieno",age:42,gender:"Male",location:"Kisumu, Milimani",role:"tutor",curriculum_level:"Senior School",hourly_rate_online:700,hourly_rate_offline:550,subjects_taught:["English","Literature","History"]},
+  {id:"sample-t3",name:"Ms. Fatuma Hassan",age:29,gender:"Female",location:"Mombasa, Nyali",role:"tutor",curriculum_level:"Senior School",hourly_rate_online:600,hourly_rate_offline:450,subjects_taught:["Biology","Chemistry","Life Skills Education"]},
+  {id:"sample-t4",name:"Mr. Samuel Otieno",age:31,gender:"Male",location:"Nairobi, Westlands",role:"tutor",curriculum_level:"Senior School",hourly_rate_online:800,hourly_rate_offline:600,subjects_taught:["Biology","Physics","Chemistry"]},
+  {id:"sample-t5",name:"Mrs. Joyce Mutua",age:38,gender:"Female",location:"Nairobi, Embakasi",role:"tutor",curriculum_level:"Middle School",hourly_rate_online:500,hourly_rate_offline:400,subjects_taught:["Mathematics","Science","English"]},
 ];
+
 const SAMPLE_NOTES=[
-  {id:"sn1",title:"MATHEMATICS GRADE 10 — ALGEBRA",subject:"Mathematics",tutor_name:"Dr. Jane Mwangi",created_at:new Date(Date.now()-2*86400000).toISOString(),rating:4.8,cover_color:"#c8e6c9",cover_url:null,pdf_url:null},
-  {id:"sn2",title:"BIOLOGY GRADE 8 — CELL STRUCTURE",subject:"Biology",tutor_name:"Prof. David Otieno",created_at:new Date(Date.now()-5*86400000).toISOString(),rating:4.5,cover_color:"#bbdefb",cover_url:null,pdf_url:null},
-  {id:"sn3",title:"ENGLISH LITERATURE — POETRY UNIT",subject:"English",tutor_name:"Ms. Fatuma Hassan",created_at:new Date(Date.now()-86400000).toISOString(),rating:4.9,cover_color:"#ffe0b2",cover_url:null,pdf_url:null},
+  {id:"sn1",_mine:true,title:"MATHEMATICS — QUADRATIC EQUATIONS",subject:"Mathematics",tutor_name:"Dr. Jane Mwangi",created_at:new Date(NOW-2*DAYS_MS).toISOString(),rating:4.8,cover_color:"#c8e6c9",cover_url:null,pdf_url:null,cover_pos:{x:50,y:50}},
+  {id:"sn2",title:"BIOLOGY — CELL STRUCTURE & ORGANELLES",subject:"Biology",tutor_name:"Mr. Samuel Otieno",created_at:new Date(NOW-5*DAYS_MS).toISOString(),rating:4.5,cover_color:"#bbdefb",cover_url:null,pdf_url:null,cover_pos:{x:50,y:50}},
+  {id:"sn3",title:"ENGLISH LITERATURE — POETRY ANALYSIS",subject:"English",tutor_name:"Ms. Fatuma Hassan",created_at:new Date(NOW-DAYS_MS).toISOString(),rating:4.9,cover_color:"#ffe0b2",cover_url:null,pdf_url:null,cover_pos:{x:50,y:50}},
+  {id:"sn4",_mine:true,title:"CHEMISTRY — PERIODIC TABLE & BONDING",subject:"Chemistry",tutor_name:"Prof. David Otieno",created_at:new Date(NOW-3*DAYS_MS).toISOString(),rating:4.7,cover_color:"#f8bbd0",cover_url:null,pdf_url:null,cover_pos:{x:50,y:50}},
+  {id:"sn5",title:"PHYSICS — NEWTON'S LAWS OF MOTION",subject:"Physics",tutor_name:"Mr. Samuel Otieno",created_at:new Date(NOW-7*DAYS_MS).toISOString(),rating:4.6,cover_color:"#d1c4e9",cover_url:null,pdf_url:null,cover_pos:{x:50,y:50}},
+  {id:"sn6",title:"MATHEMATICS — TRIGONOMETRY BASICS",subject:"Mathematics",tutor_name:"Dr. Jane Mwangi",created_at:new Date(NOW-10*DAYS_MS).toISOString(),rating:4.4,cover_color:"#b2dfdb",cover_url:null,pdf_url:null,cover_pos:{x:50,y:50}},
 ];
 
 /* ══ HELPERS ══ */
@@ -262,11 +294,11 @@ function CancelModal({onCancel,onClose,C}){
 }
 
 /* ══ PDF VIEWER ══ */
-function PdfViewer({note,onClose,C}){
+function PdfViewer({note,onClose,C,initialPage,onPageChange}){
   const containerRef=React.useRef();
   const canvasRef=React.useRef();
   const [pdf,setPdf]=React.useState(null);
-  const [page,setPage]=React.useState(1);
+  const [page,setPage]=React.useState(initialPage||1);
   const [total,setTotal]=React.useState(0);
   const [loading,setLoading]=React.useState(true);
   const [err,setErr]=React.useState("");
@@ -385,9 +417,9 @@ function PdfViewer({note,onClose,C}){
       {/* Nav bar */}
       {total>1&&!loading&&!err&&(
         <div style={{background:"#111",padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"center",gap:16,flexShrink:0,borderTop:"1px solid #222"}}>
-          <button onClick={()=>{setPage(p=>Math.max(1,p-1));setZoom(1);setPan({x:0,y:0});}} disabled={page===1} style={{background:"#222",border:"1px solid "+(page===1?"#333":"#555"),borderRadius:8,padding:"9px 20px",color:page===1?"#444":"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:page===1?"default":"pointer"}}>‹ PREV</button>
+          <button onClick={()=>{const np=Math.max(1,page-1);setPage(np);setZoom(1);setPan({x:0,y:0});if(onPageChange)onPageChange(np);}} disabled={page===1} style={{background:"#222",border:"1px solid "+(page===1?"#333":"#555"),borderRadius:8,padding:"9px 20px",color:page===1?"#444":"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:page===1?"default":"pointer"}}>‹ PREV</button>
           <span style={{color:"#888",fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,fontWeight:700,minWidth:50,textAlign:"center"}}>{page} / {total}</span>
-          <button onClick={()=>{setPage(p=>Math.min(total,p+1));setZoom(1);setPan({x:0,y:0});}} disabled={page===total} style={{background:"#222",border:"1px solid "+(page===total?"#333":"#555"),borderRadius:8,padding:"9px 20px",color:page===total?"#444":"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:page===total?"default":"pointer"}}>NEXT ›</button>
+          <button onClick={()=>{const np=Math.min(total,page+1);setPage(np);setZoom(1);setPan({x:0,y:0});if(onPageChange)onPageChange(np);}} disabled={page===total} style={{background:"#222",border:"1px solid "+(page===total?"#333":"#555"),borderRadius:8,padding:"9px 20px",color:page===total?"#444":"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:page===total?"default":"pointer"}}>NEXT ›</button>
         </div>
       )}
     </div>
@@ -609,7 +641,7 @@ function StudentApp({user,onLogout}){
   const [tab,setTab]=useState("timetable");
   const [lessons,setLessons]=useState(isSample?SAMPLE_LESSONS_STUDENT:[]);
   const [loadingL,setLoadingL]=useState(!isSample);
-  const [acceptedMap,setAcceptedMap]=useState(isSample?{"sl1":true,"sl3":true}:{});
+  const [acceptedMap,setAcceptedMap]=useState(isSample?{"sl1":true,"sl3":true,"sl5":true}:{});
   const [showAdd,setShowAdd]=useState(false);
   const [showManage,setShowManage]=useState(false);
   const [showTutorProfile,setShowTutorProfile]=React.useState(null);
@@ -629,6 +661,7 @@ function StudentApp({user,onLogout}){
   const [editP,setEditP]=useState({...user});
   const [profSaving,setProfSaving]=useState(false);
   const [openNote,setOpenNote]=useState(null);
+  const [notePages,setNotePages]=useState({});
   const [cancelLesson,setCancelLesson]=useState(null);
   const [offlineStarted,setOfflineStarted]=useState({}); // lessonId -> true when student pressed START
   const [offlineDropped,setOfflineDropped]=useState(new Set()); // lessonId -> dropped
@@ -767,7 +800,7 @@ function StudentApp({user,onLogout}){
 
   return(
     <Shell C={C}>
-      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C}/>}
+      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))}/>}
       {callLesson&&<CallDialog lesson={callLesson} onEnd={(reason)=>{
         if(callLesson.online||reason==="ended"||reason==="timeout"){
           setLessons(ls=>ls.filter(l=>l.id!==callLesson.id));
@@ -827,8 +860,8 @@ function StudentApp({user,onLogout}){
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/></div>
         <Scroll>
           <ArchSearch value={archSearch} onChange={setArchSearch} C={C}/>
-          <FilterRow value={archFilter} onChange={setArchFilter} C={C}/>
-          {loadingN?<Ldg C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote}/>}
+          <FilterRow value={archFilter} onChange={setArchFilter} C={C} tabs={["ALL","FAVORITES","SAVED","MY NOTES"]}/>
+          {loadingN?<Ldg C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote} onEdit={archFilter==="MY NOTES"?setEditingNote:null}/>}
         </Scroll>
       </>}
 
@@ -1025,6 +1058,8 @@ function TutorApp({user,onLogout}){
   const [editP,setEditP]=useState({...user});
   const [profSaving,setProfSaving]=useState(false);
   const [openNote,setOpenNote]=useState(null);
+  const [notePages,setNotePages]=useState({});
+  const [editingNote,setEditingNote]=useState(null);
   const [callLesson,setCallLesson]=useState(null);
   const [cancelReq,setCancelReq]=useState(null);
   const [offlineStartedIds,setOfflineStartedIds]=useState(new Set()); // lessons student has started
@@ -1128,13 +1163,15 @@ function TutorApp({user,onLogout}){
     let n=notes.map(note=>({...note,...(interactions[note.id]||{liked:false,saved:false})}));
     if(archFilter==="FAVORITES")n=n.filter(x=>x.liked);
     if(archFilter==="SAVED")n=n.filter(x=>x.saved);
+    if(archFilter==="MY NOTES")n=n.filter(x=>x.tutor_name===profile.name||x._mine);
     if(archSearch)n=n.filter(x=>x.title?.toLowerCase().includes(archSearch.toLowerCase())||x.subject?.toLowerCase().includes(archSearch.toLowerCase()));
     return n;
   };
 
   return(
     <Shell C={C}>
-      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C}/>}
+      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))}/>}
+      {editingNote&&<Modal onClose={()=>setEditingNote(null)} C={C}><MT>✏️ Edit Note</MT><MS C={C}>Update your published material.</MS><ML C={C}>TITLE</ML><FI C={C} value={editingNote.title} onChange={e=>setEditingNote(n=>({...n,title:e.target.value}))}/><div style={{display:"flex",gap:10,marginTop:16}}><button onClick={()=>{setNotes(ns=>ns.map(n=>n.id===editingNote.id?{...n,...editingNote}:n));setEditingNote(null);}} style={{flex:1,padding:"13px",borderRadius:50,border:"none",background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:"pointer"}}>SAVE</button><button onClick={()=>{setNotes(ns=>ns.filter(n=>n.id!==editingNote.id));setEditingNote(null);}} style={{flex:1,padding:"13px",borderRadius:50,border:"1.5px solid #EF4444",background:"transparent",color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:"pointer"}}>DELETE</button></div><CnBtn C={C} onClick={()=>setEditingNote(null)}>CANCEL</CnBtn></Modal>}
       {callLesson&&<CallDialog lesson={callLesson} onEnd={(reason)=>{
         if(callLesson.online||reason==="ended"||reason==="timeout"){
           setRequests(rs=>rs.filter(r=>r.id!==callLesson.id));
@@ -1183,8 +1220,8 @@ function TutorApp({user,onLogout}){
         <Hdr C={C} dm={dm}><PBtn C={C} onClick={()=>setShowPublish(true)}><span style={{fontSize:16}}>+</span> PUBLISH</PBtn></Hdr>
         <Scroll>
           <ArchSearch value={archSearch} onChange={setArchSearch} C={C}/>
-          <FilterRow value={archFilter} onChange={setArchFilter} C={C}/>
-          {loadingN?<Ldg C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote}/>}
+          <FilterRow value={archFilter} onChange={setArchFilter} C={C} tabs={["ALL","FAVORITES","SAVED","MY NOTES"]}/>
+          {loadingN?<Ldg C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote} onEdit={archFilter==="MY NOTES"?setEditingNote:null}/>}
         </Scroll>
       </>}
 
@@ -1495,9 +1532,12 @@ function CoverEditor({src,pos,onPosChange,onChangeCover}){
   );
 }
 function ArchSearch({value,onChange,C}){return(<div style={{margin:"14px 14px 10px",position:"relative"}}><span style={{position:"absolute",left:16,top:"50%",transform:"translateY(-50%)",fontSize:16,color:C.sub}}>🔍</span><input value={value} onChange={e=>onChange(e.target.value)} placeholder="Search collective database…" style={{width:"100%",padding:"13px 16px 13px 44px",borderRadius:50,border:"1.5px solid "+C.border,background:C.surface,color:C.text,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"Barlow,sans-serif"}}/></div>);}
-function FilterRow({value,onChange,C}){return(<div style={{display:"flex",margin:"0 14px 14px",background:C.surface,borderRadius:50,padding:4,border:"1px solid "+C.border}}>{["ALL","FAVORITES","SAVED"].map(f=><button key={f} onClick={()=>onChange(f)} style={{flex:1,padding:"8px 0",borderRadius:50,border:"none",cursor:"pointer",background:value===f?C.accentBg:"transparent",color:value===f?C.accentText:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1.5}}>{f}</button>)}</div>);}
+function FilterRow({value,onChange,C,tabs}){
+  const T=tabs||["ALL","FAVORITES","SAVED"];
+  return(<div style={{display:"flex",margin:"0 14px 14px",background:C.surface,borderRadius:50,padding:4,border:"1px solid "+C.border}}>{T.map(f=><button key={f} onClick={()=>onChange(f)} style={{flex:1,padding:"8px 0",borderRadius:50,border:"none",cursor:"pointer",background:value===f?C.accentBg:"transparent",color:value===f?C.accentText:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10,letterSpacing:1}}>{f}</button>)}</div>);
+}
 
-function NoteGrid({notes,C,onLike,onSave,onOpen}){
+function NoteGrid({notes,C,onLike,onSave,onOpen,onEdit}){
   return(
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,padding:"0 14px"}}>
       {notes.length===0&&<div style={{gridColumn:"1/-1",textAlign:"center",padding:"32px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif"}}>NO MATERIALS YET</div>}
@@ -1508,9 +1548,12 @@ function NoteGrid({notes,C,onLike,onSave,onOpen}){
               <div style={{width:"100%",height:"100%",background:note.cover_color||"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:32,opacity:.35}}>📄</span></div>}
             {note.rating>0&&<div style={{position:"absolute",top:10,left:10,background:"rgba(255,255,255,.92)",borderRadius:50,padding:"3px 10px",fontSize:12,fontWeight:800,fontFamily:"'Barlow Condensed',sans-serif",color:"#111"}}>{note.rating}★</div>}
             <div style={{position:"absolute",bottom:10,right:10,display:"flex",gap:6}}>
-              {[{act:()=>onLike(note.id),on:note.liked,a:"❤️",b:"🤍"},{act:()=>onSave(note.id),on:note.saved,a:"🔖",b:"🏷️"}].map((btn,i)=>(
-                <button key={i} onClick={e=>{e.stopPropagation();btn.act();}} style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,.92)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>{btn.on?btn.a:btn.b}</button>
-              ))}
+              {onEdit
+                ?<button onClick={e=>{e.stopPropagation();onEdit(note);}} style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,.92)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>✏️</button>
+                :[{act:()=>onLike(note.id),on:note.liked,a:"❤️",b:"🤍"},{act:()=>onSave(note.id),on:note.saved,a:"🔖",b:"🏷️"}].map((btn,i)=>(
+                  <button key={i} onClick={e=>{e.stopPropagation();btn.act();}} style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,.92)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>{btn.on?btn.a:btn.b}</button>
+                ))
+              }
             </div>
           </div>
           <div style={{padding:"10px 12px 12px"}}>
@@ -1524,7 +1567,6 @@ function NoteGrid({notes,C,onLike,onSave,onOpen}){
     </div>
   );
 }
-
 function ProfCard({profile,editP,setEditP,editing,pfpRef,C}){
   const src=editP.pfp_local||profile.pfp_url||null;
   return(
