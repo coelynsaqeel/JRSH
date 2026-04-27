@@ -116,6 +116,7 @@ const SAMPLE_LESSONS_STUDENT=[
   {id:"sl6",student_id:"sample-s1",subject:"English",day:"THU",from_hour:9,to_hour:10,description:"Essay writing and grammar corrections.",online:true,start_ts:null,_pending:true,_accepted:false,_tutorName:"Prof. David Otieno",_tutorObj:{id:"sample-t2",name:"Prof. David Otieno",age:42,gender:"Male",location:"Kisumu, Milimani",curriculum_level:"Senior School",hourly_rate_online:700,hourly_rate_offline:550,subjects_taught:["English","Literature","History"]}},
   // FRI — Unbooked slot, no tutor yet → tapping opens tutor list
   {id:"sl4",student_id:"sample-s1",subject:"Chemistry",day:"FRI",from_hour:10,to_hour:11,description:"Periodic table, chemical bonding and reactions.",online:false,start_ts:null,_accepted:false},
+  {id:"sl8",student_id:"sample-s1",subject:"History",day:"SAT",from_hour:11,to_hour:12,description:"The causes and effects of World War I.",online:true,start_ts:NOW+(24*HRS),_accepted:true,_tutorName:"Prof. David Otieno",_tutorObj:{id:"sample-t2",name:"Prof. David Otieno",age:42,gender:"Male",location:"Kisumu, Milimani",curriculum_level:"Senior School",hourly_rate_online:700,hourly_rate_offline:550,subjects_taught:["English","Literature","History"]}},
 ];
 
 const SAMPLE_LESSONS_TUTOR=[
@@ -131,6 +132,20 @@ const SAMPLE_LESSONS_TUTOR=[
   {id:"sl7",tutor_id:"sample-t1",student_id:"sample-s5",student_name:"Brian Ochieng",student_age:15,student_gender:"Male",student_location:"Nairobi, Eastleigh",student_grade:"Grade 9",subject:"Mathematics",day:"SAT",from_hour:11,to_hour:12,description:"Need help with algebra and simultaneous equations.",online:false,start_ts:null,status:"pending"},
 ];
 
+const SAMPLE_HISTORY_STUDENT=[
+  {id:"sh1",subject:"Mathematics",tutor_name:"Dr. Jane Mwangi",online:true,from_hour:8,to_hour:9,ended_at:new Date(NOW-1*DAYS_MS).getTime(),day:"MON"},
+  {id:"sh2",subject:"Biology",tutor_name:"Ms. Fatuma Hassan",online:false,from_hour:14,to_hour:15,ended_at:new Date(NOW-3*DAYS_MS).getTime(),day:"WED"},
+  {id:"sh3",subject:"Chemistry",tutor_name:"Prof. David Otieno",online:true,from_hour:10,to_hour:11,ended_at:new Date(NOW-5*DAYS_MS).getTime(),day:"FRI"},
+  {id:"sh4",subject:"Physics",tutor_name:"Mr. Samuel Otieno",online:false,from_hour:9,to_hour:10,ended_at:new Date(NOW-7*DAYS_MS).getTime(),day:"TUE"},
+  {id:"sh5",subject:"English",tutor_name:"Prof. David Otieno",online:true,from_hour:11,to_hour:12,ended_at:new Date(NOW-10*DAYS_MS).getTime(),day:"THU"},
+];
+const SAMPLE_HISTORY_TUTOR=[
+  {id:"th1",subject:"Mathematics",student_name:"Amara Wanjiku",online:true,from_hour:8,to_hour:9,ended_at:new Date(NOW-1*DAYS_MS).getTime(),day:"MON"},
+  {id:"th2",subject:"Biology",student_name:"Kofi Mensah",online:false,from_hour:14,to_hour:15,ended_at:new Date(NOW-3*DAYS_MS).getTime(),day:"WED"},
+  {id:"th3",subject:"Physics",student_name:"Grace Oduya",online:false,from_hour:10,to_hour:11,ended_at:new Date(NOW-5*DAYS_MS).getTime(),day:"TUE"},
+  {id:"th4",subject:"English",student_name:"Aisha Kamau",online:true,from_hour:9,to_hour:10,ended_at:new Date(NOW-8*DAYS_MS).getTime(),day:"THU"},
+  {id:"th5",subject:"Mathematics",student_name:"Brian Ochieng",online:false,from_hour:11,to_hour:12,ended_at:new Date(NOW-12*DAYS_MS).getTime(),day:"SAT"},
+];
 const SAMPLE_TUTORS=[
   {id:"sample-t1",name:"Dr. Jane Mwangi",age:34,gender:"Female",location:"Nairobi, Karen",role:"tutor",curriculum_level:"Senior School",hourly_rate_online:900,hourly_rate_offline:700,subjects_taught:["Mathematics","Chemistry","Physics"]},
   {id:"sample-t2",name:"Prof. David Otieno",age:42,gender:"Male",location:"Kisumu, Milimani",role:"tutor",curriculum_level:"Senior School",hourly_rate_online:700,hourly_rate_offline:550,subjects_taught:["English","Literature","History"]},
@@ -294,7 +309,7 @@ function CancelModal({onCancel,onClose,C}){
 }
 
 /* ══ PDF VIEWER ══ */
-function PdfViewer({note,onClose,C,initialPage,onPageChange}){
+function PdfViewer({note,onClose,C,initialPage,onPageChange,onRate}){
   const containerRef=React.useRef();
   const canvasRef=React.useRef();
   const [pdf,setPdf]=React.useState(null);
@@ -304,6 +319,7 @@ function PdfViewer({note,onClose,C,initialPage,onPageChange}){
   const [err,setErr]=React.useState("");
   const [zoom,setZoom]=React.useState(1);
   const [pan,setPan]=React.useState({x:0,y:0});
+  const [hoverRating,setHoverRating]=React.useState(0);
   const renderTask=React.useRef(null);
   const lastTouch=React.useRef(null);
   const lastPinchDist=React.useRef(null);
@@ -373,10 +389,23 @@ function PdfViewer({note,onClose,C,initialPage,onPageChange}){
   function onTouchMove(e){
     e.preventDefault();
     if(e.touches.length===2&&lastPinchDist.current!=null){
-      const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+      const t0=e.touches[0];const t1=e.touches[1];
+      const d=Math.hypot(t0.clientX-t1.clientX,t0.clientY-t1.clientY);
       const ratio=d/lastPinchDist.current;
       lastPinchDist.current=d;
-      setZoom(z=>Math.min(5,Math.max(1,z*ratio)));
+      // Zoom toward pinch midpoint
+      const rect=containerRef.current.getBoundingClientRect();
+      const mx=(t0.clientX+t1.clientX)/2-rect.left;
+      const my=(t0.clientY+t1.clientY)/2-rect.top;
+      setZoom(z=>{
+        const nz=Math.min(5,Math.max(1,z*ratio));
+        // Adjust pan so the focal point stays under fingers
+        setPan(p=>({
+          x:mx-(mx-p.x)*(nz/z),
+          y:my-(my-p.y)*(nz/z)
+        }));
+        return nz;
+      });
     } else if(e.touches.length===1&&panStart.current&&zoom>1){
       setPan({x:e.touches[0].clientX-panStart.current.x,y:e.touches[0].clientY-panStart.current.y});
     }
@@ -392,7 +421,12 @@ function PdfViewer({note,onClose,C,initialPage,onPageChange}){
           <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{note.title}</div>
           <div style={{color:"#666",fontSize:10,marginTop:1,fontFamily:"'Barlow Condensed',sans-serif"}}>{note.subject} · {note.tutor_name}{total>0?" · "+total+" pages":""}</div>
         </div>
-        <button onClick={onClose} style={{marginLeft:12,background:"#222",border:"1px solid #444",borderRadius:8,padding:"8px 14px",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:"pointer",flexShrink:0}}>✕ CLOSE</button>
+        <div style={{display:"flex",alignItems:"center",gap:4,marginLeft:8}}>
+          {[1,2,3,4,5].map(star=>(
+            <button key={star} onClick={()=>onRate&&onRate(star)} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,padding:2,color:hoverRating>=star||(!hoverRating&&(note.userRating||0)>=star)?"#F59E0B":"#444",transition:"color .15s"}} onMouseEnter={()=>setHoverRating(star)} onMouseLeave={()=>setHoverRating(0)}>★</button>
+          ))}
+        </div>
+        <button onClick={onClose} style={{marginLeft:8,background:"#222",border:"1px solid #444",borderRadius:8,padding:"8px 14px",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:"pointer",flexShrink:0}}>✕ CLOSE</button>
       </div>
       {/* PDF canvas area — fills everything */}
       <div
@@ -641,9 +675,11 @@ function StudentApp({user,onLogout}){
   const [tab,setTab]=useState("timetable");
   const [lessons,setLessons]=useState(isSample?SAMPLE_LESSONS_STUDENT:[]);
   const [loadingL,setLoadingL]=useState(!isSample);
-  const [acceptedMap,setAcceptedMap]=useState(isSample?{"sl1":true,"sl3":true,"sl5":true}:{});
+  const [acceptedMap,setAcceptedMap]=useState(isSample?{"sl1":true,"sl3":true,"sl5":true,"sl8":true}:{});
   const [showAdd,setShowAdd]=useState(false);
   const [showManage,setShowManage]=useState(false);
+  const [showHistory,setShowHistory]=useState(false);
+  const [lessonHistory,setLessonHistory]=useState(isSample?SAMPLE_HISTORY_STUDENT:[]);
   const [showTutorProfile,setShowTutorProfile]=React.useState(null); // {tutor, lesson}
   const [showTutorProfileLesson,setShowTutorProfileLesson]=React.useState(null);
   const [showTutors,setShowTutors]=useState(null);
@@ -801,7 +837,7 @@ function StudentApp({user,onLogout}){
 
   return(
     <Shell C={C}>
-      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))}/>}
+      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))} onRate={r=>{setNotes(ns=>ns.map(n=>n.id===openNote.id?{...n,userRating:r}:n));setOpenNote(o=>o?{...o,userRating:r}:o);}}/>}
       {callLesson&&<CallDialog lesson={callLesson} onEnd={(reason)=>{
         if(callLesson.online||reason==="ended"||reason==="timeout"){
           setLessons(ls=>ls.filter(l=>l.id!==callLesson.id));
@@ -895,6 +931,7 @@ function StudentApp({user,onLogout}){
         <CnBtn C={C} onClick={()=>setShowAdd(false)}>CANCEL</CnBtn>
       </Modal>}
 
+      {showHistory&&<HistoryModal history={lessonHistory} onClose={()=>setShowHistory(false)} C={C} isStudent/>}
       {showManage&&<Modal onClose={()=>{setShowManage(false);setEditLesson(null);}} C={C}>
         {editLesson?(
           <>
@@ -911,7 +948,10 @@ function StudentApp({user,onLogout}){
           </>
         ):(
           <>
-            <MT>⚙️ Manage Slots</MT><MS C={C}>{lessons.length} lesson{lessons.length!==1?"s":""} scheduled</MS>
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:4}}>
+              <div><MT>⚙️ Manage Slots</MT><MS C={C}>{lessons.length} lesson{lessons.length!==1?"s":""} scheduled</MS></div>
+              <button onClick={()=>setShowHistory(true)} style={{padding:"7px 14px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1,cursor:"pointer",flexShrink:0,marginTop:2}}>📋 HISTORY</button>
+            </div>
             {lessons.length===0&&<Empty C={C}>NO LESSONS YET</Empty>}
             {lessons.map(l=>(
               <div key={l.id} style={{background:subjBg(l.subject),borderRadius:14,padding:"12px 14px",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -1020,6 +1060,8 @@ function TutorApp({user,onLogout}){
   const [requests,setRequests]=useState(isSample?SAMPLE_LESSONS_TUTOR:[]);
   const [loadingR,setLoadingR]=useState(!isSample);
   const [showManage,setShowManage]=useState(false);
+  const [showHistory,setShowHistory]=useState(false);
+  const [lessonHistory,setLessonHistory]=useState(isSample?SAMPLE_HISTORY_TUTOR:[]);
   const [showMode,setShowMode]=useState("requests"); // "requests" | "manage"
   const [showReq,setShowReq]=useState(null);
   const [reqSaving,setReqSaving]=useState(false);
@@ -1266,6 +1308,7 @@ function TutorApp({user,onLogout}){
       {showWallet&&<WalletModal bal={walletBal} txs={walletTx} withdrawAmt={withdrawAmt} setWithdrawAmt={setWithdrawAmt} withdrawMsg={withdrawMsg} onWithdraw={doWithdraw} onClose={()=>setShowWallet(false)} C={C}/>}
       <BotNav tab={tab} setTab={setTab} C={C}/>
 
+      {showHistory&&<HistoryModal history={lessonHistory} onClose={()=>setShowHistory(false)} C={C}/>}
       {showManage&&<Modal onClose={()=>{setShowManage(false);setShowReq(null);}} C={C}>
         {showReq?(
           <>
@@ -1324,7 +1367,10 @@ function TutorApp({user,onLogout}){
           </>
         ):(
           <>
-            <MT>⚙️ Manage</MT><MS C={C}>{booked.length} booked session{booked.length!==1?"s":""}</MS>
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:4}}>
+              <div><MT>⚙️ Manage</MT><MS C={C}>{booked.length} booked session{booked.length!==1?"s":""}</MS></div>
+              <button onClick={()=>setShowHistory(true)} style={{padding:"7px 14px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1,cursor:"pointer",flexShrink:0,marginTop:2}}>📋 HISTORY</button>
+            </div>
             {booked.length===0&&<Empty C={C}>NO BOOKED SESSIONS YET</Empty>}
             {booked.map(l=>(
               <div key={l.id} style={{background:subjBg(l.subject),borderRadius:14,padding:"12px 14px",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -1683,6 +1729,52 @@ function WalletModal({bal,txs,withdrawAmt,setWithdrawAmt,withdrawMsg,onWithdraw,
               </div>
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+function HistoryModal({history,onClose,C,isStudent}){
+  const sorted=[...history].sort((a,b)=>b.ended_at-a.ended_at);
+  function fmtDate(ms){
+    const d=new Date(ms);
+    return d.toLocaleDateString([],{weekday:"short",day:"numeric",month:"short",year:"numeric"});
+  }
+  function fmtTime(h){const hh=Math.floor(h),mm=Math.round((h-hh)*60);const p=hh>=12?"PM":"AM";const h12=hh%12||12;return String(h12).padStart(2,"0")+":"+String(mm).padStart(2,"0")+" "+p;}
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,maxHeight:"88vh",overflowY:"auto",paddingBottom:32}}>
+        <div style={{padding:"20px 20px 0",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+          <div>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text,letterSpacing:1}}>📋 HISTORY</div>
+            <div style={{fontSize:10,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>{sorted.length} COMPLETED LESSON{sorted.length!==1?"S":""}</div>
+          </div>
+          <button onClick={onClose} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,cursor:"pointer",fontSize:16}}>✕</button>
+        </div>
+        {sorted.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13}}>NO COMPLETED LESSONS YET</div>}
+        <div style={{padding:"0 16px"}}>
+          {sorted.map((l,i)=>{
+            const prev=sorted[i-1];
+            const showDate=!prev||fmtDate(prev.ended_at)!==fmtDate(l.ended_at);
+            return(
+              <React.Fragment key={l.id}>
+                {showDate&&<div style={{fontSize:9,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:i===0?0:16,marginBottom:8,paddingBottom:6,borderBottom:"1px solid "+C.border}}>{fmtDate(l.ended_at)}</div>}
+                <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:"1px solid "+C.border}}>
+                  <div style={{width:40,height:40,borderRadius:"50%",background:l.online?"#DBEAFE":"#DCF5E4",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:18}}>{l.online?"🌐":"📍"}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:13,color:C.text}}>{l.subject}</div>
+                    <div style={{fontSize:10,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>
+                      {isStudent?l.tutor_name:l.student_name}
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div style={{fontSize:10,fontWeight:800,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{fmtTime(l.from_hour)} – {fmtTime(l.to_hour)}</div>
+                    <div style={{fontSize:9,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{l.day}</div>
+                  </div>
+                </div>
+              </React.Fragment>
+            );
+          })}
         </div>
       </div>
     </div>
