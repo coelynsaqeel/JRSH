@@ -644,7 +644,8 @@ function StudentApp({user,onLogout}){
   const [acceptedMap,setAcceptedMap]=useState(isSample?{"sl1":true,"sl3":true,"sl5":true}:{});
   const [showAdd,setShowAdd]=useState(false);
   const [showManage,setShowManage]=useState(false);
-  const [showTutorProfile,setShowTutorProfile]=React.useState(null);
+  const [showTutorProfile,setShowTutorProfile]=React.useState(null); // {tutor, lesson}
+  const [showTutorProfileLesson,setShowTutorProfileLesson]=React.useState(null);
   const [showTutors,setShowTutors]=useState(null);
   const [editLesson,setEditLesson]=useState(null);
   const [requested,setRequested]=useState(new Set());
@@ -814,7 +815,7 @@ function StudentApp({user,onLogout}){
         <Hdr C={C} dm={dm}><PBtn outline C={C} onClick={()=>setShowManage(true)}>MANAGE</PBtn><PBtn C={C} onClick={()=>setShowAdd(true)}>ADD SLOT</PBtn></Hdr>
         <Scroll>
           {loadingL?<Ldg C={C}/>:
-            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>{if(l._tutorObj&&(l._pending||l._accepted||acceptedMap[l.id])){setShowTutorProfile(l._tutorObj);}else{setShowTutors(l);}}}
+            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>{if(l._tutorObj&&(l._pending||l._accepted||acceptedMap[l.id])){setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);}else{setShowTutors(l);}}}
               renderExtra={l=>{
                 const isPending=l._pending&&!l._accepted&&!acceptedMap[l.id];
                 const isAccepted=l._accepted||acceptedMap[l.id];
@@ -860,8 +861,8 @@ function StudentApp({user,onLogout}){
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/></div>
         <Scroll>
           <ArchSearch value={archSearch} onChange={setArchSearch} C={C}/>
-          <FilterRow value={archFilter} onChange={setArchFilter} C={C} tabs={["ALL","FAVORITES","SAVED","MY NOTES"]}/>
-          {loadingN?<Ldg C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote} onEdit={archFilter==="MY NOTES"?setEditingNote:null}/>}
+          <FilterRow value={archFilter} onChange={setArchFilter} C={C}/>
+          {loadingN?<Ldg C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote}/>}
         </Scroll>
       </>}
 
@@ -940,9 +941,9 @@ function StudentApp({user,onLogout}){
                 <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{showTutorProfile.name}</div>
                 <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{showTutorProfile.curriculum_level}</div>
               </div>
-              <a href={"tel:"+(showTutorProfile.phone||"")} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",textDecoration:"none",flexShrink:0}}>
+              {showTutorProfileLesson&&showTutorProfileLesson._accepted&&<a href={"tel:"+(showTutorProfile.phone||"")} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",textDecoration:"none",flexShrink:0}}>
                 <span style={{fontSize:20}}>📞</span>
-              </a>
+              </a>}
             </div>
             {[
               {label:"MODE",value:showTutorProfile.online?"🌐 Online":"📍 Offline"},
@@ -1060,6 +1061,8 @@ function TutorApp({user,onLogout}){
   const [openNote,setOpenNote]=useState(null);
   const [notePages,setNotePages]=useState({});
   const [editingNote,setEditingNote]=useState(null);
+  const editCoverRef=React.useRef();
+  const editPdfRef=React.useRef();
   const [callLesson,setCallLesson]=useState(null);
   const [cancelReq,setCancelReq]=useState(null);
   const [offlineStartedIds,setOfflineStartedIds]=useState(new Set()); // lessons student has started
@@ -1171,7 +1174,30 @@ function TutorApp({user,onLogout}){
   return(
     <Shell C={C}>
       {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))}/>}
-      {editingNote&&<Modal onClose={()=>setEditingNote(null)} C={C}><MT>✏️ Edit Note</MT><MS C={C}>Update your published material.</MS><ML C={C}>TITLE</ML><FI C={C} value={editingNote.title} onChange={e=>setEditingNote(n=>({...n,title:e.target.value}))}/><div style={{display:"flex",gap:10,marginTop:16}}><button onClick={()=>{setNotes(ns=>ns.map(n=>n.id===editingNote.id?{...n,...editingNote}:n));setEditingNote(null);}} style={{flex:1,padding:"13px",borderRadius:50,border:"none",background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:"pointer"}}>SAVE</button><button onClick={()=>{setNotes(ns=>ns.filter(n=>n.id!==editingNote.id));setEditingNote(null);}} style={{flex:1,padding:"13px",borderRadius:50,border:"1.5px solid #EF4444",background:"transparent",color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:"pointer"}}>DELETE</button></div><CnBtn C={C} onClick={()=>setEditingNote(null)}>CANCEL</CnBtn></Modal>}
+      {editingNote&&<Modal onClose={()=>setEditingNote(null)} C={C}>
+        <MT>✏️ Edit Note</MT><MS C={C}>Update your published material.</MS>
+        <ML C={C}>TITLE</ML><FI C={C} value={editingNote.title} onChange={e=>setEditingNote(n=>({...n,title:e.target.value}))}/>
+        <ML C={C}>COVER IMAGE</ML>
+        <CoverEditor
+          src={editingNote.cover_url||null}
+          pos={editingNote.cover_pos||{x:50,y:50}}
+          onPosChange={pos=>setEditingNote(n=>({...n,cover_pos:pos}))}
+          onChangeCover={()=>editCoverRef.current&&editCoverRef.current.click()}
+        />
+        <input type="file" accept="image/*" ref={editCoverRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditingNote(n=>({...n,cover_url:ev.target.result,cover_pos:{x:50,y:50}}));r.readAsDataURL(f);}}/>
+        <div style={{marginTop:10,display:"flex",alignItems:"center",gap:10}}>
+          <button onClick={()=>editPdfRef.current&&editPdfRef.current.click()} style={{padding:"9px 16px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,cursor:"pointer"}}>
+            📎 {editingNote.pdf_url?"REPLACE PDF":"ATTACH PDF"}
+          </button>
+          {editingNote.pdf_url&&<span style={{fontSize:10,color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>✓ PDF attached</span>}
+        </div>
+        <input type="file" accept=".pdf" ref={editPdfRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditingNote(n=>({...n,pdf_url:ev.target.result}));r.readAsDataURL(f);}}/>
+        <div style={{display:"flex",gap:10,marginTop:16}}>
+          <button onClick={()=>{setNotes(ns=>ns.map(n=>n.id===editingNote.id?{...n,...editingNote}:n));setEditingNote(null);}} style={{flex:1,padding:"13px",borderRadius:50,border:"none",background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:"pointer"}}>SAVE</button>
+          <button onClick={()=>{setNotes(ns=>ns.filter(n=>n.id!==editingNote.id));setEditingNote(null);}} style={{flex:1,padding:"13px",borderRadius:50,border:"1.5px solid #EF4444",background:"transparent",color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:"pointer"}}>DELETE</button>
+        </div>
+        <CnBtn C={C} onClick={()=>setEditingNote(null)}>CANCEL</CnBtn>
+      </Modal>}
       {callLesson&&<CallDialog lesson={callLesson} onEnd={(reason)=>{
         if(callLesson.online||reason==="ended"||reason==="timeout"){
           setRequests(rs=>rs.filter(r=>r.id!==callLesson.id));
