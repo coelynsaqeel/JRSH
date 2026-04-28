@@ -1888,6 +1888,7 @@ function StudentProfileModal({lesson,C,onClose,onCall}){
           {onCall&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}} title="Start in-app call">
             <span style={{fontSize:20}}>{lesson.online?"📹":"📞"}</span>
           </button>}
+        </div>
         {[
           {label:"MODE",value:lesson.online?"🌐 Online":"📍 Offline"},
           {label:"SLOT",value:timeLbl(lesson.from_hour)+" – "+timeLbl(lesson.to_hour)},
@@ -2067,7 +2068,6 @@ function ConfCard({C,editP,setEditP,editing,profile,onToggle,isStudent,isTutor,s
       {editing&&<button onClick={onToggle} style={{width:"100%",padding:"14px",borderRadius:50,border:"none",background:C.accentBg,color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:2,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:14}}>
         {saving?"SAVING…":"✓  SAVE IDENTITY"}
       </button>}
-      {editing&&<button onClick={()=>onToggle()} style={{display:"none"}}/>}
     </div>
   );
 }
