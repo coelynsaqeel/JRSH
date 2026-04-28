@@ -4,6 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>JRSH</title>
+  <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.0.js"></script>
     <link rel="apple-touch-icon" href="data:image/png;base64,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"/>
   <meta name="theme-color" content="#000000"/>
   <meta name="mobile-web-app-capable" content="yes"/>
@@ -202,36 +203,205 @@ function LessonTimer({lesson,C}){
 }
 
 /* ══ CALL DIALOG ══ */
-function CallDialog({lesson,onEnd,C}){
-  const [secs,setSecs]=useState(300);
-  const [answered,setAnswered]=useState(false);
+/* ══ AGORA CONFIG ══ */
+// Replace with your actual Agora App ID from console.agora.io
+const AGORA_APP_ID = "YOUR_AGORA_APP_ID";
+
+/* ══ CALL DIALOG — Agora RTC Video/Voice ══ */
+function CallDialog({lesson,onEnd,user,C}){
   const isOnline=lesson.online;
-  useEffect(()=>{
-    if(answered)return;
-    const id=setInterval(()=>setSecs(s=>{if(s<=1){clearInterval(id);onEnd("timeout");return 0;}return s-1;}),1000);
+  const [phase,setPhase]=React.useState("ringing"); // ringing | connecting | live | ended
+  const [ringTimer,setRingTimer]=React.useState(30);
+  const [callDuration,setCallDuration]=React.useState(0);
+  const [muted,setMuted]=React.useState(false);
+  const [camOff,setCamOff]=React.useState(false);
+  const [error,setError]=React.useState("");
+  const clientRef=React.useRef(null);
+  const localTracksRef=React.useRef({audio:null,video:null});
+  const localVideoRef=React.useRef(null);
+  const remoteVideoRef=React.useRef(null);
+
+  // Ring countdown
+  React.useEffect(()=>{
+    if(phase!=="ringing")return;
+    if(ringTimer<=0){setPhase("ended");onEnd("timeout");return;}
+    const id=setTimeout(()=>setRingTimer(t=>t-1),1000);
+    return()=>clearTimeout(id);
+  },[phase,ringTimer]);
+
+  // Call duration counter
+  React.useEffect(()=>{
+    if(phase!=="live")return;
+    const id=setInterval(()=>setCallDuration(d=>d+1),1000);
     return()=>clearInterval(id);
-  },[answered]);
-  const fmt=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
+  },[phase]);
+
+  const fmt=s=>{const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;return h>0?`${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`:`${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;};
+
+  async function joinCall(){
+    if(!isOnline){setPhase("live");return;}
+    setPhase("connecting");
+    setError("");
+    try{
+      // Load Agora SDK then create client
+      const AgoraRTC=await loadAgora();
+      AgoraRTC.setLogLevel(4);
+      const client=AgoraRTC.createClient({mode:"rtc",codec:"vp8"});
+      clientRef.current=client;
+
+      // Generate a simple channel name from the lesson id
+      const channel="jrsh-"+(lesson.id||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,16);
+
+      // Join — token is null for testing (enable token auth in production via your server)
+      await client.join(AGORA_APP_ID, channel, null, user?.id||null);
+
+      // Create local tracks
+      const [audioTrack,videoTrack]=await AgoraRTC.createMicrophoneAndCameraTracks();
+      localTracksRef.current={audio:audioTrack,video:videoTrack};
+
+      // Play local video
+      if(localVideoRef.current) videoTrack.play(localVideoRef.current);
+
+      // Publish
+      await client.publish([audioTrack,videoTrack]);
+
+      // Subscribe to remote users
+      client.on("user-published",async(remoteUser,mediaType)=>{
+        await client.subscribe(remoteUser,mediaType);
+        if(mediaType==="video"&&remoteVideoRef.current){
+          remoteUser.videoTrack.play(remoteVideoRef.current);
+        }
+        if(mediaType==="audio") remoteUser.audioTrack.play();
+      });
+      client.on("user-unpublished",(remoteUser,mediaType)=>{
+        if(mediaType==="video"&&remoteVideoRef.current) remoteVideoRef.current.innerHTML="";
+      });
+
+      setPhase("live");
+    }catch(e){
+      // Fallback: if Agora App ID not set or camera permission denied, show friendly call screen
+      setError(AGORA_APP_ID==="YOUR_AGORA_APP_ID"
+        ?"Add your Agora App ID to enable real video calls. Connected in simulation mode."
+        :"Could not access camera/mic. "+e.message);
+      setPhase("live"); // still allow simulated call
+    }
+  }
+
+  async function endCall(){
+    // Stop local tracks
+    if(localTracksRef.current.audio){localTracksRef.current.audio.stop();localTracksRef.current.audio.close();}
+    if(localTracksRef.current.video){localTracksRef.current.video.stop();localTracksRef.current.video.close();}
+    // Leave channel
+    if(clientRef.current){try{await clientRef.current.leave();}catch(e){}}
+    setPhase("ended");
+    onEnd("ended");
+  }
+
+  async function toggleMute(){
+    if(localTracksRef.current.audio){
+      await localTracksRef.current.audio.setEnabled(muted);
+      setMuted(m=>!m);
+    }else{setMuted(m=>!m);}
+  }
+
+  async function toggleCamera(){
+    if(localTracksRef.current.video){
+      await localTracksRef.current.video.setEnabled(camOff);
+      setCamOff(c=>!c);
+    }else{setCamOff(c=>!c);}
+  }
+
+  const btnStyle=(bg,active)=>({
+    width:56,height:56,borderRadius:"50%",
+    border:"none",cursor:"pointer",fontSize:22,
+    background:active?bg:"rgba(255,255,255,.15)",
+    display:"flex",alignItems:"center",justifyContent:"center",
+    transition:"background .2s"
+  });
+
   return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",zIndex:500,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:24,fontFamily:"'Barlow',sans-serif"}}>
-      <div style={{width:84,height:84,borderRadius:"50%",background:"#222",display:"flex",alignItems:"center",justifyContent:"center",fontSize:38,border:"3px solid #22C55E",boxShadow:"0 0 0 8px rgba(34,197,94,.15)",animation:"ring 1.5s infinite"}}>{isOnline?"📹":"📞"}</div>
-      <div style={{textAlign:"center"}}>
-        <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1}}>{isOnline?"VIDEO CALL":"CALL"}</div>
-        <div style={{color:"#aaa",fontSize:13,marginTop:4}}>{lesson.subject} session</div>
-        {!answered&&<><div style={{color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:26,marginTop:10}}>{fmt(secs)}</div><div style={{color:"#666",fontSize:11,marginTop:2}}>drops if unanswered</div></>}
-      </div>
-      {!answered?(
-        <div style={{display:"flex",gap:24}}>
-          <button onClick={()=>onEnd("declined")} style={{width:64,height:64,borderRadius:"50%",background:"#EF4444",border:"none",cursor:"pointer",fontSize:26}}>📵</button>
-          <button onClick={()=>setAnswered(true)} style={{width:64,height:64,borderRadius:"50%",background:"#22C55E",border:"none",cursor:"pointer",fontSize:26}}>{isOnline?"📹":"📞"}</button>
+    <div style={{position:"fixed",inset:0,background:"#0a0a0a",zIndex:500,display:"flex",flexDirection:"column",fontFamily:"'Barlow',sans-serif"}}>
+
+      {/* Video area */}
+      {isOnline&&phase==="live"?(
+        <div style={{flex:1,position:"relative",background:"#111"}}>
+          {/* Remote video (full screen) */}
+          <div ref={remoteVideoRef} style={{width:"100%",height:"100%",background:"#1a1a1a",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div style={{textAlign:"center",color:"#555"}}>
+              <div style={{fontSize:48,marginBottom:8}}>👤</div>
+              <div style={{fontSize:12,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>Waiting for other participant…</div>
+            </div>
+          </div>
+          {/* Local video (PiP) */}
+          <div ref={localVideoRef} style={{position:"absolute",top:16,right:16,width:100,height:140,borderRadius:12,overflow:"hidden",background:"#222",border:"2px solid rgba(255,255,255,.2)"}}/>
+          {/* Duration */}
+          <div style={{position:"absolute",top:16,left:16,background:"rgba(0,0,0,.55)",borderRadius:8,padding:"4px 12px"}}>
+            <span style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14}}>{fmt(callDuration)}</span>
+          </div>
+          {error&&<div style={{position:"absolute",bottom:100,left:0,right:0,margin:"0 16px",background:"rgba(0,0,0,.75)",borderRadius:10,padding:"10px 14px",textAlign:"center"}}>
+            <span style={{color:"#F59E0B",fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{error}</span>
+          </div>}
         </div>
       ):(
-        <div style={{background:"#1a1a1a",borderRadius:16,padding:"20px 24px",textAlign:"center",maxWidth:320,width:"90%"}}>
-          <div style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,letterSpacing:1,marginBottom:8}}>{isOnline?"✓ CONNECTED":"✓ CONFIRMED"}</div>
-          <div style={{color:"#fff",fontSize:13}}>{isOnline?"Lesson in progress via video call.":"Head to the agreed physical location."}</div>
-          <button onClick={()=>onEnd("ended")} style={{marginTop:16,padding:"10px 24px",borderRadius:50,background:isOnline?"#EF4444":"#22C55E",border:"none",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:"pointer"}}>{isOnline?"END CALL":"GOT IT"}</button>
+        /* Ringing / connecting / offline state */
+        <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
+          <div style={{width:90,height:90,borderRadius:"50%",background:"#1a1a1a",display:"flex",alignItems:"center",justifyContent:"center",fontSize:40,border:"3px solid "+(phase==="ringing"?"#22C55E":"#3b82f6"),boxShadow:"0 0 0 12px rgba(34,197,94,.1)"}}>
+            {isOnline?"📹":"📍"}
+          </div>
+          <div style={{textAlign:"center"}}>
+            <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,letterSpacing:1}}>
+              {phase==="ringing"?(isOnline?"INCOMING VIDEO CALL":"SESSION STARTING"):"CONNECTING…"}
+            </div>
+            <div style={{color:"#888",fontSize:13,marginTop:4}}>{lesson.subject}</div>
+            {phase==="ringing"&&isOnline&&(
+              <div style={{color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:28,marginTop:12}}>
+                {String(ringTimer).padStart(2,"0")}s
+              </div>
+            )}
+            {phase==="ringing"&&!isOnline&&(
+              <div style={{color:"#aaa",fontSize:12,marginTop:10,maxWidth:260,lineHeight:1.6}}>
+                Head to the agreed location. Tap confirm once you arrive.
+              </div>
+            )}
+            {phase==="connecting"&&<div style={{color:"#3b82f6",fontSize:12,marginTop:10}}>Setting up secure channel…</div>}
+          </div>
         </div>
       )}
+
+      {/* Controls */}
+      <div style={{padding:"20px 0 40px",background:"rgba(0,0,0,.85)",display:"flex",flexDirection:"column",alignItems:"center",gap:16}}>
+        {phase==="ringing"?(
+          <div style={{display:"flex",gap:36,alignItems:"center"}}>
+            <div style={{textAlign:"center"}}>
+              <button onClick={()=>{setPhase("ended");onEnd("declined");}} style={{...btnStyle("#EF4444",true),width:64,height:64,fontSize:26}}>📵</button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>DECLINE</div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <button onClick={joinCall} style={{...btnStyle("#22C55E",true),width:64,height:64,fontSize:26}}>{isOnline?"📹":"✅"}</button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>{isOnline?"ANSWER":"CONFIRM"}</div>
+            </div>
+          </div>
+        ):(
+          <div style={{display:"flex",gap:20,alignItems:"center"}}>
+            {isOnline&&(
+              <>
+                <div style={{textAlign:"center"}}>
+                  <button onClick={toggleMute} style={btnStyle("#EF4444",muted)}>{muted?"🔇":"🎙️"}</button>
+                  <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{muted?"UNMUTE":"MUTE"}</div>
+                </div>
+                <div style={{textAlign:"center"}}>
+                  <button onClick={toggleCamera} style={btnStyle("#EF4444",camOff)}>{camOff?"📷":"📹"}</button>
+                  <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{camOff?"CAM ON":"CAM OFF"}</div>
+                </div>
+              </>
+            )}
+            <div style={{textAlign:"center"}}>
+              <button onClick={endCall} style={{...btnStyle("#EF4444",true),width:64,height:64,fontSize:26}}>📵</button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>END</div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -746,10 +916,10 @@ function StudentApp({user,onLogout,backHandlerRef}){
     if(openNote){backHandlerRef.current=()=>setOpenNote(null);return;}
     if(showTutorProfile){backHandlerRef.current=()=>setShowTutorProfile(null);return;}
     if(showTutors){backHandlerRef.current=()=>setShowTutors(null);return;}
+    if(showHistory){backHandlerRef.current=()=>setShowHistory(false);return;} // history first — manage stays open beneath
     if(showAdd){backHandlerRef.current=()=>setShowAdd(false);return;}
-    if(showManage){backHandlerRef.current=()=>setShowManage(false);return;}
-    if(showHistory){backHandlerRef.current=()=>setShowHistory(false);return;}
     if(editLesson){backHandlerRef.current=()=>setEditLesson(null);return;}
+    if(showManage){backHandlerRef.current=()=>setShowManage(false);return;}
     if(cancelLesson){backHandlerRef.current=()=>setCancelLesson(null);return;}
     if(profEdit){backHandlerRef.current=()=>setProfEdit(false);return;}
     backHandlerRef.current=null;
@@ -762,10 +932,23 @@ function StudentApp({user,onLogout,backHandlerRef}){
       setLoadingL(true);
       try{
         const data=await sb.get("lessons","?student_id=eq."+user.id+"&order=from_hour.asc");
-        setLessons(data);
-        const reqs=await sb.get("tutor_requests","?student_id=eq."+user.id+"&status=eq.accepted");
-        const m={};reqs.forEach(r=>{m[r.lesson_id]=true;});
+        const reqs=await sb.get("tutor_requests","?student_id=eq."+user.id);
+        const m={};
+        reqs.forEach(r=>{
+          if(r.status==="accepted") m[r.lesson_id]=true;
+        });
         setAcceptedMap(m);
+        // Mark declined/pending on lesson objects
+        const declinedIds=new Set(reqs.filter(r=>r.status==="declined").map(r=>r.lesson_id));
+        const pendingMap={};
+        reqs.filter(r=>r.status==="pending").forEach(r=>{pendingMap[r.lesson_id]={tutorName:r.tutor_name,tutorId:r.tutor_id};});
+        setLessons(data.map(l=>({
+          ...l,
+          _declined:declinedIds.has(l.id)&&!m[l.id],
+          _pending:!!pendingMap[l.id]&&!m[l.id],
+          _tutorName:pendingMap[l.id]?.tutorName||l._tutorName,
+          _tutorId:pendingMap[l.id]?.tutorId||l._tutorId,
+        })));
       }catch(e){}finally{setLoadingL(false);}
     })();
   },[isSample,user.id]);
@@ -904,7 +1087,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
   return(
     <Shell C={C}>
       {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))} onRate={r=>{setNotes(ns=>ns.map(n=>n.id===openNote.id?{...n,userRating:r}:n));setOpenNote(o=>o?{...o,userRating:r}:o);}}/>}
-      {callLesson&&<CallDialog lesson={callLesson} onEnd={(reason)=>{
+      {callLesson&&<CallDialog lesson={callLesson} user={user} onEnd={(reason)=>{
         if(callLesson.online||reason==="ended"||reason==="timeout"){
           setLessons(ls=>ls.filter(l=>l.id!==callLesson.id));
           setAcceptedMap(m=>{const n={...m};delete n[callLesson.id];return n;});
@@ -919,9 +1102,10 @@ function StudentApp({user,onLogout,backHandlerRef}){
           {loadingL?<Ldg C={C}/>:
             <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>{if(l._tutorObj&&(l._pending||l._accepted||acceptedMap[l.id])){setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);}else{setShowTutors(l);}}}
               renderExtra={l=>{
-                const isPending=l._pending&&!l._accepted&&!acceptedMap[l.id];
+                const isPending=l._pending&&!l._accepted&&!acceptedMap[l.id]&&!l._declined;
                 const isAccepted=l._accepted||acceptedMap[l.id];
-                if(!isPending&&!isAccepted)return null;
+                const isDeclined=l._declined;
+                const isUnbooked=!isPending&&!isAccepted&&!isDeclined;
                 const tutorName=l._tutorName||null;
                 const startStr=l.start_ts?new Date(l.start_ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):timeLbl(l.from_hour);
                 const endMs=l.start_ts?(l.start_ts+(l.to_hour-l.from_hour)*3600000):null;
@@ -931,6 +1115,8 @@ function StudentApp({user,onLogout,backHandlerRef}){
                 const dropped=offlineDropped.has(l.id);
                 return(
                   <div style={{marginTop:3,display:"flex",flexDirection:"column",gap:2}}>
+                    {isDeclined&&<div style={{fontSize:9,fontWeight:800,color:"#BE123C",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>✕ Declined by {tutorName||"tutor"} — tap to retry</div>}
+                    {isUnbooked&&<div style={{fontSize:9,fontWeight:800,color:"#9F1239",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>TAP TO REQUEST TUTOR</div>}
                     {isPending&&<div style={{fontSize:9,fontWeight:800,color:"#E65100",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>⏳ Awaiting {tutorName||"tutor"}</div>}
                     {isAccepted&&tutorName&&<div style={{fontSize:9,fontWeight:800,color:"#166634",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>✓ {tutorName}</div>}
                     {isAccepted&&<div style={{fontSize:9,fontWeight:700,color:"#555",fontFamily:"'Barlow Condensed',sans-serif"}}>🕐 {startStr} → {endStr}</div>}
@@ -969,12 +1155,12 @@ function StudentApp({user,onLogout,backHandlerRef}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
           <ConfCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isStudent
-            onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving} onLogout={onLogout}/>
+            onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving}/>
           <div style={{height:24}}/>
         </Scroll>
       </>}
@@ -1048,9 +1234,9 @@ function StudentApp({user,onLogout,backHandlerRef}){
                 <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{showTutorProfile.name}</div>
                 <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{showTutorProfile.curriculum_level}</div>
               </div>
-              {showTutorProfileLesson&&showTutorProfileLesson._accepted&&<a href={"tel:"+(showTutorProfile.phone||"")} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",textDecoration:"none",flexShrink:0}}>
-                <span style={{fontSize:20}}>📞</span>
-              </a>}
+              {showTutorProfileLesson&&showTutorProfileLesson._accepted&&<button onClick={()=>{setCallLesson({...showTutorProfileLesson,online:showTutorProfileLesson.online});setShowTutorProfile(null);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}} title="Start in-app call">
+                <span style={{fontSize:20}}>{showTutorProfileLesson.online?"📹":"📞"}</span>
+              </button>}
             </div>
             {[
               {label:"MODE",value:showTutorProfile.online?"🌐 Online":"📍 Offline"},
@@ -1155,14 +1341,14 @@ function TutorApp({user,onLogout,backHandlerRef}){
   ]:[]);
   const [withdrawAmt,setWithdrawAmt]=React.useState("");
   const [withdrawMsg,setWithdrawMsg]=React.useState("");
-  function doWithdraw(){
-    const amt=parseFloat(withdrawAmt);
-    if(!amt||amt<=0){setWithdrawMsg("Enter a valid amount.");return;}
-    if(amt>walletBal){setWithdrawMsg("Insufficient balance.");return;}
-    setWalletBal(b=>b-amt);
-    setWalletTx(tx=>[{id:Date.now(),label:"Withdrawal",amount:-amt,type:"debit",date:"Just now"},...tx]);
-    setWithdrawAmt("");setWithdrawMsg("✓ Withdrawal requested!");
-    setTimeout(()=>setWithdrawMsg(""),3000);
+  function doWithdraw(amt){
+    // Called by WalletModal after successful M-Pesa STK push
+    const a=parseFloat(amt||withdrawAmt);
+    if(!a||a<=0)return;
+    setWalletBal(b=>b-a);
+    const dateStr=new Date().toLocaleString([],{weekday:"short",hour:"2-digit",minute:"2-digit"});
+    setWalletTx(tx=>[{id:Date.now(),label:"M-Pesa Withdrawal",amount:-a,type:"debit",date:dateStr},...tx]);
+    setWithdrawAmt("");
   }
   const [profEdit,setProfEdit]=useState(false);
   const [editP,setEditP]=useState({...user});
@@ -1192,13 +1378,13 @@ function TutorApp({user,onLogout,backHandlerRef}){
   useEffect(()=>{
     if(!backHandlerRef)return;
     if(openNote){backHandlerRef.current=()=>setOpenNote(null);return;}
+    if(showHistory){backHandlerRef.current=()=>setShowHistory(false);return;} // history first — manage stays open beneath
     if(showReq){backHandlerRef.current=()=>setShowReq(null);return;}
     if(showPublish){backHandlerRef.current=()=>setShowPublish(false);return;}
     if(editingNote){backHandlerRef.current=()=>setEditingNote(null);return;}
     if(showWallet){backHandlerRef.current=()=>setShowWallet(false);return;}
     if(showStudentProf){backHandlerRef.current=()=>setShowStudentProf(null);return;}
     if(showManage){backHandlerRef.current=()=>setShowManage(false);return;}
-    if(showHistory){backHandlerRef.current=()=>setShowHistory(false);return;}
     if(cancelReq){backHandlerRef.current=()=>setCancelReq(null);return;}
     if(profEdit){backHandlerRef.current=()=>setProfEdit(false);return;}
     backHandlerRef.current=null;
@@ -1369,8 +1555,21 @@ function TutorApp({user,onLogout,backHandlerRef}){
         </div>
         <CnBtn C={C} onClick={()=>setEditingNote(null)}>CANCEL</CnBtn>
       </Modal>}
-      {callLesson&&<CallDialog lesson={callLesson} onEnd={(reason)=>{
+      {callLesson&&<CallDialog lesson={callLesson} user={user} onEnd={(reason)=>{
         if(callLesson.online||reason==="ended"||reason==="timeout"){
+          // Credit tutor wallet: 90% of lesson fee (10% platform commission)
+          if(reason==="ended"){
+            const hours=(callLesson.to_hour-callLesson.from_hour)||1;
+            const rate=callLesson.online?(user.hourly_rate_online||0):(user.hourly_rate_offline||0);
+            const gross=rate*hours;
+            const net=Math.round(gross*0.9);
+            if(net>0){
+              setWalletBal(b=>b+net);
+              const label=(callLesson.student_name||"Student")+" – "+callLesson.subject+(callLesson.online?" (online)":" (offline)");
+              const dateStr=new Date().toLocaleString([],{weekday:"short",hour:"2-digit",minute:"2-digit"});
+              setWalletTx(tx=>[{id:Date.now(),label,amount:net,type:"credit",date:dateStr,gross,commission:gross-net},...tx]);
+            }
+          }
           setRequests(rs=>rs.filter(r=>r.id!==callLesson.id));
         }
         setCallLesson(null);
@@ -1423,18 +1622,18 @@ function TutorApp({user,onLogout,backHandlerRef}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
           <ConfCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isTutor
-            onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving} onLogout={onLogout}/>
+            onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving}/>
           <div style={{height:24}}/>
         </Scroll>
       </>}
 
-      {showStudentProf&&<StudentProfileModal lesson={showStudentProf} C={C} onClose={()=>setShowStudentProf(null)}/>}
-      {showWallet&&<WalletModal bal={walletBal} txs={walletTx} withdrawAmt={withdrawAmt} setWithdrawAmt={setWithdrawAmt} withdrawMsg={withdrawMsg} onWithdraw={doWithdraw} onClose={()=>setShowWallet(false)} C={C}/>}
+      {showStudentProf&&<StudentProfileModal lesson={showStudentProf} C={C} onClose={()=>setShowStudentProf(null)} onCall={l=>{setCallLesson(l);setShowStudentProf(null);}}/>}
+      {showWallet&&<WalletModal bal={walletBal} txs={walletTx} withdrawAmt={withdrawAmt} setWithdrawAmt={setWithdrawAmt} withdrawMsg={withdrawMsg} onWithdraw={doWithdraw} onClose={()=>setShowWallet(false)} C={C} tutorPhone={profile.phone||profile.mpesa_phone||""}/>}
       <BotNav tab={tab} setTab={setTab} C={C}/>
 
       {showHistory&&<HistoryModal history={lessonHistory} onClose={()=>setShowHistory(false)} C={C}/>}
@@ -1566,7 +1765,61 @@ function TutorApp({user,onLogout,backHandlerRef}){
 function Shell({C,children}){return <div style={{fontFamily:"Barlow,sans-serif",background:C.bg,color:C.text,height:"100vh",maxWidth:430,margin:"0 auto",display:"flex",flexDirection:"column",overflow:"hidden",position:"relative"}}>{children}</div>;}
 function Scroll({children}){return <div style={{flex:1,overflowY:"auto",paddingBottom:72}}>{children}</div>;}
 function Hdr({C,dm,children}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{children}</div></div>);}
-function IdentHdr({C,dm,setDm,onWallet}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{onWallet&&<button onClick={onWallet} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:"#111",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>💰</button>}<button onClick={()=>setDm(d=>!d)} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:C.surface,fontSize:16,cursor:"pointer"}}>{dm?"☀️":"🌙"}</button></div></div>);}
+function IdentHdr({C,dm,setDm,onWallet,onEditIdentity,onLogout}){
+  const [open,setOpen]=React.useState(false);
+  return(
+    <>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}>
+        <Logo dm={dm}/>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          {onWallet&&<button onClick={onWallet} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:"#111",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>💰</button>}
+          <button onClick={()=>setOpen(true)} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:C.surface,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>⚙️</button>
+        </div>
+      </div>
+      {open&&<SettingsSheet C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setOpen(false);onEditIdentity&&onEditIdentity();}} onLogout={onLogout} onClose={()=>setOpen(false)}/>}
+    </>
+  );
+}
+
+function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onClose}){
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:250,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"28px 22px 44px"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24}}>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text,letterSpacing:1}}>⚙️ SETTINGS</div>
+          <button onClick={onClose} style={{width:32,height:32,borderRadius:8,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,cursor:"pointer",fontSize:16}}>✕</button>
+        </div>
+        {/* Light/dark mode */}
+        <button onClick={()=>setDm(d=>!d)} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:16,border:"1.5px solid "+C.border,background:C.surfaceAlt,cursor:"pointer",marginBottom:12,textAlign:"left"}}>
+          <span style={{fontSize:22}}>{dm?"☀️":"🌙"}</span>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:C.text,letterSpacing:.5}}>{dm?"LIGHT MODE":"DARK MODE"}</div>
+            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Currently {dm?"dark":"light"}</div>
+          </div>
+          <span style={{fontSize:16,color:C.sub}}>›</span>
+        </button>
+        {/* Edit identity */}
+        <button onClick={onEditIdentity} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:16,border:"1.5px solid "+C.border,background:C.surfaceAlt,cursor:"pointer",marginBottom:12,textAlign:"left"}}>
+          <span style={{fontSize:22}}>✏️</span>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:C.text,letterSpacing:.5}}>EDIT IDENTITY</div>
+            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Update your profile details</div>
+          </div>
+          <span style={{fontSize:16,color:C.sub}}>›</span>
+        </button>
+        {/* Sign out */}
+        <button onClick={onLogout} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:16,border:"1.5px solid #FCA5A5",background:"#FFF5F5",cursor:"pointer",textAlign:"left"}}>
+          <span style={{fontSize:22}}>↪</span>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:"#EF4444",letterSpacing:.5}}>SIGN OUT</div>
+            <div style={{fontSize:11,color:"#F87171",fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Log out of your account</div>
+          </div>
+          <span style={{fontSize:16,color:"#EF4444"}}>›</span>
+        </button>
+      </div>
+    </div>
+  );
+}
 function PBtn({C,children,onClick,outline}){return <button onClick={onClick} style={{padding:"9px 20px",borderRadius:50,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1.5,display:"flex",alignItems:"center",gap:6,border:outline?"1.5px solid "+C.border:"none",background:outline?"transparent":C.accentBg,color:outline?C.text:C.accentText}}>{children}</button>;}
 function AvaBubble({name,C}){return <div style={{width:36,height:36,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:14}}>{name?name[0].toUpperCase():"?"}</div>;}
 function Ldg({C}){return <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}>LOADING…</div>;}
@@ -1583,7 +1836,7 @@ function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
             <div style={{flex:1,padding:"8px 10px 8px 6px",display:"flex",flexDirection:"column",gap:5}}>
               {dl.length===0?<span style={{fontSize:10,color:C.border,letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,paddingTop:4}}>NO PLANS</span>:
                 dl.map(l=>(
-                  <div key={l.id} onClick={()=>onTap&&onTap(l)} style={{borderRadius:10,padding:"6px 10px",background:l._pending?"#FFF3E0":l._accepted?"#E8F5E9":subjBg(l.subject),border:"1px solid "+(l._pending?"#FFB74D":l._accepted?"#66BB6A":"rgba(0,0,0,.06)"),cursor:onTap?"pointer":"default",display:"flex",flexDirection:"column",gap:1}}>
+                  <div key={l.id} onClick={()=>onTap&&onTap(l)} style={{borderRadius:10,padding:"6px 10px",background:l._declined?"#FFE4E6":l._pending?"#FFF3E0":l._accepted?"#E8F5E9":"#FFE4E6",border:"1px solid "+(l._declined?"#FECDD3":l._pending?"#FFB74D":l._accepted?"#66BB6A":"#FECDD3"),cursor:onTap?"pointer":"default",display:"flex",flexDirection:"column",gap:1}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                       <div style={{display:"flex",alignItems:"center",gap:5}}>
                         <span style={{fontSize:13}}>{l.online?"🌐":"📍"}</span>
@@ -1604,7 +1857,7 @@ function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
   );
 }
 
-function StudentProfileModal({lesson,C,onClose}){
+function StudentProfileModal({lesson,C,onClose,onCall}){
   if(!lesson)return null;
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
@@ -1617,10 +1870,9 @@ function StudentProfileModal({lesson,C,onClose}){
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{lesson.student_name||"Student"}</div>
             <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} {timeLbl(lesson.from_hour)}–{timeLbl(lesson.to_hour)}</div>
           </div>
-          <a href={"tel:"+(lesson.student_phone||"")} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",textDecoration:"none",flexShrink:0}} title="Call student">
-            <span style={{fontSize:20}}>📞</span>
-          </a>
-        </div>
+          {onCall&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}} title="Start in-app call">
+            <span style={{fontSize:20}}>{lesson.online?"📹":"📞"}</span>
+          </button>}
         {[
           {label:"MODE",value:lesson.online?"🌐 Online":"📍 Offline"},
           {label:"SLOT",value:timeLbl(lesson.from_hour)+" – "+timeLbl(lesson.to_hour)},
@@ -1782,9 +2034,9 @@ function ProfCard({profile,editP,setEditP,editing,pfpRef,C}){
   );
 }
 
-function ConfCard({C,editP,setEditP,editing,profile,onToggle,isStudent,isTutor,saving,onLogout}){
+function ConfCard({C,editP,setEditP,editing,profile,onToggle,isStudent,isTutor,saving}){
   const sF=[{label:"CALLSIGN",key:"name",icon:"👤",type:"text",ph:"Full Name"},{label:"ZONE",key:"location",icon:"📍",type:"text",ph:"City, Region"},{label:"AGE",key:"age",icon:"🎂",type:"number",ph:"Years"},{label:"GENDER",key:"gender",icon:"⚧",items:GENDERS},{label:"ACADEMIC GRADE",key:"grade",icon:"🎓",items:STUDENT_GRADES}];
-  const tF=[{label:"CALLSIGN",key:"name",icon:"👤",type:"text",ph:"Full Name"},{label:"ZONE",key:"location",icon:"📍",type:"text",ph:"City, Region"},{label:"AGE",key:"age",icon:"🎂",type:"number",ph:"Years"},{label:"GENDER",key:"gender",icon:"⚧",items:GENDERS},{label:"CURRICULUM LEVEL",key:"curriculum_level",icon:"🎓",items:LEVELS},{label:"ONLINE RATE (KES/HR)",key:"hourly_rate_online",icon:"🌐",type:"number",ph:"e.g. 900"},{label:"OFFLINE RATE (KES/HR)",key:"hourly_rate_offline",icon:"📍",type:"number",ph:"e.g. 700"}];
+  const tF=[{label:"CALLSIGN",key:"name",icon:"👤",type:"text",ph:"Full Name"},{label:"ZONE",key:"location",icon:"📍",type:"text",ph:"City, Region"},{label:"AGE",key:"age",icon:"🎂",type:"number",ph:"Years"},{label:"GENDER",key:"gender",icon:"⚧",items:GENDERS},{label:"CURRICULUM LEVEL",key:"curriculum_level",icon:"🎓",items:LEVELS},{label:"ONLINE RATE (KES/HR)",key:"hourly_rate_online",icon:"🌐",type:"number",ph:"e.g. 900"},{label:"OFFLINE RATE (KES/HR)",key:"hourly_rate_offline",icon:"📍",type:"number",ph:"e.g. 700"},{label:"M-PESA PHONE",key:"mpesa_phone",icon:"📱",type:"tel",ph:"e.g. 0712345678"}];
   const fields=isTutor?tF:sF;
   return(
     <div style={{background:C.surface,borderRadius:20,margin:"0 14px",padding:"20px 18px",border:"1px solid "+C.border}}>
@@ -1797,17 +2049,61 @@ function ConfCard({C,editP,setEditP,editing,profile,onToggle,isStudent,isTutor,s
             <div style={{borderBottom:"1px solid "+C.border,padding:"8px 0",fontSize:15,color:C.text,fontFamily:"Barlow,sans-serif",display:"flex",alignItems:"center",gap:10}}><span style={{color:C.sub,fontSize:14}}>{f.icon}</span><span>{profile[f.key]||"—"}</span></div>}
         </div>
       ))}
-      <button onClick={onToggle} style={{width:"100%",padding:"14px",borderRadius:50,border:"none",background:C.accentBg,color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:2,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:14}}>
-        {saving?"SAVING…":editing?"✓  SAVE IDENTITY":"✏  EDIT IDENTITY"}
-      </button>
-      {!editing&&onLogout&&<button onClick={onLogout} style={{width:"100%",padding:"14px",borderRadius:50,border:"1.5px solid #EF4444",background:"transparent",color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:2,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:10}}>
-        ↪ SIGN OUT
+      {editing&&<button onClick={onToggle} style={{width:"100%",padding:"14px",borderRadius:50,border:"none",background:C.accentBg,color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:2,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:14}}>
+        {saving?"SAVING…":"✓  SAVE IDENTITY"}
       </button>}
+      {editing&&<button onClick={()=>onToggle()} style={{display:"none"}}/>}
     </div>
   );
 }
 
-function WalletModal({bal,txs,withdrawAmt,setWithdrawAmt,withdrawMsg,onWithdraw,onClose,C}){
+/* ══ MPESA CONFIG ══ */
+// Set these via your backend proxy — never expose consumer key/secret client-side
+// Your server endpoint should accept POST {phone, amount} and call Daraja STK Push
+const MPESA_PROXY_URL = "https://your-backend.com/api/mpesa/stkpush"; // replace with your server URL
+
+function WalletModal({bal,txs,withdrawAmt,setWithdrawAmt,withdrawMsg,onWithdraw,onClose,C,tutorPhone}){
+  const [mpesaPhone,setMpesaPhone]=React.useState(tutorPhone||"");
+  const [mpesaLoading,setMpesaLoading]=React.useState(false);
+  const [mpesaMsg,setMpesaMsg]=React.useState("");
+
+  async function handleMpesaWithdraw(){
+    const amt=parseFloat(withdrawAmt);
+    if(!amt||amt<=0){setMpesaMsg("Enter a valid amount.");return;}
+    if(amt>bal){setMpesaMsg("Insufficient balance.");return;}
+    const phone=(mpesaPhone||"").replace(/\D/g,"");
+    if(phone.length<9){setMpesaMsg("Enter a valid M-Pesa phone number.");return;}
+
+    setMpesaLoading(true);setMpesaMsg("");
+    try{
+      // Normalize phone to 254XXXXXXXXX format
+      const normalized=phone.startsWith("0")?"254"+phone.slice(1):phone.startsWith("254")?phone:"254"+phone;
+
+      const res=await fetch(MPESA_PROXY_URL,{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({phone:normalized,amount:Math.floor(amt),account_ref:"JRSH-TUTOR",description:"JRSH Tutor Earnings Withdrawal"})
+      });
+
+      if(res.ok){
+        // Debit wallet optimistically
+        onWithdraw(amt);
+        setMpesaMsg("✓ STK Push sent! Check your phone to complete the M-Pesa transaction.");
+      }else{
+        const err=await res.json().catch(()=>({}));
+        setMpesaMsg("M-Pesa error: "+(err.message||res.statusText||"Try again."));
+      }
+    }catch(e){
+      // If proxy not configured, do local simulation
+      if(MPESA_PROXY_URL.includes("your-backend")){
+        onWithdraw(amt);
+        setMpesaMsg("✓ Simulated (configure MPESA_PROXY_URL for real payouts). KES "+amt.toLocaleString()+" would be sent to "+mpesaPhone+".");
+      }else{
+        setMpesaMsg("Network error. Try again.");
+      }
+    }finally{setMpesaLoading(false);setTimeout(()=>setMpesaMsg(""),6000);}
+  }
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,maxHeight:"90vh",overflowY:"auto",paddingBottom:32}}>
@@ -1815,7 +2111,7 @@ function WalletModal({bal,txs,withdrawAmt,setWithdrawAmt,withdrawMsg,onWithdraw,
         <div style={{padding:"20px 20px 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.text,letterSpacing:1}}>💰 WALLET</div>
-            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>YOUR EARNINGS</div>
+            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>YOUR EARNINGS · 90% AFTER 10% COMMISSION</div>
           </div>
           <button onClick={onClose} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,cursor:"pointer",fontSize:18}}>✕</button>
         </div>
@@ -1823,11 +2119,21 @@ function WalletModal({bal,txs,withdrawAmt,setWithdrawAmt,withdrawMsg,onWithdraw,
         <div style={{margin:"16px 16px 0",background:"#111",borderRadius:20,padding:"24px 20px"}}>
           <div style={{fontSize:11,fontWeight:800,letterSpacing:2,color:"rgba(255,255,255,.5)",fontFamily:"'Barlow Condensed',sans-serif",marginBottom:6}}>AVAILABLE BALANCE</div>
           <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:36,color:"#fff",letterSpacing:1}}>KES {bal.toLocaleString()}</div>
-          <div style={{fontSize:10,color:"rgba(255,255,255,.4)",fontFamily:"'Barlow Condensed',sans-serif",marginTop:4}}>Updated just now</div>
+          <div style={{fontSize:10,color:"rgba(255,255,255,.4)",fontFamily:"'Barlow Condensed',sans-serif",marginTop:4}}>After 10% JRSH platform commission</div>
         </div>
-        {/* Withdraw */}
+        {/* M-Pesa Withdraw */}
         <div style={{margin:"14px 16px 0",background:C.surfaceAlt,borderRadius:16,padding:"16px"}}>
-          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1.5,color:C.text,marginBottom:10}}>WITHDRAW FUNDS</div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+            <span style={{fontSize:20}}>📱</span>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1.5,color:C.text}}>WITHDRAW VIA M-PESA</div>
+          </div>
+          <input
+            type="tel"
+            placeholder="M-Pesa phone (e.g. 0712345678)"
+            value={mpesaPhone}
+            onChange={e=>setMpesaPhone(e.target.value)}
+            style={{width:"100%",padding:"11px 14px",borderRadius:50,border:"1.5px solid "+C.border,background:C.surface,color:C.text,fontSize:14,outline:"none",fontFamily:"Barlow,sans-serif",boxSizing:"border-box",marginBottom:8}}
+          />
           <div style={{display:"flex",gap:8}}>
             <input
               type="number"
@@ -1836,12 +2142,12 @@ function WalletModal({bal,txs,withdrawAmt,setWithdrawAmt,withdrawMsg,onWithdraw,
               onChange={e=>setWithdrawAmt(e.target.value)}
               style={{flex:1,padding:"11px 14px",borderRadius:50,border:"1.5px solid "+C.border,background:C.surface,color:C.text,fontSize:14,outline:"none",fontFamily:"Barlow,sans-serif"}}
             />
-            <button onClick={onWithdraw} style={{padding:"11px 18px",borderRadius:50,border:"none",background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1,cursor:"pointer",whiteSpace:"nowrap"}}>
-              WITHDRAW
+            <button onClick={handleMpesaWithdraw} disabled={mpesaLoading} style={{padding:"11px 18px",borderRadius:50,border:"none",background:mpesaLoading?"#555":"#4CAF50",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1,cursor:mpesaLoading?"not-allowed":"pointer",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:6}}>
+              {mpesaLoading?"⏳":"📲"} {mpesaLoading?"SENDING…":"PAY OUT"}
             </button>
           </div>
-          {withdrawMsg&&<div style={{marginTop:8,fontSize:12,color:withdrawMsg.startsWith("✓")?"#16a34a":"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{withdrawMsg}</div>}
-          <div style={{marginTop:8,fontSize:10,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>Processed via M-Pesa within 24 hours</div>
+          {mpesaMsg&&<div style={{marginTop:8,fontSize:12,color:mpesaMsg.startsWith("✓")?"#16a34a":"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,lineHeight:1.5}}>{mpesaMsg}</div>}
+          <div style={{marginTop:8,fontSize:10,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.5}}>Funds sent directly to your M-Pesa. STK push prompt will appear on your phone.</div>
         </div>
         {/* Transactions */}
         <div style={{margin:"14px 16px 0"}}>
@@ -1849,11 +2155,13 @@ function WalletModal({bal,txs,withdrawAmt,setWithdrawAmt,withdrawMsg,onWithdraw,
           {txs.length===0&&<div style={{textAlign:"center",padding:"16px 0",color:C.sub,fontSize:12,fontFamily:"'Barlow Condensed',sans-serif"}}>NO TRANSACTIONS YET</div>}
           {txs.map(tx=>(
             <div key={tx.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0",borderBottom:"1px solid "+C.border}}>
-              <div>
-                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,color:C.text}}>{tx.label}</div>
-                <div style={{fontSize:10,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:2}}>{tx.date}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{tx.label}</div>
+                <div style={{fontSize:10,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:2}}>
+                  {tx.date}{tx.gross&&tx.commission?<span style={{color:"#888"}}> · Gross KES {tx.gross.toLocaleString()} − 10% = KES {tx.amount.toLocaleString()}</span>:null}
+                </div>
               </div>
-              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,color:tx.type==="credit"?"#16a34a":"#EF4444"}}>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,color:tx.type==="credit"?"#16a34a":"#EF4444",marginLeft:12,flexShrink:0}}>
                 {tx.type==="credit"?"+":"-"}KES {Math.abs(tx.amount).toLocaleString()}
               </div>
             </div>
