@@ -75,6 +75,54 @@ const sb={
   async del(t,q){const r=await fetch(SB_URL+"/rest/v1/"+t+q,{method:"DELETE",headers:SH});if(!r.ok)throw new Error(await r.text());return r.status===204?[]:r.json();},
 };
 
+/* ══ SUPABASE AUTH ══ */
+const SB_AUTH_URL = SB_URL + "/auth/v1";
+const SB_AUTH_HEADERS = {"Content-Type":"application/json","apikey":SB_KEY};
+const sbAuth = {
+  async signUp(email, password, meta={}) {
+    const r = await fetch(SB_AUTH_URL+"/signup", {
+      method:"POST", headers:SB_AUTH_HEADERS,
+      body:JSON.stringify({email, password, data:meta})
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error_description||d.msg||"Sign-up failed");
+    return d;
+  },
+  async signIn(email, password) {
+    const r = await fetch(SB_AUTH_URL+"/token?grant_type=password", {
+      method:"POST", headers:SB_AUTH_HEADERS,
+      body:JSON.stringify({email, password})
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error_description||d.msg||"Sign-in failed");
+    return d; // {access_token, user, ...}
+  },
+  async getProfile(userId, token) {
+    const r = await fetch(SB_URL+"/rest/v1/profiles?id=eq."+userId+"&limit=1", {
+      headers:{...SB_AUTH_HEADERS, "Authorization":"Bearer "+token}
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error("Profile fetch failed");
+    return d[0]||null;
+  },
+  async createProfile(data, token) {
+    const r = await fetch(SB_URL+"/rest/v1/profiles", {
+      method:"POST",
+      headers:{...SB_AUTH_HEADERS,"Authorization":"Bearer "+token,"Prefer":"return=representation"},
+      body:JSON.stringify(data)
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error("Profile create failed");
+    return d[0]||data;
+  }
+};
+
+/* ══ SESSION STORAGE ══ */
+function saveSession(session){try{localStorage.setItem("jrsh_session",JSON.stringify(session));}catch(e){}}
+function loadSession(){try{const s=localStorage.getItem("jrsh_session");return s?JSON.parse(s):null;}catch(e){return null;}}
+function clearSession(){try{localStorage.removeItem("jrsh_session");}catch(e){}}
+
+
 /* ══ STATIC DATA ══ */
 const SUBJECTS=["Agriculture","Aviation Technology","Biology","Business Studies","Chemistry","Community Service Learning","Computer Science","Creative Arts & Sports","Economics","Engineering Studies","English","Environmental Activities","Fine Arts","Geography","Health Education","History & Citizenship","Home Science","Hygiene & Nutrition","Indigenous Language","Integrated Science","Kenyan Sign Language","Kiswahili","Language Activities","Life Skills Education","Mathematical Activities","Mathematics","Movement & Creative Activities","Music & Dance","Performing Arts","Physical Education","Pre-Technical Studies","Psychology","Psychomotor & Creative Activities","Religious Education (CRE / IRE / HRE)","Religious Education Activities","Science & Technology","Social Studies","Sociology","Sports & Physical Education","Sports Science","Theatre & Film","Visual Arts"];
 const GENDERS=["Male","Female","Other"];
@@ -223,18 +271,47 @@ function loadAgora(){
 }
 
 /* ══ CALL DIALOG — Agora RTC Video/Voice ══ */
+/* ══ LIVE LOCATION HOOK ══ */
+function useLiveLocation(){
+  const [loc,setLoc]=React.useState(null);
+  const [err,setErr]=React.useState(null);
+  React.useEffect(()=>{
+    if(!navigator.geolocation){setErr("Geolocation not supported");return;}
+    const id=navigator.geolocation.watchPosition(
+      p=>setLoc({lat:p.coords.latitude,lng:p.coords.longitude,acc:Math.round(p.coords.accuracy)}),
+      e=>setErr(e.message),
+      {enableHighAccuracy:true,maximumAge:10000}
+    );
+    return()=>navigator.geolocation.clearWatch(id);
+  },[]);
+  return{loc,err};
+}
+
+/* ══ CALL DIALOG (VOICE ONLY, 3-MIN LIMIT) ══ */
 function CallDialog({lesson,onEnd,user,C}){
-  const isOnline=lesson.online;
-  const [phase,setPhase]=React.useState("ringing"); // ringing | connecting | live | ended
+  const isOffline=!lesson.online;
+  const CALL_LIMIT=3*60; // 3 minutes in seconds
+  const [phase,setPhase]=React.useState("ringing"); // ringing | live | ended
   const [ringTimer,setRingTimer]=React.useState(30);
-  const [callDuration,setCallDuration]=React.useState(0);
+  const [callSecs,setCallSecs]=React.useState(0);
   const [muted,setMuted]=React.useState(false);
-  const [camOff,setCamOff]=React.useState(false);
-  const [error,setError]=React.useState("");
-  const clientRef=React.useRef(null);
-  const localTracksRef=React.useRef({audio:null,video:null});
-  const localVideoRef=React.useRef(null);
-  const remoteVideoRef=React.useRef(null);
+  const [showMap,setShowMap]=React.useState(false);
+  const {loc,err:locErr}=useLiveLocation();
+
+  // Share my location to Supabase
+  React.useEffect(()=>{
+    if(phase!=="live"||!loc||!lesson.id)return;
+    const interval=setInterval(()=>{
+      try{
+        sb.patch("tutor_requests","?id=eq."+lesson.id,{
+          [`${user.role}_lat`]:loc.lat,
+          [`${user.role}_lng`]:loc.lng,
+          location_updated_at:new Date().toISOString()
+        });
+      }catch(e){}
+    },10000);
+    return()=>clearInterval(interval);
+  },[phase,loc,lesson.id,user.role]);
 
   // Ring countdown
   React.useEffect(()=>{
@@ -244,182 +321,148 @@ function CallDialog({lesson,onEnd,user,C}){
     return()=>clearTimeout(id);
   },[phase,ringTimer]);
 
-  // Call duration counter
+  // Call duration + auto-end at 3 mins
   React.useEffect(()=>{
     if(phase!=="live")return;
-    const id=setInterval(()=>setCallDuration(d=>d+1),1000);
+    const id=setInterval(()=>{
+      setCallSecs(s=>{
+        if(s+1>=CALL_LIMIT){clearInterval(id);setPhase("ended");onEnd("timeout");return CALL_LIMIT;}
+        return s+1;
+      });
+    },1000);
     return()=>clearInterval(id);
   },[phase]);
 
-  const fmt=s=>{const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;return h>0?`${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`:`${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;};
+  const fmtTime=s=>{
+    const m=Math.floor(s/60),sec=s%60;
+    return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0");
+  };
+  const remaining=CALL_LIMIT-callSecs;
 
-  async function joinCall(){
-    if(!isOnline){setPhase("live");return;}
-    setPhase("connecting");
-    setError("");
-    try{
-      // Load Agora SDK then create client
-      const AgoraRTC=await loadAgora();
-      AgoraRTC.setLogLevel(4);
-      const client=AgoraRTC.createClient({mode:"rtc",codec:"vp8"});
-      clientRef.current=client;
+  function acceptCall(){setPhase("live");}
+  function endCall(){setPhase("ended");onEnd("ended");}
 
-      // Generate a simple channel name from the lesson id
-      const channel="jrsh-"+(lesson.id||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,16);
+  // Check if within 1 hour of lesson start for location sharing (offline only)
+  const now=Date.now();
+  const lessonStart=lesson.start_ts||(Date.now()-60*60*1000); // fallback: 1hr ago
+  const withinHour=isOffline&&(lessonStart-now)<3600000&&now<=lessonStart+(lesson.to_hour-lesson.from_hour)*3600000;
 
-      // Join — token is null for testing (enable token auth in production via your server)
-      await client.join(AGORA_APP_ID, channel, null, user?.id||null);
-
-      // Create local tracks
-      const [audioTrack,videoTrack]=await AgoraRTC.createMicrophoneAndCameraTracks();
-      localTracksRef.current={audio:audioTrack,video:videoTrack};
-
-      // Play local video
-      if(localVideoRef.current) videoTrack.play(localVideoRef.current);
-
-      // Publish
-      await client.publish([audioTrack,videoTrack]);
-
-      // Subscribe to remote users
-      client.on("user-published",async(remoteUser,mediaType)=>{
-        await client.subscribe(remoteUser,mediaType);
-        if(mediaType==="video"&&remoteVideoRef.current){
-          remoteUser.videoTrack.play(remoteVideoRef.current);
-        }
-        if(mediaType==="audio") remoteUser.audioTrack.play();
-      });
-      client.on("user-unpublished",(remoteUser,mediaType)=>{
-        if(mediaType==="video"&&remoteVideoRef.current) remoteVideoRef.current.innerHTML="";
-      });
-
-      setPhase("live");
-    }catch(e){
-      // Fallback: if Agora App ID not set or camera permission denied, show friendly call screen
-      setError(AGORA_APP_ID==="YOUR_AGORA_APP_ID"
-        ?"Add your Agora App ID to enable real video calls. Connected in simulation mode."
-        :"Could not access camera/mic. "+e.message);
-      setPhase("live"); // still allow simulated call
-    }
-  }
-
-  async function endCall(){
-    // Stop local tracks
-    if(localTracksRef.current.audio){localTracksRef.current.audio.stop();localTracksRef.current.audio.close();}
-    if(localTracksRef.current.video){localTracksRef.current.video.stop();localTracksRef.current.video.close();}
-    // Leave channel
-    if(clientRef.current){try{await clientRef.current.leave();}catch(e){}}
-    setPhase("ended");
-    onEnd("ended");
-  }
-
-  async function toggleMute(){
-    if(localTracksRef.current.audio){
-      await localTracksRef.current.audio.setEnabled(muted);
-      setMuted(m=>!m);
-    }else{setMuted(m=>!m);}
-  }
-
-  async function toggleCamera(){
-    if(localTracksRef.current.video){
-      await localTracksRef.current.video.setEnabled(camOff);
-      setCamOff(c=>!c);
-    }else{setCamOff(c=>!c);}
-  }
-
-  const btnStyle=(bg,active)=>({
-    width:56,height:56,borderRadius:"50%",
-    border:"none",cursor:"pointer",fontSize:22,
-    background:active?bg:"rgba(255,255,255,.15)",
-    display:"flex",alignItems:"center",justifyContent:"center",
-    transition:"background .2s"
-  });
+  const otherRole=user.role==="tutor"?"student":"tutor";
 
   return(
-    <div style={{position:"fixed",inset:0,background:"#0a0a0a",zIndex:500,display:"flex",flexDirection:"column",fontFamily:"'Barlow',sans-serif"}}>
-
-      {/* Video area */}
-      {isOnline&&phase==="live"?(
-        <div style={{flex:1,position:"relative",background:"#111"}}>
-          {/* Remote video (full screen) */}
-          <div ref={remoteVideoRef} style={{width:"100%",height:"100%",background:"#1a1a1a",display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <div style={{textAlign:"center",color:"#555"}}>
-              <div style={{fontSize:48,marginBottom:8}}>👤</div>
-              <div style={{fontSize:12,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>Waiting for other participant…</div>
+    <div style={{position:"fixed",inset:0,background:"#0a0a0a",zIndex:500,display:"flex",flexDirection:"column",fontFamily:"Barlow,sans-serif"}}>
+      {/* Map overlay */}
+      {showMap&&withinHour&&(
+        <div style={{position:"absolute",inset:0,zIndex:10,background:"#111",display:"flex",flexDirection:"column"}}>
+          <div style={{padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#1a1a1a",flexShrink:0}}>
+            <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,letterSpacing:1}}>📍 LIVE LOCATIONS</div>
+            <button onClick={()=>setShowMap(false)} style={{background:"#333",border:"none",borderRadius:8,padding:"6px 14px",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:"pointer"}}>CLOSE</button>
+          </div>
+          <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:20}}>
+            <div style={{background:"#1a1a1a",borderRadius:20,padding:"20px",width:"100%",border:"1px solid #333"}}>
+              <div style={{fontSize:11,fontWeight:800,letterSpacing:1.5,color:"#888",fontFamily:"'Barlow Condensed',sans-serif",marginBottom:10}}>YOUR LOCATION</div>
+              {loc?(
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <span style={{fontSize:24}}>📍</span>
+                  <div>
+                    <div style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:14}}>LIVE — ±{loc.acc}m accuracy</div>
+                    <div style={{color:"#888",fontSize:11,marginTop:2}}>Lat: {loc.lat.toFixed(5)}, Lng: {loc.lng.toFixed(5)}</div>
+                  </div>
+                </div>
+              ):<div style={{color:"#F59E0B",fontSize:12}}>Getting your location… {locErr||""}</div>}
             </div>
-          </div>
-          {/* Local video (PiP) */}
-          <div ref={localVideoRef} style={{position:"absolute",top:16,right:16,width:100,height:140,borderRadius:12,overflow:"hidden",background:"#222",border:"2px solid rgba(255,255,255,.2)"}}/>
-          {/* Duration */}
-          <div style={{position:"absolute",top:16,left:16,background:"rgba(0,0,0,.55)",borderRadius:8,padding:"4px 12px"}}>
-            <span style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14}}>{fmt(callDuration)}</span>
-          </div>
-          {error&&<div style={{position:"absolute",bottom:100,left:0,right:0,margin:"0 16px",background:"rgba(0,0,0,.75)",borderRadius:10,padding:"10px 14px",textAlign:"center"}}>
-            <span style={{color:"#F59E0B",fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{error}</span>
-          </div>}
-        </div>
-      ):(
-        /* Ringing / connecting / offline state */
-        <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
-          <div style={{width:90,height:90,borderRadius:"50%",background:"#1a1a1a",display:"flex",alignItems:"center",justifyContent:"center",fontSize:40,border:"3px solid "+(phase==="ringing"?"#22C55E":"#3b82f6"),boxShadow:"0 0 0 12px rgba(34,197,94,.1)"}}>
-            {isOnline?"📹":"📍"}
-          </div>
-          <div style={{textAlign:"center"}}>
-            <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,letterSpacing:1}}>
-              {phase==="ringing"?(isOnline?"INCOMING VIDEO CALL":"SESSION STARTING"):"CONNECTING…"}
+            <div style={{background:"#1a1a1a",borderRadius:20,padding:"20px",width:"100%",border:"1px solid #333"}}>
+              <div style={{fontSize:11,fontWeight:800,letterSpacing:1.5,color:"#888",fontFamily:"'Barlow Condensed',sans-serif",marginBottom:10}}>{otherRole.toUpperCase()} LOCATION</div>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:24}}>🔵</span>
+                <div>
+                  <div style={{color:"#3b82f6",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:14}}>LIVE — SYNCING</div>
+                  <div style={{color:"#888",fontSize:11,marginTop:2}}>Updated every 10 seconds</div>
+                </div>
+              </div>
             </div>
-            <div style={{color:"#888",fontSize:13,marginTop:4}}>{lesson.subject}</div>
-            {phase==="ringing"&&isOnline&&(
-              <div style={{color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:28,marginTop:12}}>
-                {String(ringTimer).padStart(2,"0")}s
+            <div style={{background:"#1a1a1a",borderRadius:16,padding:"14px 16px",width:"100%",border:"1px solid #333"}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#666",fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.6}}>
+                📡 Location is shared only during the lesson window and automatically stops when the call ends. Both parties must grant location permissions.
               </div>
-            )}
-            {phase==="ringing"&&!isOnline&&(
-              <div style={{color:"#aaa",fontSize:12,marginTop:10,maxWidth:260,lineHeight:1.6}}>
-                Head to the agreed location. Tap confirm once you arrive.
-              </div>
-            )}
-            {phase==="connecting"&&<div style={{color:"#3b82f6",fontSize:12,marginTop:10}}>Setting up secure channel…</div>}
+            </div>
           </div>
         </div>
       )}
 
+      {/* Main call UI */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
+        <div style={{width:90,height:90,borderRadius:"50%",background:"#1a1a1a",display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,border:"3px solid "+(phase==="ringing"?"#22C55E":"#F59E0B"),boxShadow:"0 0 0 14px rgba(34,197,94,.08)"}}>
+          🎙️
+        </div>
+        <div style={{textAlign:"center"}}>
+          <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,letterSpacing:1}}>
+            {phase==="ringing"?"INCOMING VOICE CALL":"VOICE CALL"}
+          </div>
+          <div style={{color:"#888",fontSize:13,marginTop:4}}>{lesson.subject} · {isOffline?"Offline":"Online"}</div>
+          {phase==="ringing"&&(
+            <div style={{color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:28,marginTop:12}}>
+              {String(ringTimer).padStart(2,"0")}s
+            </div>
+          )}
+          {phase==="live"&&(
+            <div style={{marginTop:12}}>
+              <div style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:22}}>{fmtTime(callSecs)}</div>
+              <div style={{color:remaining<=30?"#EF4444":"#666",fontSize:11,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
+                {remaining<=30?`⚠ ${fmtTime(remaining)} REMAINING`:`LIMIT: ${fmtTime(CALL_LIMIT)}`}
+              </div>
+              {/* Progress bar */}
+              <div style={{width:200,height:4,background:"#333",borderRadius:2,marginTop:10,overflow:"hidden"}}>
+                <div style={{width:(callSecs/CALL_LIMIT*100)+"%",height:"100%",background:remaining<=30?"#EF4444":"#22C55E",transition:"width 1s linear"}}/>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Controls */}
-      <div style={{padding:"20px 0 40px",background:"rgba(0,0,0,.85)",display:"flex",flexDirection:"column",alignItems:"center",gap:16}}>
+      <div style={{padding:"20px 0 44px",background:"rgba(0,0,0,.85)",display:"flex",flexDirection:"column",alignItems:"center",gap:20}}>
         {phase==="ringing"?(
-          <div style={{display:"flex",gap:36,alignItems:"center"}}>
+          <div style={{display:"flex",gap:40,alignItems:"center"}}>
             <div style={{textAlign:"center"}}>
-              <button onClick={()=>{setPhase("ended");onEnd("declined");}} style={{...btnStyle("#EF4444",true),width:64,height:64,fontSize:26}}>📵</button>
+              <button onClick={()=>{setPhase("ended");onEnd("declined");}} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>📵</button>
               <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>DECLINE</div>
             </div>
             <div style={{textAlign:"center"}}>
-              <button onClick={joinCall} style={{...btnStyle("#22C55E",true),width:64,height:64,fontSize:26}}>{isOnline?"📹":"✅"}</button>
-              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>{isOnline?"ANSWER":"CONFIRM"}</div>
+              <button onClick={acceptCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#22C55E",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>🎙️</button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>ANSWER</div>
             </div>
           </div>
         ):(
           <div style={{display:"flex",gap:20,alignItems:"center"}}>
-            {isOnline&&(
-              <>
-                <div style={{textAlign:"center"}}>
-                  <button onClick={toggleMute} style={btnStyle("#EF4444",muted)}>{muted?"🔇":"🎙️"}</button>
-                  <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{muted?"UNMUTE":"MUTE"}</div>
-                </div>
-                <div style={{textAlign:"center"}}>
-                  <button onClick={toggleCamera} style={btnStyle("#EF4444",camOff)}>{camOff?"📷":"📹"}</button>
-                  <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{camOff?"CAM ON":"CAM OFF"}</div>
-                </div>
-              </>
+            <div style={{textAlign:"center"}}>
+              <button onClick={()=>setMuted(m=>!m)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:muted?"#EF4444":"rgba(255,255,255,.15)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                {muted?"🔇":"🎙️"}
+              </button>
+              <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{muted?"UNMUTE":"MUTE"}</div>
+            </div>
+            {withinHour&&(
+              <div style={{textAlign:"center"}}>
+                <button onClick={()=>setShowMap(true)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.15)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  📍
+                </button>
+                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>LOCATION</div>
+              </div>
             )}
             <div style={{textAlign:"center"}}>
-              <button onClick={endCall} style={{...btnStyle("#EF4444",true),width:64,height:64,fontSize:26}}>📵</button>
+              <button onClick={endCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>📵</button>
               <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>END</div>
             </div>
           </div>
         )}
+        <div style={{fontSize:10,color:"#444",fontFamily:"'Barlow Condensed',sans-serif",textAlign:"center",maxWidth:260}}>
+          {isOffline?"OFFLINE LESSON · VOICE ONLY · 3-MIN LIMIT":"ONLINE LESSON · VOICE ONLY · 3-MIN LIMIT"}
+        </div>
       </div>
     </div>
   );
 }
+
 
 /* ══ OFFLINE START BUTTON ══ */
 function OfflineStartButton({lesson,started,onStart,onDrop,onCancel,C}){
@@ -711,30 +754,42 @@ function AppRoot(){
   const [screen,setScreen]=useState("welcome");
   const [role,setRole]=useState(null);
   const [user,setUser]=useState(null);
+  const [authMode,setAuthMode]=useState(null); // "signin" | "signup-student" | "signup-tutor"
+  const [authLoading,setAuthLoading]=useState(false);
+  const [authErr,setAuthErr]=useState("");
+  const [restoring,setRestoring]=useState(true);
 
-  // Back-navigation refs so StudentApp/TutorApp can register a "close modal" handler
   const backHandlerRef=React.useRef(null);
 
   function navTo(s){
     window.history.pushState({screen:s},"",window.location.pathname);
     setScreen(s);
   }
-  function handleJoin(u){setUser(u);setRole(u.role);navTo("app");}
-  function handleLogout(){setUser(null);navTo("welcome");}
+  function handleJoin(u){
+    setUser(u);setRole(u.role);
+    saveSession({user:u,role:u.role});
+    navTo("app");
+  }
+  function handleLogout(){
+    setUser(null);setRole(null);clearSession();navTo("welcome");
+  }
 
-  // Seed initial history entry so the very first popstate has somewhere to go
+  // Restore session on mount
   React.useEffect(()=>{
+    const sess=loadSession();
+    if(sess&&sess.user&&sess.role){
+      setUser(sess.user);setRole(sess.role);
+      setScreen("app");
+    }
+    setRestoring(false);
     window.history.replaceState({screen:"welcome"},"",window.location.pathname);
   },[]);
 
-  // Listen for Android/browser back button
   React.useEffect(()=>{
     function onPop(e){
-      // If a child registered a modal-close handler, call that first
       if(backHandlerRef.current){
         backHandlerRef.current();
         backHandlerRef.current=null;
-        // Re-push so the stack depth is preserved for the next back press
         window.history.pushState({screen},"",window.location.pathname);
         return;
       }
@@ -747,24 +802,73 @@ function AppRoot(){
     return()=>window.removeEventListener("popstate",onPop);
   },[screen]);
 
+  if(restoring){
+    return <div style={{position:"fixed",inset:0,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center"}}><Logo/></div>;
+  }
+
   return(
     <>
-      {screen==="welcome"&&<WelcomeScreen onSelect={r=>{setRole(r);navTo("register");}}/>}
-      {screen==="register"&&role==="student"&&<StudentRegister onBack={()=>{window.history.back();}} onJoin={handleJoin}/>}
-      {screen==="register"&&role==="tutor"&&<TutorRegister onBack={()=>{window.history.back();}} onJoin={handleJoin}/>}
+      {screen==="welcome"&&<WelcomeScreen onSelect={r=>{setRole(r);navTo("register");}} onSignIn={()=>setAuthMode("signin")}/>}
+      {screen==="register"&&role==="student"&&<StudentRegister onBack={()=>{window.history.back();}} onJoin={handleJoin} onSignIn={()=>setAuthMode("signin")}/>}
+      {screen==="register"&&role==="tutor"&&<TutorRegister onBack={()=>{window.history.back();}} onJoin={handleJoin} onSignIn={()=>setAuthMode("signin")}/>}
       {screen==="app"&&role==="student"&&user&&<StudentApp user={user} onLogout={handleLogout} backHandlerRef={backHandlerRef}/>}
       {screen==="app"&&role==="tutor"&&user&&<TutorApp user={user} onLogout={handleLogout} backHandlerRef={backHandlerRef}/>}
+      {authMode&&<SignInModal onClose={()=>setAuthMode(null)} onSuccess={u=>{setAuthMode(null);handleJoin(u);}} C={lC()}/>}
     </>
   );
 }
 
+
+/* ══ SIGN-IN MODAL ══ */
+function SignInModal({onClose,onSuccess,C}){
+  const [email,setEmail]=useState("");
+  const [pw,setPw]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState("");
+
+  async function doSignIn(){
+    if(!email||!pw)return;
+    setLoading(true);setErr("");
+    try{
+      const d=await sbAuth.signIn(email,pw);
+      const token=d.access_token;
+      const userId=d.user?.id;
+      let profile=await sbAuth.getProfile(userId,token);
+      if(!profile){
+        setErr("No profile found for this account. Please sign up first.");
+        setLoading(false);return;
+      }
+      onSuccess({...profile,_token:token});
+    }catch(e){setErr(e.message||"Sign-in failed");}
+    finally{setLoading(false);}
+  }
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"28px 22px 44px"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text,letterSpacing:1}}>SIGN IN</div>
+          <button onClick={onClose} style={{width:32,height:32,borderRadius:8,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,cursor:"pointer",fontSize:16}}>✕</button>
+        </div>
+        <FL>EMAIL</FL>
+        <FI C={C} placeholder="your@email.com" type="email" value={email} onChange={e=>setEmail(e.target.value)}/>
+        <FL>PASSWORD</FL>
+        <FI C={C} placeholder="Password" type="password" value={pw} onChange={e=>setPw(e.target.value)}/>
+        {err&&<div style={{color:"#EF4444",fontSize:12,marginBottom:10,textAlign:"center"}}>{err}</div>}
+        <button onClick={doSignIn} disabled={!email||!pw||loading} style={{width:"100%",padding:"16px",borderRadius:50,border:"none",background:(!email||!pw||loading)?"#AAA":"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:15,letterSpacing:2,cursor:(!email||!pw||loading)?"not-allowed":"pointer",marginTop:8}}>
+          {loading?"SIGNING IN…":"SIGN IN →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ══ WELCOME ══ */
-function WelcomeScreen({onSelect}){
+function WelcomeScreen({onSelect,onSignIn}){
   const C=lC();
   return(
     <Shell C={C}>
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:28,padding:"0 24px",background:C.bg,overflowY:"auto"}}>
-        {/* Big logo on dark pill */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"center"}}>
           <Logo large/>
         </div>
@@ -780,6 +884,9 @@ function WelcomeScreen({onSelect}){
               <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:12,letterSpacing:2,color:"#888"}}>TUTOR</span>
             </button>
           </div>
+          <div style={{marginTop:20,textAlign:"center"}}>
+            <button onClick={onSignIn} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,textDecoration:"underline"}}>ALREADY HAVE AN ACCOUNT? SIGN IN</button>
+          </div>
         </div>
       </div>
     </Shell>
@@ -787,25 +894,41 @@ function WelcomeScreen({onSelect}){
 }
 
 /* ══ STUDENT REGISTER ══ */
-function StudentRegister({onBack,onJoin}){
+function StudentRegister({onBack,onJoin,onSignIn}){
   const C=lC();
-  const [p,setP]=useState({name:"",age:"",gender:"",level:"",location:""});
+  const [p,setP]=useState({name:"",age:"",gender:"",level:"",location:"",email:"",password:""});
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState("");
+  const [useEmail,setUseEmail]=useState(false);
+
   async function doJoin(){
     if(!p.name)return;
     setLoading(true);setErr("");
     try{
+      if(useEmail&&p.email&&p.password){
+        // Supabase email sign-up
+        const authData=await sbAuth.signUp(p.email,p.password,{name:p.name,role:"student"});
+        const token=authData.access_token||authData.session?.access_token;
+        const userId=authData.user?.id;
+        if(userId&&token){
+          const profile=await sbAuth.createProfile({id:userId,name:p.name,age:p.age?+p.age:null,gender:p.gender,location:p.location,role:"student",grade:p.level,email:p.email},token);
+          onJoin({...profile,_token:token,role:"student"});return;
+        }
+        // Email not confirmed yet — fallback to profile only
+        if(authData.user){
+          const profile=await sbAuth.createProfile({id:authData.user.id,name:p.name,age:p.age?+p.age:null,gender:p.gender,location:p.location,role:"student",grade:p.level,email:p.email},SB_KEY);
+          onJoin({...profile,role:"student"});return;
+        }
+      }
+      // Anonymous profile (no email)
       const [u]=await sb.post("profiles",{name:p.name,age:p.age?+p.age:null,gender:p.gender,location:p.location,role:"student",grade:p.level});
       onJoin(u);
-    }
-    catch(e){
-      // Fall back to offline/sample mode so the app still works
+    }catch(e){
       const fakeUser={id:"sample-s-"+Date.now(),name:p.name,age:p.age?+p.age:null,gender:p.gender,location:p.location,role:"student",grade:p.level};
       onJoin(fakeUser);
-    }
-    finally{setLoading(false);}
+    }finally{setLoading(false);}
   }
+
   return(
     <Shell C={C}>
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:"0 20px",overflowY:"auto"}}>
@@ -825,8 +948,18 @@ function StudentRegister({onBack,onJoin}){
           <FL>ACADEMIC GRADE</FL>
           <Picker value={p.level} onChange={v=>setP(x=>({...x,level:v}))} items={STUDENT_GRADES} placeholder="Choose grade" C={C}/>
           <FL>ZONE</FL><FI C={C} placeholder="City, Region" value={p.location} onChange={e=>setP(x=>({...x,location:e.target.value}))}/>
+          <button onClick={()=>setUseEmail(u=>!u)} style={{width:"100%",padding:"10px",borderRadius:12,border:"1.5px solid "+C.border,background:useEmail?C.accentBg:"transparent",color:useEmail?C.accentText:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1,cursor:"pointer",marginBottom:14}}>
+            {useEmail?"✓ EMAIL SIGN-UP ENABLED":"+ ADD EMAIL & PASSWORD (OPTIONAL)"}
+          </button>
+          {useEmail&&<>
+            <FL>EMAIL</FL><FI C={C} placeholder="your@email.com" type="email" value={p.email} onChange={e=>setP(x=>({...x,email:e.target.value}))}/>
+            <FL>PASSWORD</FL><FI C={C} placeholder="Create password (min 6 chars)" type="password" value={p.password} onChange={e=>setP(x=>({...x,password:e.target.value}))}/>
+          </>}
           {err&&<div style={{color:"#EF4444",fontSize:12,marginBottom:10,textAlign:"center"}}>{err}</div>}
           <JoinBtn disabled={!p.name||loading} onClick={doJoin} loading={loading}/>
+          <div style={{marginTop:16,textAlign:"center"}}>
+            <button onClick={onSignIn} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,textDecoration:"underline"}}>HAVE AN ACCOUNT? SIGN IN</button>
+          </div>
         </div>
       </div>
     </Shell>
@@ -834,25 +967,38 @@ function StudentRegister({onBack,onJoin}){
 }
 
 /* ══ TUTOR REGISTER ══ */
-function TutorRegister({onBack,onJoin}){
+function TutorRegister({onBack,onJoin,onSignIn}){
   const C=lC();
-  const [p,setP]=useState({name:"",age:"",gender:"",level:"",location:"",rateOnline:"",rateOffline:"",subjects:[]});
+  const [p,setP]=useState({name:"",age:"",gender:"",level:"",location:"",rateOnline:"",rateOffline:"",subjects:[],email:"",password:""});
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState("");
+  const [useEmail,setUseEmail]=useState(false);
+
   async function doJoin(){
     if(!p.name)return;
     setLoading(true);setErr("");
     try{
+      if(useEmail&&p.email&&p.password){
+        const authData=await sbAuth.signUp(p.email,p.password,{name:p.name,role:"tutor"});
+        const token=authData.access_token||authData.session?.access_token;
+        const userId=authData.user?.id;
+        if(userId&&token){
+          const profile=await sbAuth.createProfile({id:userId,name:p.name,age:p.age?+p.age:null,gender:p.gender,location:p.location,role:"tutor",curriculum_level:p.level,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects,email:p.email},token);
+          onJoin({...profile,_token:token,role:"tutor"});return;
+        }
+        if(authData.user){
+          const profile=await sbAuth.createProfile({id:authData.user.id,name:p.name,age:p.age?+p.age:null,gender:p.gender,location:p.location,role:"tutor",curriculum_level:p.level,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects,email:p.email},SB_KEY);
+          onJoin({...profile,role:"tutor"});return;
+        }
+      }
       const [u]=await sb.post("profiles",{name:p.name,age:p.age?+p.age:null,gender:p.gender,location:p.location,role:"tutor",curriculum_level:p.level,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects});
       onJoin(u);
-    }
-    catch(e){
-      // Fall back to offline/sample mode so the app still works
+    }catch(e){
       const fakeUser={id:"sample-t-"+Date.now(),name:p.name,age:p.age?+p.age:null,gender:p.gender,location:p.location,role:"tutor",curriculum_level:p.level,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects};
       onJoin(fakeUser);
-    }
-    finally{setLoading(false);}
+    }finally{setLoading(false);}
   }
+
   return(
     <Shell C={C}>
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:"0 20px",overflowY:"auto"}}>
@@ -878,13 +1024,24 @@ function TutorRegister({onBack,onJoin}){
             <div><FL>OFFLINE RATE (KES/HR)</FL><FI C={C} placeholder="e.g. 700" type="number" value={p.rateOffline} onChange={e=>setP(x=>({...x,rateOffline:e.target.value}))}/></div>
           </div>
           <FL>ZONE</FL><FI C={C} placeholder="City, Region" value={p.location} onChange={e=>setP(x=>({...x,location:e.target.value}))}/>
+          <button onClick={()=>setUseEmail(u=>!u)} style={{width:"100%",padding:"10px",borderRadius:12,border:"1.5px solid "+C.border,background:useEmail?C.accentBg:"transparent",color:useEmail?C.accentText:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1,cursor:"pointer",marginBottom:14}}>
+            {useEmail?"✓ EMAIL SIGN-UP ENABLED":"+ ADD EMAIL & PASSWORD (OPTIONAL)"}
+          </button>
+          {useEmail&&<>
+            <FL>EMAIL</FL><FI C={C} placeholder="your@email.com" type="email" value={p.email} onChange={e=>setP(x=>({...x,email:e.target.value}))}/>
+            <FL>PASSWORD</FL><FI C={C} placeholder="Create password (min 6 chars)" type="password" value={p.password} onChange={e=>setP(x=>({...x,password:e.target.value}))}/>
+          </>}
           {err&&<div style={{color:"#EF4444",fontSize:12,marginBottom:10,textAlign:"center"}}>{err}</div>}
           <JoinBtn disabled={!p.name||loading} onClick={doJoin} loading={loading}/>
+          <div style={{marginTop:16,textAlign:"center"}}>
+            <button onClick={onSignIn} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,textDecoration:"underline"}}>HAVE AN ACCOUNT? SIGN IN</button>
+          </div>
         </div>
       </div>
     </Shell>
   );
 }
+
 
 /* ══ STUDENT APP ══ */
 function StudentApp({user,onLogout,backHandlerRef}){
@@ -1112,7 +1269,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
       {cancelLesson&&<CancelModal onCancel={t=>handleCancelSession(cancelLesson,t)} onClose={()=>setCancelLesson(null)} C={C}/>}
 
       {tab==="timetable"&&<>
-        <Hdr C={C} dm={dm}><PBtn outline C={C} onClick={()=>setShowManage(true)}>MANAGE</PBtn><PBtn C={C} onClick={()=>setShowAdd(true)}>ADD SLOT</PBtn></Hdr>
+        <Hdr C={C} dm={dm}><PBtn outline C={C} onClick={()=>{setShowManage(true);window.history.pushState({screen:"app",modal:"manage"},"",window.location.pathname);}}>MANAGE</PBtn><PBtn C={C} onClick={()=>setShowAdd(true)}>ADD SLOT</PBtn></Hdr>
         <Scroll>
           {loadingL?<Ldg C={C}/>:
             <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>{if(l._tutorObj&&(l._pending||l._accepted||acceptedMap[l.id])){setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);}else{setShowTutors(l);}}}
@@ -1249,8 +1406,8 @@ function StudentApp({user,onLogout,backHandlerRef}){
                 <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{showTutorProfile.name}</div>
                 <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{showTutorProfile.curriculum_level}</div>
               </div>
-              {showTutorProfileLesson&&showTutorProfileLesson._accepted&&<button onClick={()=>{setCallLesson({...showTutorProfileLesson,online:showTutorProfileLesson.online});setShowTutorProfile(null);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}} title="Start in-app call">
-                <span style={{fontSize:20}}>{showTutorProfileLesson.online?"📹":"📞"}</span>
+              {showTutorProfileLesson&&showTutorProfileLesson._accepted&&<button onClick={()=>{setCallLesson({...showTutorProfileLesson,online:showTutorProfileLesson.online});setShowTutorProfile(null);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}} title="Voice call · 3 min limit">
+                <span style={{fontSize:20}}>🎙️</span>
               </button>}
             </div>
             {[
@@ -1596,11 +1753,11 @@ function TutorApp({user,onLogout,backHandlerRef}){
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}>
           <Logo dm={dm}/>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <button onClick={()=>{setShowMode("requests");setShowManage(true);}} style={{position:"relative",padding:"7px 14px",borderRadius:50,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1.5,border:"1.5px solid "+C.border,background:"transparent",color:C.text,display:"flex",alignItems:"center",gap:5}}>
+            <button onClick={()=>{setShowMode("requests");setShowManage(true);window.history.pushState({screen:"app",modal:"manage"},"",window.location.pathname);}} style={{position:"relative",padding:"7px 14px",borderRadius:50,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1.5,border:"1.5px solid "+C.border,background:"transparent",color:C.text,display:"flex",alignItems:"center",gap:5}}>
               REQUESTS
               {pending.length>0&&<span style={{background:"#EF4444",color:"#fff",borderRadius:50,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:9,minWidth:16,height:16,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:"0 3px"}}>{pending.length}</span>}
             </button>
-            <PBtn outline C={C} onClick={()=>{setShowMode("manage");setShowManage(true);}}>MANAGE</PBtn>
+            <PBtn outline C={C} onClick={()=>{setShowMode("manage");setShowManage(true);window.history.pushState({screen:"app",modal:"manage"},"",window.location.pathname);}}>MANAGE</PBtn>
           </div>
         </div>
         <Scroll>
@@ -1885,8 +2042,8 @@ function StudentProfileModal({lesson,C,onClose,onCall}){
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{lesson.student_name||"Student"}</div>
             <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} {timeLbl(lesson.from_hour)}–{timeLbl(lesson.to_hour)}</div>
           </div>
-          {onCall&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}} title="Start in-app call">
-            <span style={{fontSize:20}}>{lesson.online?"📹":"📞"}</span>
+          {onCall&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}} title="Start voice call (3 min limit)">
+            <span style={{fontSize:20}}>"🎙️"</span>
           </button>}
         </div>
         {[
