@@ -17,10 +17,15 @@
     }
     // Inline manifest for PWA install
     const manifestData = {
-      name: "JRSH",
+      name: "JRSH Tutoring Network",
       short_name: "JRSH",
       start_url: ".",
       display: "standalone",
+      orientation: "portrait",
+      lang: "en",
+      dir: "ltr",
+      categories: ["education"],
+      description: "Connect students with tutors for online and offline lessons.",
       background_color: "#000000",
       theme_color: "#000000",
       icons: [
@@ -53,6 +58,143 @@
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script type="text/babel" data-presets="react">
+/*
+════════════════════════════════════════════════════════════
+  JRSH SUPABASE SCHEMA  — run in Supabase SQL Editor
+════════════════════════════════════════════════════════════
+
+-- PROFILES
+create table if not exists profiles (
+  id uuid primary key,
+  name text not null,
+  email text,
+  role text not null check (role in ('student','tutor')),
+  age int,
+  gender text,
+  location text,
+  grade text,
+  curriculum_level text,
+  hourly_rate_online numeric,
+  hourly_rate_offline numeric,
+  subjects_taught text[],
+  student_lat numeric,
+  student_lng numeric,
+  tutor_lat numeric,
+  tutor_lng numeric,
+  location_updated_at timestamptz,
+  created_at timestamptz default now()
+);
+alter table profiles enable row level security;
+create policy "Users read all profiles" on profiles for select using (true);
+create policy "Users manage own profile" on profiles for all using (auth.uid()=id);
+
+-- LESSONS
+create table if not exists lessons (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid references profiles(id) on delete cascade,
+  subject text not null,
+  day text not null,
+  from_hour numeric not null,
+  to_hour numeric not null,
+  description text,
+  online boolean default false,
+  status text default 'active',
+  cancel_reason text,
+  start_ts bigint,
+  created_at timestamptz default now()
+);
+alter table lessons enable row level security;
+create policy "Students manage own lessons" on lessons for all using (auth.uid()=student_id);
+create policy "Tutors read lessons" on lessons for select using (true);
+
+-- TUTOR REQUESTS
+create table if not exists tutor_requests (
+  id uuid primary key default gen_random_uuid(),
+  lesson_id uuid references lessons(id) on delete cascade,
+  student_id uuid references profiles(id),
+  tutor_id uuid references profiles(id),
+  student_name text,
+  tutor_name text,
+  subject text,
+  day text,
+  from_hour numeric,
+  to_hour numeric,
+  online boolean default false,
+  status text default 'pending' check (status in ('pending','accepted','declined','cancelled')),
+  start_ts bigint,
+  call_signal jsonb,
+  student_lat numeric,
+  student_lng numeric,
+  tutor_lat numeric,
+  tutor_lng numeric,
+  location_updated_at timestamptz,
+  created_at timestamptz default now()
+);
+alter table tutor_requests enable row level security;
+create policy "Parties read own requests" on tutor_requests for select using (auth.uid()=student_id or auth.uid()=tutor_id);
+create policy "Parties manage own requests" on tutor_requests for all using (auth.uid()=student_id or auth.uid()=tutor_id);
+
+-- NOTES (library)
+create table if not exists notes (
+  id uuid primary key default gen_random_uuid(),
+  tutor_id uuid references profiles(id),
+  tutor_name text,
+  title text not null,
+  subject text,
+  curriculum_level text,
+  cover_url text,
+  cover_pos jsonb,
+  pdf_url text,
+  page_count int default 0,
+  likes int default 0,
+  saves int default 0,
+  created_at timestamptz default now()
+);
+alter table notes enable row level security;
+create policy "Everyone reads notes" on notes for select using (true);
+create policy "Tutors manage own notes" on notes for all using (auth.uid()=tutor_id);
+
+-- NOTE INTERACTIONS
+create table if not exists note_interactions (
+  id uuid primary key default gen_random_uuid(),
+  note_id uuid references notes(id) on delete cascade,
+  user_id uuid references profiles(id),
+  liked boolean default false,
+  saved boolean default false,
+  created_at timestamptz default now(),
+  unique(note_id, user_id)
+);
+alter table note_interactions enable row level security;
+create policy "Users manage own interactions" on note_interactions for all using (auth.uid()=user_id);
+create policy "Read own interactions" on note_interactions for select using (auth.uid()=user_id);
+
+-- WALLETS
+create table if not exists wallets (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references profiles(id) unique,
+  balance numeric default 0,
+  updated_at timestamptz default now()
+);
+alter table wallets enable row level security;
+create policy "Users manage own wallet" on wallets for all using (auth.uid()=user_id);
+
+-- WALLET TRANSACTIONS
+create table if not exists wallet_transactions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references profiles(id),
+  label text,
+  amount numeric not null,
+  type text check (type in ('credit','debit')),
+  ref text,
+  created_at timestamptz default now()
+);
+alter table wallet_transactions enable row level security;
+create policy "Users read own transactions" on wallet_transactions for select using (auth.uid()=user_id);
+
+════════════════════════════════════════════════════════════
+*/
+
+
 const {useState,useRef,useEffect,useCallback}=React;
 
 /* ══ LOGO ══ */
@@ -67,70 +209,114 @@ function Logo({large,dm}){
 /* ══ SUPABASE ══ */
 const SB_URL="https://bodeplbamprefhdrckyp.supabase.co";
 const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJvZGVwbGJhbXByZWZoZHJja3lwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1NDE1MjUsImV4cCI6MjA5MjExNzUyNX0.Au8NUHC_2eFFuNugM6JybzK6AzKNIUTLuyUo-F772FQ";
+const SB_AUTH_URL=SB_URL+"/auth/v1";
 
-// Token store — set when user signs in, cleared on logout
-let _userToken = null;
-function setAuthToken(t){ _userToken = t || null; }
-function getAuthToken(){ return _userToken || SB_KEY; }
-
-function sbHeaders(extra={}){
-  const tok = _userToken || SB_KEY;
-  return {"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+tok,...extra};
+/* ── Connection health ── */
+let _sbOnline=null; // null=unknown, true=ok, false=unreachable
+async function checkSbConn(){
+  try{
+    const r=await fetch(SB_URL+"/rest/v1/",{
+      headers:{"apikey":SB_KEY},
+      signal:AbortSignal.timeout(6000)
+    });
+    _sbOnline=r.ok||r.status===400; // 400 = needs table = server is alive
+    return _sbOnline;
+  }catch(e){
+    _sbOnline=false;
+    return false;
+  }
 }
 
-const sb = {
+/* ── Token store ── */
+let _userToken=null;
+function setAuthToken(t){_userToken=t||null;}
+function getAuthToken(){return _userToken||SB_KEY;}
+
+function sbHeaders(extra={}){
+  const tok=_userToken||SB_KEY;
+  return{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+tok,...extra};
+}
+
+/* ── Core REST helpers ── */
+async function sbFetch(url,opts={}){
+  try{
+    const r=await fetch(url,{...opts,signal:AbortSignal.timeout(12000)});
+    if(!r.ok){
+      let msg;
+      try{const d=await r.json();msg=d.message||d.error||JSON.stringify(d);}catch(e){msg=r.statusText;}
+      throw new Error("Supabase "+r.status+": "+msg);
+    }
+    return r;
+  }catch(e){
+    if(e.name==="TimeoutError"||e.message.includes("fetch")||e.message.includes("network")||e.message.includes("Failed")){
+      throw new Error("Cannot reach server. Check your internet connection.");
+    }
+    throw e;
+  }
+}
+
+const sb={
   async get(t,q=""){
-    const r=await fetch(SB_URL+"/rest/v1/"+t+q,{headers:sbHeaders()});
-    if(!r.ok) throw new Error(await r.text());
+    const r=await sbFetch(SB_URL+"/rest/v1/"+t+q,{headers:sbHeaders()});
     return r.json();
   },
   async post(t,b){
-    const r=await fetch(SB_URL+"/rest/v1/"+t,{method:"POST",headers:sbHeaders({"Prefer":"return=representation"}),body:JSON.stringify(b)});
-    if(!r.ok) throw new Error(await r.text());
+    const r=await sbFetch(SB_URL+"/rest/v1/"+t,{method:"POST",headers:sbHeaders({"Prefer":"return=representation"}),body:JSON.stringify(b)});
     return r.json();
   },
   async patch(t,q,b){
-    const r=await fetch(SB_URL+"/rest/v1/"+t+q,{method:"PATCH",headers:sbHeaders({"Prefer":"return=representation"}),body:JSON.stringify(b)});
-    if(!r.ok) throw new Error(await r.text());
+    const r=await sbFetch(SB_URL+"/rest/v1/"+t+q,{method:"PATCH",headers:sbHeaders({"Prefer":"return=representation"}),body:JSON.stringify(b)});
     return r.json();
   },
   async del(t,q){
-    const r=await fetch(SB_URL+"/rest/v1/"+t+q,{method:"DELETE",headers:sbHeaders()});
-    if(!r.ok) throw new Error(await r.text());
+    const r=await sbFetch(SB_URL+"/rest/v1/"+t+q,{method:"DELETE",headers:sbHeaders()});
     return r.status===204?[]:r.json();
   },
   async upsert(t,b){
-    const r=await fetch(SB_URL+"/rest/v1/"+t,{method:"POST",headers:sbHeaders({"Prefer":"return=representation,resolution=merge-duplicates"}),body:JSON.stringify(b)});
-    if(!r.ok) throw new Error(await r.text());
+    const r=await sbFetch(SB_URL+"/rest/v1/"+t,{method:"POST",headers:sbHeaders({"Prefer":"return=representation,resolution=merge-duplicates"}),body:JSON.stringify(b)});
     return r.json();
   },
 };
 
-/* ══ SUPABASE AUTH ══ */
-const SB_AUTH_URL = SB_URL+"/auth/v1";
-
-const sbAuth = {
-  async signUp(email, password, meta={}){
-    const r=await fetch(SB_AUTH_URL+"/signup",{method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY},body:JSON.stringify({email,password,data:meta})});
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error_description||d.msg||d.message||"Sign-up failed");
-    return d;
+/* ── Auth helpers ── */
+const sbAuth={
+  async signUp(email,password,meta={}){
+    const r=await sbFetch(SB_AUTH_URL+"/signup",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","apikey":SB_KEY},
+      body:JSON.stringify({email,password,data:meta})
+    });
+    return r.json();
   },
-  async signIn(email, password){
-    const r=await fetch(SB_AUTH_URL+"/token?grant_type=password",{method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY},body:JSON.stringify({email,password})});
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error_description||d.msg||d.message||"Sign-in failed");
-    return d;
+  async signIn(email,password){
+    const r=await sbFetch(SB_AUTH_URL+"/token?grant_type=password",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","apikey":SB_KEY},
+      body:JSON.stringify({email,password})
+    });
+    return r.json();
   },
   async refreshToken(refresh_token){
-    const r=await fetch(SB_AUTH_URL+"/token?grant_type=refresh_token",{method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY},body:JSON.stringify({refresh_token})});
-    const d=await r.json();
-    if(!r.ok) return null;
-    return d;
+    try{
+      const r=await sbFetch(SB_AUTH_URL+"/token?grant_type=refresh_token",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","apikey":SB_KEY},
+        body:JSON.stringify({refresh_token})
+      });
+      return r.json();
+    }catch(e){return null;}
+  },
+  async sendReset(email){
+    const r=await sbFetch(SB_AUTH_URL+"/recover",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","apikey":SB_KEY},
+      body:JSON.stringify({email})
+    });
+    return r.status;
   },
   async getProfile(userId){
     try{
-      const r=await fetch(SB_URL+"/rest/v1/profiles?id=eq."+userId+"&limit=1",{headers:sbHeaders()});
+      const r=await sbFetch(SB_URL+"/rest/v1/profiles?id=eq."+userId+"&limit=1",{headers:sbHeaders()});
       const d=await r.json();
       return Array.isArray(d)&&d.length?d[0]:null;
     }catch(e){return null;}
@@ -138,12 +324,12 @@ const sbAuth = {
   async upsertProfile(data){
     try{
       const rows=await sb.upsert("profiles",data);
-      return Array.isArray(rows)?rows[0]:rows;
-    }catch(e){return data;}
+      return Array.isArray(rows)?rows[0]:data;
+    }catch(e){console.warn("upsertProfile:",e.message);return data;}
   },
 };
 
-/* ══ SESSION ══ */
+/* ── Session ── */
 const SESSION_KEY="jrsh_v3_session";
 function saveSession(s){try{localStorage.setItem(SESSION_KEY,JSON.stringify(s));}catch(e){}}
 function loadSession(){try{const s=localStorage.getItem(SESSION_KEY);return s?JSON.parse(s):null;}catch(e){return null;}}
@@ -1011,77 +1197,69 @@ function SubjectMultiPicker({value=[],onChange,C}){
 /* ══ ROOT ══ */
 /* ══ APP ROOT ══ */
 function AppRoot(){
-  const [screen,setScreen]=useState("welcome");    // welcome | register | app
-  const [role,setRole]=useState(null);             // student | tutor
+  const [screen,setScreen]=useState("welcome");
+  const [role,setRole]=useState(null);
   const [user,setUser]=useState(null);
   const [showSignIn,setShowSignIn]=useState(false);
   const [restoring,setRestoring]=useState(true);
+  const [connStatus,setConnStatus]=useState("checking"); // checking|ok|error
   const backHandlerRef=React.useRef(null);
   const C=lC();
 
   function navTo(s){window.history.pushState({screen:s},"",window.location.pathname);setScreen(s);}
 
-  // Called after successful sign-up or sign-in
-  function handleAuth(profile, token){
-    if(token) setAuthToken(token);
-    setUser(profile);
-    setRole(profile.role);
-    saveSession({profile, token, role:profile.role});
+  function handleAuth(profile,token){
+    if(token)setAuthToken(token);
+    setUser(profile);setRole(profile.role);
+    saveSession({profile,token,role:profile.role});
     navTo("app");
   }
-
   function handleLogout(){
-    setAuthToken(null);
-    setUser(null);setRole(null);
-    clearSession();
-    setShowSignIn(false);
+    setAuthToken(null);setUser(null);setRole(null);clearSession();setShowSignIn(false);
     window.history.replaceState({screen:"welcome"},"",window.location.pathname);
     setScreen("welcome");
   }
 
-  // Restore session on mount + token refresh
   React.useEffect(()=>{
     (async()=>{
+      // Check connection first
+      const online=await checkSbConn();
+      setConnStatus(online?"ok":"error");
+
+      // Restore session
       try{
         const sess=loadSession();
         if(sess&&sess.profile&&sess.role){
-          setAuthToken(sess.token||null);
-          // Try refresh if we have a refresh_token
-          if(sess.refresh_token){
-            try{
-              const fresh=await sbAuth.refreshToken(sess.refresh_token);
-              if(fresh?.access_token){
-                setAuthToken(fresh.access_token);
-                saveSession({...sess,token:fresh.access_token,refresh_token:fresh.refresh_token||sess.refresh_token});
-              }
-            }catch(e){}
-          }
-          // Re-fetch profile in case it changed
+          if(sess.token)setAuthToken(sess.token||null);
           let prof=sess.profile;
-          if(sess.profile.id&&!sess.profile.id.startsWith("anon-")){
-            const fresh=await sbAuth.getProfile(sess.profile.id);
-            if(fresh) prof=fresh;
+          if(online&&sess.profile.id&&!sess.profile.id.startsWith("anon-")){
+            // Refresh token if possible
+            if(sess.refresh_token){
+              try{
+                const fresh=await sbAuth.refreshToken(sess.refresh_token);
+                if(fresh?.access_token){
+                  setAuthToken(fresh.access_token);
+                  saveSession({...sess,token:fresh.access_token,refresh_token:fresh.refresh_token||sess.refresh_token});
+                }
+              }catch(e){}
+            }
+            const freshProf=await sbAuth.getProfile(sess.profile.id);
+            if(freshProf)prof=freshProf;
           }
-          setUser(prof);setRole(prof.role);
-          setScreen("app");
+          setUser(prof);setRole(prof.role||sess.role);setScreen("app");
         }
       }catch(e){}
-      finally{setRestoring(false);}
+      setRestoring(false);
       window.history.replaceState({screen:screen},"",window.location.pathname);
     })();
   },[]);
 
   React.useEffect(()=>{
     function onPop(e){
-      if(backHandlerRef.current){
-        backHandlerRef.current();
-        backHandlerRef.current=null;
-        window.history.pushState({screen},"",window.location.pathname);
-        return;
-      }
-      const target=(e.state&&e.state.screen)||"welcome";
-      if(target==="welcome"&&screen==="app") return; // don't auto-logout on back from app
-      setScreen(target==="register"?"register":"welcome");
+      if(backHandlerRef.current){backHandlerRef.current();backHandlerRef.current=null;window.history.pushState({screen},"",window.location.pathname);return;}
+      const t=(e.state&&e.state.screen)||"welcome";
+      if(t==="welcome"&&screen==="app")return;
+      setScreen(t==="register"?"register":"welcome");
     }
     window.addEventListener("popstate",onPop);
     return()=>window.removeEventListener("popstate",onPop);
@@ -1091,105 +1269,83 @@ function AppRoot(){
     return(
       <div style={{position:"fixed",inset:0,background:"#fff",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
         <Logo/>
-        <div style={{width:40,height:4,borderRadius:2,background:"#eee",overflow:"hidden"}}>
-          <div style={{height:"100%",background:"#111",borderRadius:2,animation:"slideIn 1s ease infinite"}}/>
+        <div style={{width:48,height:4,borderRadius:2,background:"#eee",overflow:"hidden"}}>
+          <div style={{height:"100%",width:"60%",background:"#111",borderRadius:2,animation:"shimmer 1s ease-in-out infinite alternate"}}/>
         </div>
-        <style>{`@keyframes slideIn{0%{width:0}100%{width:100%}}`}</style>
+        <style>{`@keyframes shimmer{from{margin-left:0}to{margin-left:40%}}`}</style>
       </div>
     );
   }
 
   return(
     <>
-      {screen==="welcome"&&(
-        <WelcomeScreen
-          onSelectRole={r=>{setRole(r);navTo("register");}}
-          onSignIn={()=>setShowSignIn(true)}
-        />
+      {/* Connection banner */}
+      {connStatus==="error"&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,zIndex:9999,background:"#F59E0B",color:"#000",padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,letterSpacing:1}}>
+          <span>⚠ OFFLINE — changes won't save until reconnected</span>
+          <button onClick={async()=>{setConnStatus("checking");const ok=await checkSbConn();setConnStatus(ok?"ok":"error");}} style={{background:"rgba(0,0,0,.15)",border:"none",borderRadius:6,padding:"3px 10px",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10,color:"#000"}}>RETRY</button>
+        </div>
       )}
-      {screen==="register"&&role==="student"&&(
-        <StudentRegister
-          onBack={()=>window.history.back()}
-          onAuth={handleAuth}
-          onSignIn={()=>setShowSignIn(true)}
-        />
-      )}
-      {screen==="register"&&role==="tutor"&&(
-        <TutorRegister
-          onBack={()=>window.history.back()}
-          onAuth={handleAuth}
-          onSignIn={()=>setShowSignIn(true)}
-        />
-      )}
-      {screen==="app"&&role==="student"&&user&&(
-        <StudentApp user={user} onLogout={handleLogout} backHandlerRef={backHandlerRef}/>
-      )}
-      {screen==="app"&&role==="tutor"&&user&&(
-        <TutorApp user={user} onLogout={handleLogout} backHandlerRef={backHandlerRef}/>
-      )}
-      {showSignIn&&(
-        <SignInModal
-          onClose={()=>setShowSignIn(false)}
-          onAuth={handleAuth}
-          C={C}
-        />
-      )}
+
+      {screen==="welcome"&&<WelcomeScreen onSelectRole={r=>{setRole(r);navTo("register");}} onSignIn={()=>setShowSignIn(true)}/>}
+      {screen==="register"&&role==="student"&&<StudentRegister onBack={()=>window.history.back()} onAuth={handleAuth} onSignIn={()=>setShowSignIn(true)} connOk={connStatus==="ok"}/>}
+      {screen==="register"&&role==="tutor"&&<TutorRegister onBack={()=>window.history.back()} onAuth={handleAuth} onSignIn={()=>setShowSignIn(true)} connOk={connStatus==="ok"}/>}
+      {screen==="app"&&role==="student"&&user&&<StudentApp user={user} onLogout={handleLogout} backHandlerRef={backHandlerRef}/>}
+      {screen==="app"&&role==="tutor"&&user&&<TutorApp user={user} onLogout={handleLogout} backHandlerRef={backHandlerRef}/>}
+      {showSignIn&&<SignInModal onClose={()=>setShowSignIn(false)} onAuth={handleAuth} C={C} connOk={connStatus==="ok"}/>}
     </>
   );
 }
 
+
 /* ══ SIGN IN MODAL ══ */
-function SignInModal({onClose, onAuth, C}){
+function SignInModal({onClose,onAuth,C,connOk}){
   const [email,setEmail]=useState("");
   const [pw,setPw]=useState("");
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState("");
-  const [tab,setTab]=useState("signin"); // signin | forgot
+  const [info,setInfo]=useState("");
+  const [tab,setTab]=useState("signin");
 
   async function doSignIn(){
-    if(!email.trim()||!pw) return;
-    setLoading(true);setErr("");
+    if(!email.trim()||!pw)return;
+    setLoading(true);setErr("");setInfo("");
     try{
       const d=await sbAuth.signIn(email.trim(),pw);
+      if(!d.access_token) throw new Error(d.error_description||d.message||"Invalid email or password");
       const token=d.access_token;
       const userId=d.user?.id;
-      if(!userId||!token) throw new Error("Invalid credentials");
       setAuthToken(token);
       let profile=await sbAuth.getProfile(userId);
       if(!profile){
-        // Auto-create bare profile if missing
-        profile=await sbAuth.upsertProfile({
-          id:userId,
-          email:email.trim(),
-          name:d.user.user_metadata?.name||email.split("@")[0],
-          role:d.user.user_metadata?.role||"student",
-        });
+        profile=await sbAuth.upsertProfile({id:userId,email:email.trim(),name:d.user.user_metadata?.name||email.split("@")[0],role:d.user.user_metadata?.role||"student"});
       }
-      const sess={profile:{...profile,_token:token},token,refresh_token:d.refresh_token,role:profile.role};
-      saveSession(sess);
+      saveSession({profile,token,refresh_token:d.refresh_token,role:profile.role});
       onAuth({...profile},token);
     }catch(e){
-      setErr(e.message||"Sign in failed. Check your email and password.");
+      const msg=e.message||"";
+      if(msg.includes("Invalid login"))setErr("Wrong email or password. Please try again.");
+      else if(msg.includes("Email not confirmed"))setErr("Please check your email and confirm your account first.");
+      else if(msg.includes("reach server")||msg.includes("fetch")||msg.includes("network"))setErr("No internet connection. Check your network and try again.");
+      else setErr(msg||"Sign in failed. Try again.");
     }finally{setLoading(false);}
   }
 
   async function doForgot(){
-    if(!email.trim()){setErr("Enter your email first");return;}
-    setLoading(true);setErr("");
+    if(!email.trim()){setErr("Enter your email address first.");return;}
+    setLoading(true);setErr("");setInfo("");
     try{
-      await fetch(SB_AUTH_URL+"/recover",{
-        method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY},
-        body:JSON.stringify({email:email.trim()})
-      });
-      setErr("✓ Password reset email sent — check your inbox");
-    }catch(e){setErr("Failed to send reset email");}
-    finally{setLoading(false);}
+      await sbAuth.sendReset(email.trim());
+      setInfo("Reset link sent! Check your inbox (and spam folder).");
+    }catch(e){
+      if(e.message.includes("reach server"))setErr("No internet connection.");
+      else setErr("Could not send reset email. Try again.");
+    }finally{setLoading(false);}
   }
 
   return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:900,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"28px 22px 48px",boxShadow:"0 -8px 40px rgba(0,0,0,.2)"}}>
-        {/* Header */}
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.72)",zIndex:900,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"28px 22px 48px",boxShadow:"0 -8px 40px rgba(0,0,0,.25)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}>
           <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.text,letterSpacing:1.5}}>
             {tab==="signin"?"SIGN IN":"RESET PASSWORD"}
@@ -1197,57 +1353,41 @@ function SignInModal({onClose, onAuth, C}){
           <button onClick={onClose} style={{width:32,height:32,borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
         </div>
 
-        {/* Email */}
+        {connOk===false&&(
+          <div style={{borderRadius:10,padding:"10px 14px",marginBottom:14,background:"rgba(245,158,11,.12)",color:"#B45309",fontSize:12,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>
+            ⚠ No server connection detected. Sign-in requires internet.
+          </div>
+        )}
+
         <FL>EMAIL</FL>
-        <FI C={C} placeholder="your@email.com" type="email" value={email} onChange={e=>setEmail(e.target.value)}/>
+        <FI C={C} placeholder="your@email.com" type="email" value={email} onChange={e=>{setEmail(e.target.value);setErr("");}}/>
 
         {tab==="signin"&&(
           <>
             <FL>PASSWORD</FL>
-            <FI C={C} placeholder="Your password" type="password" value={pw} onChange={e=>setPw(e.target.value)}/>
+            <FI C={C} placeholder="Your password" type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr("");}}/>
           </>
         )}
 
-        {err&&(
-          <div style={{borderRadius:10,padding:"10px 14px",marginBottom:12,
-            background:err.startsWith("✓")?"rgba(34,197,94,.1)":"rgba(239,68,68,.1)",
-            color:err.startsWith("✓")?"#22C55E":"#EF4444",fontSize:12,fontWeight:600}}>
-            {err}
-          </div>
-        )}
+        {err&&<div style={{borderRadius:10,padding:"10px 14px",marginBottom:12,background:"rgba(239,68,68,.1)",color:"#DC2626",fontSize:12,fontWeight:600,lineHeight:1.5}}>{err}</div>}
+        {info&&<div style={{borderRadius:10,padding:"10px 14px",marginBottom:12,background:"rgba(34,197,94,.1)",color:"#16A34A",fontSize:12,fontWeight:600,lineHeight:1.5}}>{info}</div>}
 
         {tab==="signin"?(
           <>
-            <button
-              onClick={doSignIn}
-              disabled={!email.trim()||!pw||loading}
-              style={{width:"100%",padding:"15px",borderRadius:50,border:"none",
-                background:(!email.trim()||!pw||loading)?"#ccc":"#111",
-                color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,
-                fontSize:15,letterSpacing:2,cursor:(!email.trim()||!pw||loading)?"not-allowed":"pointer",marginBottom:14}}>
+            <button onClick={doSignIn} disabled={!email.trim()||!pw||loading} style={{width:"100%",padding:"15px",borderRadius:50,border:"none",background:(!email.trim()||!pw||loading)?"#ccc":"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:15,letterSpacing:2,cursor:(!email.trim()||!pw||loading)?"not-allowed":"pointer",marginBottom:14,transition:"background .2s"}}>
               {loading?"SIGNING IN…":"SIGN IN →"}
             </button>
             <div style={{textAlign:"center"}}>
-              <button onClick={()=>{setTab("forgot");setErr("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>
-                FORGOT PASSWORD?
-              </button>
+              <button onClick={()=>{setTab("forgot");setErr("");setInfo("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>FORGOT PASSWORD?</button>
             </div>
           </>
         ):(
           <>
-            <button
-              onClick={doForgot}
-              disabled={!email.trim()||loading}
-              style={{width:"100%",padding:"15px",borderRadius:50,border:"none",
-                background:(!email.trim()||loading)?"#ccc":"#111",
-                color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,
-                fontSize:15,letterSpacing:2,cursor:(!email.trim()||loading)?"not-allowed":"pointer",marginBottom:14}}>
+            <button onClick={doForgot} disabled={!email.trim()||loading} style={{width:"100%",padding:"15px",borderRadius:50,border:"none",background:(!email.trim()||loading)?"#ccc":"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:15,letterSpacing:2,cursor:(!email.trim()||loading)?"not-allowed":"pointer",marginBottom:14}}>
               {loading?"SENDING…":"SEND RESET LINK →"}
             </button>
             <div style={{textAlign:"center"}}>
-              <button onClick={()=>{setTab("signin");setErr("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>
-                BACK TO SIGN IN
-              </button>
+              <button onClick={()=>{setTab("signin");setErr("");setInfo("");}} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>← BACK TO SIGN IN</button>
             </div>
           </>
         )}
@@ -1255,6 +1395,7 @@ function SignInModal({onClose, onAuth, C}){
     </div>
   );
 }
+
 
 /* ══ WELCOME SCREEN ══ */
 function WelcomeScreen({onSelectRole, onSignIn}){
@@ -1327,7 +1468,12 @@ function StudentRegister({onBack, onAuth, onSignIn}){
       saveSession(sess);
       onAuth({...profile},token);
     }catch(e){
-      setErr(e.message||"Sign-up failed. Please try again.");
+      const msg=e.message||"";
+      if(msg.includes("already registered")||msg.includes("already exists"))setErr("An account with this email already exists. Please sign in instead.");
+      else if(msg.includes("reach server")||msg.includes("fetch")||msg.includes("network"))setErr("No internet connection. Check your network and try again.");
+      else if(msg.includes("invalid")||msg.includes("email"))setErr("Invalid email address. Please check and try again.");
+      else if(msg.includes("Password")||msg.includes("password"))setErr(msg);
+      else setErr(msg||"Sign-up failed. Please try again.");
     }finally{setLoading(false);}
   }
 
@@ -1351,7 +1497,7 @@ function StudentRegister({onBack, onAuth, onSignIn}){
       saveSession({profile,token:null,role:"student"});
       onAuth(profile,null);
     }catch(e){
-      // Fully offline fallback
+      // Fully offline fallback — works without server
       const profile={id:"anon-s-"+Date.now(),name:p.name,age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null};
       saveSession({profile,token:null,role:"student"});
       onAuth(profile,null);
@@ -1470,7 +1616,12 @@ function TutorRegister({onBack, onAuth, onSignIn}){
       saveSession({profile,token:token||null,refresh_token:authData.session?.refresh_token||null,role:"tutor"});
       onAuth({...profile},token);
     }catch(e){
-      setErr(e.message||"Sign-up failed. Please try again.");
+      const msg=e.message||"";
+      if(msg.includes("already registered")||msg.includes("already exists"))setErr("An account with this email already exists. Please sign in instead.");
+      else if(msg.includes("reach server")||msg.includes("fetch")||msg.includes("network"))setErr("No internet connection. Check your network and try again.");
+      else if(msg.includes("invalid")||msg.includes("email"))setErr("Invalid email address.");
+      else if(msg.includes("Password")||msg.includes("password"))setErr(msg);
+      else setErr(msg||"Sign-up failed. Please try again.");
     }finally{setLoading(false);}
   }
 
@@ -1606,6 +1757,8 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const [profEdit,setProfEdit]=useState(false);
   const [editP,setEditP]=useState({...user});
   const [profSaving,setProfSaving]=useState(false);
+  const [toast,setToast]=React.useState(null);
+  function showToast(msg,type='info'){setToast({msg,type});setTimeout(()=>setToast(null),3200);}
   const [openNote,setOpenNote]=useState(null);
   const [notePages,setNotePages]=useState({});
   const [cancelLesson,setCancelLesson]=useState(null);
@@ -1666,7 +1819,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
         const histIds=new Set(hist.map(l=>l.id));
         const cancHist=cancelled.map(r=>({id:r.lesson_id,subject:r.subject||"Lesson",day:r.day,from_hour:r.from_hour,to_hour:r.to_hour,_tutorName:r.tutor_name,status:"cancelled",start_ts:r.start_ts})).filter(x=>x.id&&!histIds.has(x.id));
         setLessonHistory([...hist,...cancHist]);
-      }catch(e){console.error("Lessons load:",e);}
+      }catch(e){console.warn("Lessons load:",e.message);setLessons([]);setLessonHistory([]);}
       finally{setLoadingL(false);}
     })();
   },[user.id]);
@@ -1683,7 +1836,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
         setNotes(n.length?n:SAMPLE_NOTES);
         const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
         setInteractions(map);
-      }catch(e){setNotes(SAMPLE_NOTES);}
+      }catch(e){console.warn("Notes load:",e.message);setNotes(SAMPLE_NOTES);}
       finally{setLoadingN(false);}
     })();
     (async()=>{
@@ -1728,10 +1881,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     }
     setSaving(true);
     try{
-      if(isSample){
-        const fake={id:"local-"+Date.now(),student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online,start_ts:null};
-        setLessons(l=>[...l,fake]);
-      }else{
+      {
         const [lesson]=await sb.post("lessons",{student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online});
         setLessons(l=>[...l,lesson]);
       }
@@ -1740,16 +1890,15 @@ function StudentApp({user,onLogout,backHandlerRef}){
   }
 
   async function handleDeleteLesson(id){
-    if(isSample){setLessons(l=>l.filter(x=>x.id!==id));return;}
-    try{await sb.del("lessons","?id=eq."+id);setLessons(l=>l.filter(x=>x.id!==id));}catch(e){}
+    try{await sb.del("lessons","?id=eq."+id);setLessons(l=>l.filter(x=>x.id!==id));showToast("Session removed","ok");}catch(e){showToast("Remove failed","error");}
   }
 
   async function handleSaveEdit(){
     if(!editLesson||saving)return;setSaving(true);
     try{
-      if(!isSample)await sb.patch("lessons","?id=eq."+editLesson.id,{subject:editLesson.subject,day:editLesson.day,from_hour:editLesson.from_hour,to_hour:editLesson.to_hour,description:editLesson.description,online:editLesson.online});
-      setLessons(l=>l.map(x=>x.id===editLesson.id?{...x,...editLesson}:x));setEditLesson(null);
-    }catch(e){}finally{setSaving(false);}
+      await sb.patch("lessons","?id=eq."+editLesson.id,{subject:editLesson.subject,day:editLesson.day,from_hour:editLesson.from_hour,to_hour:editLesson.to_hour,description:editLesson.description,online:editLesson.online});
+      setLessons(l=>l.map(x=>x.id===editLesson.id?{...x,...editLesson}:x));setEditLesson(null);showToast("Changes saved","ok");
+    }catch(e){showToast("Save failed","error");}finally{setSaving(false);}
   }
 
   async function handleRequestTutor(tutor,lesson){
@@ -1759,14 +1908,13 @@ function StudentApp({user,onLogout,backHandlerRef}){
     // Mark lesson orange (pending) and store tutor info
     setLessons(ls=>ls.map(l=>l.id===lesson.id?{...l,_pending:true,_accepted:false,_tutorName:tutor.name,_tutorId:tutor.id,_tutorObj:tutor}:l));
     setShowTutors(null); // close modal
-    if(!isSample){try{await sb.post("tutor_requests",{lesson_id:lesson.id,student_id:user.id,tutor_id:tutor.id,subject:lesson.subject,day:lesson.day,from_hour:lesson.from_hour,to_hour:lesson.to_hour,online:lesson.online,description:lesson.description,student_name:user.name,status:"pending"});}catch(e){}}
+    try{await sb.post("tutor_requests",{lesson_id:lesson.id,student_id:user.id,tutor_id:tutor.id,subject:lesson.subject,day:lesson.day,from_hour:lesson.from_hour,to_hour:lesson.to_hour,online:lesson.online,description:lesson.description,student_name:user.name,status:"pending"});}catch(e){}
   }
 
   async function handleInteraction(noteId,field){
     const cur=interactions[noteId]||{liked:false,saved:false};
     const next={...cur,[field]:!cur[field]};
     setInteractions(i=>({...i,[noteId]:next}));
-    if(isSample)return;
     try{
       if(cur.id){await sb.patch("note_interactions","?id=eq."+cur.id,{[field]:next[field]});}
       else{const [row]=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
@@ -1775,7 +1923,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
 
   async function handleCancelSession(lesson,type){
     setCancelLesson(null);
-    if(!isSample){
+    if(!1){
       try{await sb.patch("tutor_requests","?lesson_id=eq."+lesson.id,{status:"cancelled"});}catch(e){}
     }
     handleDeleteLesson(lesson.id);
@@ -1784,7 +1932,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
   async function handleSaveProfile(){
     setProfSaving(true);
     try{
-      if(!isSample)await sb.patch("profiles","?id=eq."+user.id,{name:editP.name,age:editP.age?+editP.age:null,gender:editP.gender,location:editP.location,grade:editP.grade});
+      if(!1)await sb.patch("profiles","?id=eq."+user.id,{name:editP.name,age:editP.age?+editP.age:null,gender:editP.gender,location:editP.location,grade:editP.grade});
       setProfile({...profile,...editP});setProfEdit(false);
     }catch(e){}finally{setProfSaving(false);}
   }
@@ -2037,11 +2185,11 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const [dm,setDm]=useState(false);
   const C=dm?dC():lC();
   const [tab,setTab]=useState("timetable");
-  const [requests,setRequests]=useState(isSample?SAMPLE_LESSONS_TUTOR:[]);
+  const [requests,setRequests]=useState([]);
   const [loadingR,setLoadingR]=useState(true);
   const [showManage,setShowManage]=useState(false);
   const [showHistory,setShowHistory]=useState(false);
-  const [lessonHistory,setLessonHistory]=useState(isSample?SAMPLE_HISTORY_TUTOR:[]);
+  const [lessonHistory,setLessonHistory]=useState([]);
   const [showMode,setShowMode]=useState("requests"); // "requests" | "manage"
   const [showReq,setShowReq]=useState(null);
   const [reqSaving,setReqSaving]=useState(false);
@@ -2057,17 +2205,25 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const [profile,setProfile]=useState(user);
   const [showStudentProf,setShowStudentProf]=React.useState(null);
   const [showWallet,setShowWallet]=React.useState(false);
-  const [walletBal,setWalletBal]=React.useState(isSample?4750:0);
-  const [walletTx,setWalletTx]=React.useState(isSample?[
-    {id:1,label:"Amara – Mathematics",amount:300,type:"credit",date:"Today, 09:00"},
-    {id:2,label:"Kofi – Biology (offline)",amount:500,type:"credit",date:"Yesterday, 14:00"},
-    {id:3,label:"Withdrawal",amount:-2000,type:"debit",date:"Mon, 10:30"},
-    {id:4,label:"John – Physics",amount:300,type:"credit",date:"Mon, 08:00"},
-    {id:5,label:"Grace – Chemistry",amount:450,type:"credit",date:"Sun, 15:00"},
-    {id:6,label:"Withdrawal",amount:-800,type:"debit",date:"Fri, 11:00"},
-  ]:[]);
+  const [walletBal,setWalletBal]=React.useState(0);
+  const [walletTx,setWalletTx]=React.useState([]);
   const [withdrawAmt,setWithdrawAmt]=React.useState("");
   const [withdrawMsg,setWithdrawMsg]=React.useState("");
+  // Load wallet from Supabase
+  React.useEffect(()=>{
+    if(!user.id||user.id.startsWith("anon-"))return;
+    (async()=>{
+      try{
+        const [wrow]=await sb.get("wallets","?user_id=eq."+user.id+"&limit=1");
+        if(wrow){setWalletBal(wrow.balance||0);}
+        const txs=await sb.get("wallet_transactions","?user_id=eq."+user.id+"&order=created_at.desc&limit=50");
+        if(txs&&txs.length){
+          setWalletTx(txs.map(t=>({id:t.id,label:t.label||"Transaction",amount:t.amount,type:t.amount>=0?"credit":"debit",date:new Date(t.created_at).toLocaleDateString()})));
+        }
+      }catch(e){}
+    })();
+  },[user.id]);
+
   function doWithdraw(amt){
     // Called by WalletModal after successful M-Pesa STK push
     const a=parseFloat(amt||withdrawAmt);
@@ -2080,6 +2236,8 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const [profEdit,setProfEdit]=useState(false);
   const [editP,setEditP]=useState({...user});
   const [profSaving,setProfSaving]=useState(false);
+  const [toast,setToast]=React.useState(null); // {msg,type}
+  function showToast(msg,type='info'){setToast({msg,type});setTimeout(()=>setToast(null),3200);}
   const [openNote,setOpenNote]=useState(null);
   const [notePages,setNotePages]=useState({});
   const [editingNote,setEditingNote]=useState(null);
@@ -2136,7 +2294,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
           return false;
         });
         setLessonHistory(hist);
-      }catch(e){console.error("Requests load:",e);}
+      }catch(e){console.warn("Requests load:",e.message);setRequests([]);}
       finally{setLoadingR(false);}
     })();
     (async()=>{
@@ -2186,13 +2344,13 @@ function TutorApp({user,onLogout,backHandlerRef}){
         req.to_hour>l.from_hour
       );
       if(clash){
-        alert(`Cannot accept — this overlaps with ${clash.subject} (${timeLbl(clash.from_hour)}–${timeLbl(clash.to_hour)}) on ${clash.day}. Decline this request or cancel the other session first.`);
+        showToast(`Overlap: ${clash.subject} ${timeLbl(clash.from_hour)}–${timeLbl(clash.to_hour)} on ${clash.day}. Decline or cancel the other first.`,"error");
         return;
       }
     }
     setReqSaving(true);
     try{
-      if(!isSample)await sb.patch("tutor_requests","?id=eq."+reqId,{status});
+      await sb.patch("tutor_requests","?id=eq."+reqId,{status});
       if(status==="declined"){
         // Remove declined requests from the list entirely
         setRequests(r=>r.filter(x=>x.id!==reqId));
@@ -2205,7 +2363,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
 
   async function handleCancelBooked(req,type){
     setCancelReq(null);
-    if(!isSample){try{await sb.patch("tutor_requests","?id=eq."+req.id,{status:"cancelled"});}catch(e){}}
+    try{await sb.patch("tutor_requests","?id=eq."+req.id,{status:"cancelled"});showToast("Session cancelled","ok");}catch(e){showToast("Cancel failed","error");}
     setRequests(r=>r.map(x=>x.id===req.id?{...x,status:"cancelled"}:x));
   }
 
@@ -2215,19 +2373,18 @@ function TutorApp({user,onLogout,backHandlerRef}){
     try{
       const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
       const noteData={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_name:profile.name,created_at:new Date().toISOString(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      if(!isSample){
-        const [n]=await sb.post("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0});
-        setNotes(ns=>[{...n},...ns]);
-      }else{setNotes(ns=>[noteData,...ns]);}
+      const [n]=await sb.post("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:pubForm.pdfDataUrl||null,cover_url:pubForm.coverPreview||null});
+      setNotes(ns=>[{...noteData,...n},...ns]);
       setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});setShowPublish(false);
-    }catch(e){}finally{setPublishing(false);}
+    }catch(e){}finally{setPublishing(false);
+      showToast("Note published!","ok");
+    }catch(e){showToast("Publish failed: "+e.message,"error");setPublishing(false);}
   }
 
   async function handleInteraction(noteId,field){
     const cur=interactions[noteId]||{liked:false,saved:false};
     const next={...cur,[field]:!cur[field]};
     setInteractions(i=>({...i,[noteId]:next}));
-    if(isSample)return;
     try{
       if(cur.id){await sb.patch("note_interactions","?id=eq."+cur.id,{[field]:next[field]});}
       else{const [row]=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
@@ -2237,7 +2394,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
   async function handleSaveProfile(){
     setProfSaving(true);
     try{
-      if(!isSample)await sb.patch("profiles","?id=eq."+user.id,{name:editP.name,age:editP.age?+editP.age:null,gender:editP.gender,location:editP.location,curriculum_level:editP.curriculum_level,hourly_rate_online:editP.hourly_rate_online?+editP.hourly_rate_online:null,hourly_rate_offline:editP.hourly_rate_offline?+editP.hourly_rate_offline:null});
+      await sb.patch("profiles","?id=eq."+user.id,{name:editP.name,age:editP.age?+editP.age:null,gender:editP.gender,location:editP.location,curriculum_level:editP.curriculum_level,hourly_rate_online:editP.hourly_rate_online?+editP.hourly_rate_online:null,hourly_rate_offline:editP.hourly_rate_offline?+editP.hourly_rate_offline:null});
       setProfile({...profile,...editP});setProfEdit(false);
     }catch(e){}finally{setProfSaving(false);}
   }
@@ -2807,7 +2964,52 @@ function ConfCard({C,editP,setEditP,editing,profile,onToggle,isStudent,isTutor,s
 /* ══ MPESA CONFIG ══ */
 // Set these via your backend proxy — never expose consumer key/secret client-side
 // Your server endpoint should accept POST {phone, amount} and call Daraja STK Push
-const MPESA_PROXY_URL = "https://your-backend.com/api/mpesa/stkpush"; // replace with your server URL
+/* ══ MPESA DARAJA CONFIG ══ */
+const MPESA_CONSUMER_KEY    = "ay20S0uCXeGops1zIIXI4nLTPRlyCTOIECFE5YkBGzRTUeAK";
+const MPESA_CONSUMER_SECRET = "GbaRdct5Je81gzM61D4yd3K9PqDFDbcPgUXG3kY9tmGgaoVHw8mfV0u4cKF5f5Pw";
+// Daraja sandbox base — switch to "api.safaricom.co.ke" for production
+const MPESA_BASE = "https://sandbox.safaricom.co.ke";
+
+async function getDarajaToken(){
+  const creds = btoa(MPESA_CONSUMER_KEY+":"+MPESA_CONSUMER_SECRET);
+  const r = await fetch(MPESA_BASE+"/oauth/v1/generate?grant_type=client_credentials",{
+    headers:{Authorization:"Basic "+creds}
+  });
+  if(!r.ok) throw new Error("M-Pesa auth failed");
+  const d = await r.json();
+  return d.access_token;
+}
+
+async function darajaStkPush(phone, amount, accountRef="JRSH"){
+  const token = await getDarajaToken();
+  // For production: replace shortCode, passkey, callbackURL
+  const shortCode = "174379"; // sandbox test shortcode
+  const passkey   = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"; // sandbox
+  const ts = new Date().toISOString().replace(/[^0-9]/g,"").slice(0,14);
+  const password  = btoa(shortCode+passkey+ts);
+  const normalized = phone.replace(/\D/g,"");
+  const msisdn = normalized.startsWith("0")?"254"+normalized.slice(1):normalized.startsWith("254")?normalized:"254"+normalized;
+  const r = await fetch(MPESA_BASE+"/mpesa/stkpush/v1/processrequest",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},
+    body:JSON.stringify({
+      BusinessShortCode:shortCode,
+      Password:password,
+      Timestamp:ts,
+      TransactionType:"CustomerPayBillOnline",
+      Amount:Math.floor(amount),
+      PartyA:msisdn,
+      PartyB:shortCode,
+      PhoneNumber:msisdn,
+      CallBackURL:"https://bodeplbamprefhdrckyp.supabase.co/functions/v1/mpesa-callback",
+      AccountReference:accountRef,
+      TransactionDesc:"JRSH Withdrawal"
+    })
+  });
+  const d = await r.json();
+  if(d.ResponseCode!=="0") throw new Error(d.ResponseDescription||"STK push failed");
+  return d;
+}
 
 function WalletModal({bal,txs,withdrawAmt,setWithdrawAmt,withdrawMsg,onWithdraw,onClose,C,tutorPhone}){
   const [mpesaPhone,setMpesaPhone]=React.useState(tutorPhone||"");
@@ -2826,15 +3028,10 @@ function WalletModal({bal,txs,withdrawAmt,setWithdrawAmt,withdrawMsg,onWithdraw,
       // Normalize phone to 254XXXXXXXXX format
       const normalized=phone.startsWith("0")?"254"+phone.slice(1):phone.startsWith("254")?phone:"254"+phone;
 
-      const res=await fetch(MPESA_PROXY_URL,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({phone:normalized,amount:Math.floor(amt),account_ref:"JRSH-TUTOR",description:"JRSH Tutor Earnings Withdrawal"})
-      });
-
-      if(res.ok){
-        // Debit wallet optimistically
-        onWithdraw(amt);
+      await darajaStkPush(normalized, amt, "JRSH-TUTOR");
+      // Debit wallet optimistically
+      onWithdraw(amt);
+      if(true){
         setMpesaMsg("✓ STK Push sent! Check your phone to complete the M-Pesa transaction.");
       }else{
         const err=await res.json().catch(()=>({}));
