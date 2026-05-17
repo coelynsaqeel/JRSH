@@ -2414,9 +2414,9 @@ function TutorApp({user,onLogout,backHandlerRef}){
       const [n]=await sb.post("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:pubForm.pdfDataUrl||null,cover_url:pubForm.coverPreview||null});
       setNotes(ns=>[{...noteData,...n},...ns]);
       setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});setShowPublish(false);
-    }catch(e){}finally{setPublishing(false);
       showToast("Note published!","ok");
-    }catch(e){showToast("Publish failed: "+e.message,"error");setPublishing(false);}
+    }catch(e){showToast("Publish failed: "+e.message,"error");}
+    finally{setPublishing(false);}
   }
 
   async function handleInteraction(noteId,field){
