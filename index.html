@@ -278,13 +278,28 @@ async function sbFetch(url,opts={},timeoutMs=12000){
   return r;
 }
 
+// Auth calls must NOT throw on non-ok — caller inspects error fields
+async function authFetch(url,opts={},timeoutMs=15000){
+  const ctrl=new AbortController();
+  const tid=setTimeout(()=>ctrl.abort(),timeoutMs);
+  try{
+    const r=await fetch(url,{...opts,signal:ctrl.signal});
+    clearTimeout(tid);
+    try{return await r.json();}catch(e){return{};}
+  }catch(e){
+    clearTimeout(tid);
+    if(e.name==="AbortError") return{error:"timeout",error_description:"Request timed out. Check your connection."};
+    return{error:"network",error_description:"Cannot reach server. Check your internet connection."};
+  }
+}
+
 const sb={
   async get(t,q=""){
     const r=await sbFetch(SB_URL+"/rest/v1/"+t+q,{headers:sbHeaders()});
     return r.json();
   },
+  // publicGet uses anon key — works for unauthenticated reads (notes, tutor list)
   async publicGet(t,q=""){
-    // Always uses anon key so reads work even before login (notes, tutor list)
     const h={"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY};
     const r=await sbFetch(SB_URL+"/rest/v1/"+t+q,{headers:h});
     return r.json();
@@ -292,7 +307,6 @@ const sb={
   async post(t,b){
     const r=await sbFetch(SB_URL+"/rest/v1/"+t,{method:"POST",headers:sbHeaders({"Prefer":"return=representation"}),body:JSON.stringify(b)});
     const d=await r.json();
-    // Always return an array for consistent destructuring
     return Array.isArray(d)?d:[d];
   },
   async patch(t,q,b){
@@ -314,51 +328,45 @@ const sb={
 /* ── Auth helpers ── */
 const sbAuth={
   async signUp(email,password,meta={}){
-    const r=await sbFetch(SB_AUTH_URL+"/signup",{
+    // authFetch never throws — returns raw JSON so we can inspect errors
+    const d=await authFetch(SB_AUTH_URL+"/signup",{
       method:"POST",
       headers:{"Content-Type":"application/json","apikey":SB_KEY},
       body:JSON.stringify({email,password,data:meta})
     });
-    const d=await r.json();
-    // If email-confirm is ON, no session token is returned — try signing in immediately
+    // If Supabase email-confirm is ON: user exists but no access_token
+    // Try signing in immediately with the same credentials
     if(d.user&&!d.access_token&&!(d.error||d.error_description)){
-      try{
-        const si=await sbFetch(SB_AUTH_URL+"/token?grant_type=password",{
-          method:"POST",
-          headers:{"Content-Type":"application/json","apikey":SB_KEY},
-          body:JSON.stringify({email,password})
-        });
-        const sd=await si.json();
-        if(sd.access_token) return {...d,access_token:sd.access_token,refresh_token:sd.refresh_token,session:sd};
-      }catch(e2){}
+      const si=await authFetch(SB_AUTH_URL+"/token?grant_type=password",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","apikey":SB_KEY},
+        body:JSON.stringify({email,password})
+      });
+      if(si.access_token) return{...d,access_token:si.access_token,refresh_token:si.refresh_token,session:si};
     }
     return d;
   },
   async signIn(email,password){
-    const r=await sbFetch(SB_AUTH_URL+"/token?grant_type=password",{
+    return authFetch(SB_AUTH_URL+"/token?grant_type=password",{
       method:"POST",
       headers:{"Content-Type":"application/json","apikey":SB_KEY},
       body:JSON.stringify({email,password})
     });
-    return r.json();
   },
   async refreshToken(refresh_token){
-    try{
-      const r=await sbFetch(SB_AUTH_URL+"/token?grant_type=refresh_token",{
-        method:"POST",
-        headers:{"Content-Type":"application/json","apikey":SB_KEY},
-        body:JSON.stringify({refresh_token})
-      });
-      return r.json();
-    }catch(e){return null;}
+    const d=await authFetch(SB_AUTH_URL+"/token?grant_type=refresh_token",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","apikey":SB_KEY},
+      body:JSON.stringify({refresh_token})
+    });
+    return d.access_token?d:null;
   },
   async sendReset(email){
-    const r=await sbFetch(SB_AUTH_URL+"/recover",{
+    return authFetch(SB_AUTH_URL+"/recover",{
       method:"POST",
       headers:{"Content-Type":"application/json","apikey":SB_KEY},
       body:JSON.stringify({email})
     });
-    return r.status;
   },
   async getProfile(userId){
     try{
@@ -368,14 +376,20 @@ const sbAuth={
     }catch(e){return null;}
   },
   async upsertProfile(data){
+    // Use direct fetch so we can handle errors gracefully
     try{
-      const rows=await sbFetch(SB_URL+"/rest/v1/profiles",{
+      const ctrl=new AbortController();
+      const tid=setTimeout(()=>ctrl.abort(),12000);
+      const r=await fetch(SB_URL+"/rest/v1/profiles",{
         method:"POST",
-        headers:sbHeaders({"Prefer":"return=representation,resolution=merge-duplicates"}),
-        body:JSON.stringify(data)
+        headers:{...sbHeaders(),Prefer:"return=representation,resolution=merge-duplicates"},
+        body:JSON.stringify(data),
+        signal:ctrl.signal
       });
-      const arr=await rows.json();
-      return Array.isArray(arr)?arr[0]:data;
+      clearTimeout(tid);
+      const d=await r.json();
+      const row=Array.isArray(d)?d[0]:d;
+      return (row&&row.id)?row:data;
     }catch(e){console.warn("upsertProfile:",e.message);return data;}
   },
 };
@@ -1310,12 +1324,11 @@ function AppRoot(){
       if(backHandlerRef.current){
         backHandlerRef.current();
         backHandlerRef.current=null;
-        // Push a neutral app state so subsequent back presses don't escape
         window.history.pushState({screen:"app",modal:"none"},"",window.location.pathname);
         return;
       }
       const t=(e.state&&e.state.screen)||"welcome";
-      // Never allow back to exit the app once signed in
+      // Never allow back to leave the app once signed in
       if(screen==="app") return;
       setScreen(t==="register"?"register":"welcome");
     }
@@ -1373,7 +1386,22 @@ function SignInModal({onClose,onAuth,C,connOk}){
     setLoading(true);setErr("");setInfo("");
     try{
       const d=await sbAuth.signIn(email.trim(),pw);
-      if(!d.access_token) throw new Error(d.error_description||d.message||"Invalid email or password");
+      // authFetch returns the raw Supabase response — check for errors
+      const errMsg=d.error_description||d.message||d.error||"";
+      if(!d.access_token){
+        if(errMsg.toLowerCase().includes("invalid")||errMsg.toLowerCase().includes("credentials")||errMsg.toLowerCase().includes("password")){
+          setErr("Wrong email or password. Please try again.");
+        }else if(errMsg.toLowerCase().includes("confirm")||errMsg.toLowerCase().includes("not confirmed")||errMsg.toLowerCase().includes("email")){
+          // Auto-resend confirmation
+          await authFetch(SB_AUTH_URL+"/resend",{method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY},body:JSON.stringify({type:"signup",email:email.trim()})});
+          setErr("Check your email inbox — we sent you a confirmation link. Once confirmed, come back and sign in.");
+        }else if(errMsg.toLowerCase().includes("timeout")||errMsg.toLowerCase().includes("network")||errMsg.toLowerCase().includes("reach")){
+          setErr("No internet connection. Check your network and try again.");
+        }else{
+          setErr(errMsg||"Sign in failed. Please try again.");
+        }
+        return;
+      }
       const token=d.access_token;
       const userId=d.user?.id;
       setAuthToken(token);
@@ -1384,14 +1412,7 @@ function SignInModal({onClose,onAuth,C,connOk}){
       saveSession({profile,token,refresh_token:d.refresh_token,role:profile.role});
       onAuth({...profile},token);
     }catch(e){
-      const msg=e.message||"";
-      if(msg.includes("Invalid login"))setErr("Wrong email or password. Please try again.");
-      else if(msg.includes("Email not confirmed")||msg.includes("email_not_confirmed")){
-        try{await sbFetch(SB_AUTH_URL+"/resend",{method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY},body:JSON.stringify({type:"signup",email:email.trim()})});}catch(e2){}
-        setErr("Your email isn't confirmed yet. We've resent the confirmation link — check your inbox (and spam), then try signing in again.");
-      }
-      else if(msg.includes("reach server")||msg.includes("fetch")||msg.includes("network"))setErr("No internet connection. Check your network and try again.");
-      else setErr(msg||"Sign in failed. Try again.");
+      setErr(e.message||"Sign in failed. Try again.");
     }finally{setLoading(false);}
   }
 
@@ -1515,37 +1536,40 @@ function StudentRegister({onBack, onAuth, onSignIn}){
     setLoading(true);setErr("");
     try{
       const authData=await sbAuth.signUp(p.email.trim(),p.password,{name:p.name,role:"student"});
+      const errMsg=authData.error_description||authData.error||"";
+      // Handle signup errors gracefully
+      if(errMsg){
+        if(errMsg.toLowerCase().includes("already")||errMsg.toLowerCase().includes("registered")){
+          // Already registered — try signing in instead
+          const si=await sbAuth.signIn(p.email.trim(),p.password);
+          if(si.access_token){
+            setAuthToken(si.access_token);
+            const userId=si.user?.id;
+            const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:new Date().toISOString()};
+            const profile=await sbAuth.upsertProfile(profileData);
+            saveSession({profile,token:si.access_token,refresh_token:si.refresh_token||null,role:"student"});
+            onAuth(profile,si.access_token);return;
+          }
+          setErr("This email is already registered. Tap SIGN IN below.");return;
+        }
+        if(errMsg.toLowerCase().includes("timeout")||errMsg.toLowerCase().includes("network")){
+          const offlineId="local-"+Date.now()+"-"+Math.random().toString(36).slice(2,6);
+          const offlineProfile={id:offlineId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,_offline:true};
+          saveSession({profile:offlineProfile,token:null,role:"student"});
+          onAuth(offlineProfile,null);return;
+        }
+        setErr(errMsg);return;
+      }
       const userId=authData.user?.id;
       const token=authData.access_token||authData.session?.access_token;
-      if(authData.error_description||authData.error){
-        throw new Error(authData.error_description||authData.error||"Sign-up failed");
-      }
-      if(!userId) throw new Error("Sign-up failed. Please try again.");
+      if(!userId){setErr("Sign-up failed. Please try again.");return;}
       if(token) setAuthToken(token);
       const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:new Date().toISOString()};
       const profile=await sbAuth.upsertProfile(profileData);
-      const sess={profile,token:token||null,refresh_token:authData.session?.refresh_token||null,role:"student"};
-      saveSession(sess);
+      saveSession({profile,token:token||null,refresh_token:authData.session?.refresh_token||null,role:"student"});
       onAuth(profile,token);
     }catch(e){
-      const msg=e.message||"";
-      if(msg.toLowerCase().includes("already registered")||msg.toLowerCase().includes("already been registered")||msg.toLowerCase().includes("user already")){
-        setErr("This email is already registered. Tap SIGN IN below.");
-      }else if(msg.includes("reach server")||msg.includes("internet")||msg.includes("timed out")){
-        // Offline fallback — let them in with a local profile
-        const offlineId="local-"+Date.now()+"-"+Math.random().toString(36).slice(2,6);
-        const offlineProfile={id:offlineId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,_offline:true};
-        saveSession({profile:offlineProfile,token:null,role:"student"});
-        onAuth(offlineProfile,null);
-      }else if(msg.toLowerCase().includes("invalid")||msg.toLowerCase().includes("email")){
-        setErr("Invalid email address. Please check and try again.");
-      }else if(msg.toLowerCase().includes("password")){
-        setErr(msg);
-      }else if(msg.toLowerCase().includes("weak")){
-        setErr("Password is too weak. Use at least 6 characters with letters and numbers.");
-      }else{
-        setErr(msg||"Registration failed. Check your details and try again.");
-      }
+      setErr(e.message||"Sign-up failed. Please try again.");
     }finally{setLoading(false);}
   }
 
@@ -1670,34 +1694,38 @@ function TutorRegister({onBack, onAuth, onSignIn}){
     setLoading(true);setErr("");
     try{
       const authData=await sbAuth.signUp(p.email.trim(),p.password,{name:p.name,role:"tutor"});
+      const errMsg=authData.error_description||authData.error||"";
+      if(errMsg){
+        if(errMsg.toLowerCase().includes("already")||errMsg.toLowerCase().includes("registered")){
+          const si=await sbAuth.signIn(p.email.trim(),p.password);
+          if(si.access_token){
+            setAuthToken(si.access_token);
+            const userId=si.user?.id;
+            const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:new Date().toISOString()};
+            const profile=await sbAuth.upsertProfile(profileData);
+            saveSession({profile,token:si.access_token,refresh_token:si.refresh_token||null,role:"tutor"});
+            onAuth(profile,si.access_token);return;
+          }
+          setErr("This email is already registered. Tap SIGN IN below.");return;
+        }
+        if(errMsg.toLowerCase().includes("timeout")||errMsg.toLowerCase().includes("network")){
+          const offlineId="local-"+Date.now()+"-"+Math.random().toString(36).slice(2,6);
+          const offlineProfile={id:offlineId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,_offline:true};
+          saveSession({profile:offlineProfile,token:null,role:"tutor"});
+          onAuth(offlineProfile,null);return;
+        }
+        setErr(errMsg);return;
+      }
       const userId=authData.user?.id;
       const token=authData.access_token||authData.session?.access_token;
-      if(authData.error_description||authData.error){
-        throw new Error(authData.error_description||authData.error||"Sign-up failed");
-      }
-      if(!userId) throw new Error("Sign-up failed. Please try again.");
+      if(!userId){setErr("Sign-up failed. Please try again.");return;}
       if(token) setAuthToken(token);
       const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:new Date().toISOString()};
       const profile=await sbAuth.upsertProfile(profileData);
-      const sess={profile,token:token||null,refresh_token:authData.session?.refresh_token||null,role:"tutor"};
-      saveSession(sess);
+      saveSession({profile,token:token||null,refresh_token:authData.session?.refresh_token||null,role:"tutor"});
       onAuth(profile,token);
     }catch(e){
-      const msg=e.message||"";
-      if(msg.toLowerCase().includes("already registered")||msg.toLowerCase().includes("already been registered")||msg.toLowerCase().includes("user already")){
-        setErr("This email is already registered. Tap SIGN IN below.");
-      }else if(msg.includes("reach server")||msg.includes("internet")||msg.includes("timed out")){
-        const offlineId="local-"+Date.now()+"-"+Math.random().toString(36).slice(2,6);
-        const offlineProfile={id:offlineId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,_offline:true};
-        saveSession({profile:offlineProfile,token:null,role:"tutor"});
-        onAuth(offlineProfile,null);
-      }else if(msg.toLowerCase().includes("invalid")||msg.toLowerCase().includes("email")){
-        setErr("Invalid email address. Please check and try again.");
-      }else if(msg.toLowerCase().includes("password")||msg.toLowerCase().includes("weak")){
-        setErr(msg);
-      }else{
-        setErr(msg||"Registration failed. Check your details and try again.");
-      }
+      setErr(e.message||"Sign-up failed. Please try again.");
     }finally{setLoading(false);}
   }
 
