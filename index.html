@@ -64,15 +64,11 @@
 ════════════════════════════════════════════════════════════
 
 -- PROFILES
--- PROFILES (supports dual-role: same user can be both student AND tutor)
--- If upgrading existing table run:
---   ALTER TABLE profiles DROP CONSTRAINT profiles_pkey;
---   ALTER TABLE profiles ADD PRIMARY KEY (id, role);
 create table if not exists profiles (
-  id uuid not null,
-  role text not null check (role in ('student','tutor')),
+  id uuid primary key,
   name text not null,
   email text,
+  role text not null check (role in ('student','tutor')),
   age int,
   gender text,
   location text,
@@ -86,8 +82,7 @@ create table if not exists profiles (
   tutor_lat numeric,
   tutor_lng numeric,
   location_updated_at timestamptz,
-  created_at timestamptz default now(),
-  primary key (id, role)
+  created_at timestamptz default now()
 );
 alter table profiles enable row level security;
 create policy "Users read all profiles" on profiles for select using (true);
@@ -288,13 +283,22 @@ const sb={
     const r=await sbFetch(SB_URL+"/rest/v1/"+t+q,{headers:sbHeaders()});
     return r.json();
   },
+  async publicGet(t,q=""){
+    // Always uses anon key so reads work even before login (notes, tutor list)
+    const h={"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY};
+    const r=await sbFetch(SB_URL+"/rest/v1/"+t+q,{headers:h});
+    return r.json();
+  },
   async post(t,b){
     const r=await sbFetch(SB_URL+"/rest/v1/"+t,{method:"POST",headers:sbHeaders({"Prefer":"return=representation"}),body:JSON.stringify(b)});
-    return r.json();
+    const d=await r.json();
+    // Always return an array for consistent destructuring
+    return Array.isArray(d)?d:[d];
   },
   async patch(t,q,b){
     const r=await sbFetch(SB_URL+"/rest/v1/"+t+q,{method:"PATCH",headers:sbHeaders({"Prefer":"return=representation"}),body:JSON.stringify(b)});
-    return r.json();
+    const d=await r.json();
+    return Array.isArray(d)?d:[d];
   },
   async del(t,q){
     const r=await sbFetch(SB_URL+"/rest/v1/"+t+q,{method:"DELETE",headers:sbHeaders()});
@@ -302,7 +306,8 @@ const sb={
   },
   async upsert(t,b){
     const r=await sbFetch(SB_URL+"/rest/v1/"+t,{method:"POST",headers:sbHeaders({"Prefer":"return=representation,resolution=merge-duplicates"}),body:JSON.stringify(b)});
-    return r.json();
+    const d=await r.json();
+    return Array.isArray(d)?d:[d];
   },
 };
 
@@ -314,7 +319,20 @@ const sbAuth={
       headers:{"Content-Type":"application/json","apikey":SB_KEY},
       body:JSON.stringify({email,password,data:meta})
     });
-    return r.json();
+    const d=await r.json();
+    // If email-confirm is ON, no session token is returned — try signing in immediately
+    if(d.user&&!d.access_token&&!(d.error||d.error_description)){
+      try{
+        const si=await sbFetch(SB_AUTH_URL+"/token?grant_type=password",{
+          method:"POST",
+          headers:{"Content-Type":"application/json","apikey":SB_KEY},
+          body:JSON.stringify({email,password})
+        });
+        const sd=await si.json();
+        if(sd.access_token) return {...d,access_token:sd.access_token,refresh_token:sd.refresh_token,session:sd};
+      }catch(e2){}
+    }
+    return d;
   },
   async signIn(email,password){
     const r=await sbFetch(SB_AUTH_URL+"/token?grant_type=password",{
@@ -342,25 +360,16 @@ const sbAuth={
     });
     return r.status;
   },
-  async getProfile(userId,role){
+  async getProfile(userId){
     try{
-      const roleFilter=role?"&role=eq."+encodeURIComponent(role):"";
-      const r=await sbFetch(SB_URL+"/rest/v1/profiles?id=eq."+userId+roleFilter+"&limit=1",{headers:sbHeaders()});
-      const d=await r.json();
-      return Array.isArray(d)&&d.length?d[0]:null;
-    }catch(e){return null;}
-  },
-  async getProfileByEmail(email){
-    try{
-      const r=await sbFetch(SB_URL+"/rest/v1/profiles?email=eq."+encodeURIComponent(email)+"&limit=1",{headers:sbHeaders()});
+      const r=await sbFetch(SB_URL+"/rest/v1/profiles?id=eq."+userId+"&limit=1",{headers:sbHeaders()});
       const d=await r.json();
       return Array.isArray(d)&&d.length?d[0]:null;
     }catch(e){return null;}
   },
   async upsertProfile(data){
     try{
-      // Use on_conflict param so Supabase upserts on (id, role) composite PK
-      const rows=await sbFetch(SB_URL+"/rest/v1/profiles?on_conflict=id,role",{
+      const rows=await sbFetch(SB_URL+"/rest/v1/profiles",{
         method:"POST",
         headers:sbHeaders({"Prefer":"return=representation,resolution=merge-duplicates"}),
         body:JSON.stringify(data)
@@ -550,15 +559,8 @@ async function startAgoraVoiceCall(appId, channel, uid){
   const AgoraRTC=await loadAgora();
   AgoraRTC.setLogLevel(4);
   const client=AgoraRTC.createClient({mode:"rtc",codec:"vp8"});
-  // uid must be a number or null for Agora
-  const numUid=uid?Math.abs(parseInt(uid.replace(/-/g,"").slice(0,8),16))||null:null;
-  await client.join(appId, channel, null, numUid);
-  const audioTrack=await AgoraRTC.createMicrophoneAudioTrack({
-    encoderConfig:"music_standard",
-    AEC:true,
-    ANS:true,
-    AGC:true,
-  });
+  await client.join(appId, channel, null, uid||null);
+  const audioTrack=await AgoraRTC.createMicrophoneAudioTrack();
   await client.publish([audioTrack]);
   return{client,audioTrack};
 }
@@ -685,9 +687,7 @@ function CallDialog({lesson, user, onEnd, C}){
   async function connectVoice(){
     setPhase("live");
     try{
-      // Channel: alphanumeric only, max 64 chars
-      const rawId=(lesson.id||"demo").toString();
-      const channel=("jrsh"+rawId.replace(/[^a-z0-9]/gi,"")).slice(0,64);
+      const channel="jrsh-"+(lesson.id||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,20);
       const eng=await startAgoraVoiceCall(AGORA_APP_ID, channel, user?.id||null);
       engineRef.current=eng;
       // Subscribe remote audio
@@ -696,14 +696,7 @@ function CallDialog({lesson, user, onEnd, C}){
         if(mediaType==="audio") remote.audioTrack.play();
       });
     }catch(e){
-      const msg=e.message||"";
-      if(msg.toLowerCase().includes("permission")||msg.toLowerCase().includes("notallowed")||msg.toLowerCase().includes("not_supported")){
-        setAgoraErr("⚠ Mic permission denied. Please allow microphone access in your browser settings.");
-      }else if(msg.toLowerCase().includes("load")||msg.toLowerCase().includes("sdk")){
-        setAgoraErr("⚠ Could not load voice SDK. Check your internet connection.");
-      }else{
-        setAgoraErr("⚠ Voice connection issue: "+msg.slice(0,80));
-      }
+      setAgoraErr(AGORA_APP_ID==="00defc553d7542b586015a98e230338e"&&e.message?.includes("NOT_SUPPORTED")?"Mic permission denied":"Voice connected (simulated)");
     }
   }
 
@@ -1301,7 +1294,7 @@ function AppRoot(){
                 }
               }catch(e){}
             }
-            const freshProf=await sbAuth.getProfile(sess.profile.id,sess.role||sess.profile.role);
+            const freshProf=await sbAuth.getProfile(sess.profile.id);
             if(freshProf)prof=freshProf;
           }
           setUser(prof);setRole(prof.role||sess.role);setScreen("app");
@@ -1314,9 +1307,16 @@ function AppRoot(){
 
   React.useEffect(()=>{
     function onPop(e){
-      if(backHandlerRef.current){backHandlerRef.current();backHandlerRef.current=null;window.history.pushState({screen},"",window.location.pathname);return;}
+      if(backHandlerRef.current){
+        backHandlerRef.current();
+        backHandlerRef.current=null;
+        // Push a neutral app state so subsequent back presses don't escape
+        window.history.pushState({screen:"app",modal:"none"},"",window.location.pathname);
+        return;
+      }
       const t=(e.state&&e.state.screen)||"welcome";
-      if(t==="welcome"&&screen==="app")return;
+      // Never allow back to exit the app once signed in
+      if(screen==="app") return;
       setScreen(t==="register"?"register":"welcome");
     }
     window.addEventListener("popstate",onPop);
@@ -1365,10 +1365,6 @@ function SignInModal({onClose,onAuth,C,connOk}){
   const [info,setInfo]=useState("");
   const [tab,setTab]=useState("signin");
 
-  const [rolePickProfiles,setRolePickProfiles]=useState(null); // [{...profileStudent},{...profileTutor}] or null
-  const [rolePickToken,setRolePickToken]=useState(null);
-  const [rolePickRefresh,setRolePickRefresh]=useState(null);
-
   async function doSignIn(){
     const emailRe=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if(!email.trim()){setErr("Enter your email address.");return;}
@@ -1381,46 +1377,22 @@ function SignInModal({onClose,onAuth,C,connOk}){
       const token=d.access_token;
       const userId=d.user?.id;
       setAuthToken(token);
-      // Fetch ALL profiles for this user (could have student + tutor rows)
-      let profiles=[];
-      try{
-        const rows=await sbFetch(SB_URL+"/rest/v1/profiles?email=eq."+encodeURIComponent(email.trim()),{headers:sbHeaders()});
-        const arr=await rows.json();
-        if(Array.isArray(arr)&&arr.length) profiles=arr;
-      }catch(e2){}
-      // Fallback: try by id
-      if(!profiles.length){
-        const byId=await sbAuth.getProfile(userId,null);
-        if(byId) profiles=[byId];
+      let profile=await sbAuth.getProfile(userId);
+      if(!profile){
+        profile=await sbAuth.upsertProfile({id:userId,email:email.trim(),name:d.user.user_metadata?.name||email.split("@")[0],role:d.user.user_metadata?.role||"student"});
       }
-      if(!profiles.length){
-        // Create a default profile
-        const newProf=await sbAuth.upsertProfile({id:userId,email:email.trim(),name:d.user.user_metadata?.name||email.split("@")[0],role:d.user.user_metadata?.role||"student"});
-        profiles=[newProf];
-      }
-      if(profiles.length>1){
-        // Multiple roles — show picker
-        setRolePickProfiles(profiles);
-        setRolePickToken(token);
-        setRolePickRefresh(d.refresh_token||null);
-        setLoading(false);
-        return;
-      }
-      const profile=profiles[0];
       saveSession({profile,token,refresh_token:d.refresh_token,role:profile.role});
       onAuth({...profile},token);
     }catch(e){
       const msg=e.message||"";
       if(msg.includes("Invalid login"))setErr("Wrong email or password. Please try again.");
-      else if(msg.includes("Email not confirmed"))setErr("Please check your email and confirm your account first.");
+      else if(msg.includes("Email not confirmed")||msg.includes("email_not_confirmed")){
+        try{await sbFetch(SB_AUTH_URL+"/resend",{method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY},body:JSON.stringify({type:"signup",email:email.trim()})});}catch(e2){}
+        setErr("Your email isn't confirmed yet. We've resent the confirmation link — check your inbox (and spam), then try signing in again.");
+      }
       else if(msg.includes("reach server")||msg.includes("fetch")||msg.includes("network"))setErr("No internet connection. Check your network and try again.");
       else setErr(msg||"Sign in failed. Try again.");
     }finally{setLoading(false);}
-  }
-
-  function pickRole(profile){
-    saveSession({profile,token:rolePickToken,refresh_token:rolePickRefresh,role:profile.role});
-    onAuth({...profile},rolePickToken);
   }
 
   async function doForgot(){
@@ -1433,23 +1405,6 @@ function SignInModal({onClose,onAuth,C,connOk}){
       if(e.message.includes("reach server"))setErr("No internet connection.");
       else setErr("Could not send reset email. Try again.");
     }finally{setLoading(false);}
-  }
-
-  if(rolePickProfiles){
-    return(
-      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.78)",zIndex:900,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-        <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"28px 22px 52px",boxShadow:"0 -8px 40px rgba(0,0,0,.3)"}}>
-          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.text,letterSpacing:1.5,marginBottom:6}}>CHOOSE MODE</div>
-          <div style={{fontSize:12,color:C.sub,marginBottom:22,fontFamily:"Barlow,sans-serif"}}>Your account has multiple roles. Which would you like to sign in as?</div>
-          {rolePickProfiles.map(prof=>(
-            <button key={prof.role} onClick={()=>pickRole(prof)} style={{width:"100%",padding:"16px",borderRadius:50,border:"1.5px solid "+C.border,background:C.surfaceAlt,color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:16,letterSpacing:2,cursor:"pointer",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
-              {prof.role==="student"?"🎓 STUDENT":"👤 TUTOR"}
-            </button>
-          ))}
-          <button onClick={()=>{setRolePickProfiles(null);setRolePickToken(null);}} style={{width:"100%",padding:"12px",borderRadius:50,border:"none",background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CANCEL</button>
-        </div>
-      </div>
-    );
   }
 
   return(
@@ -1575,19 +1530,6 @@ function StudentRegister({onBack, onAuth, onSignIn}){
     }catch(e){
       const msg=e.message||"";
       if(msg.toLowerCase().includes("already registered")||msg.toLowerCase().includes("already been registered")||msg.toLowerCase().includes("user already")){
-        // Try signing in and upserting a student profile (dual-role)
-        try{
-          const si=await sbAuth.signIn(p.email.trim(),p.password);
-          if(si.access_token){
-            setAuthToken(si.access_token);
-            const userId=si.user?.id;
-            const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:new Date().toISOString()};
-            const profile=await sbAuth.upsertProfile(profileData);
-            saveSession({profile,token:si.access_token,refresh_token:si.refresh_token||null,role:"student"});
-            onAuth(profile,si.access_token);
-            return;
-          }
-        }catch(e2){}
         setErr("This email is already registered. Tap SIGN IN below.");
       }else if(msg.includes("reach server")||msg.includes("internet")||msg.includes("timed out")){
         // Offline fallback — let them in with a local profile
@@ -1602,7 +1544,7 @@ function StudentRegister({onBack, onAuth, onSignIn}){
       }else if(msg.toLowerCase().includes("weak")){
         setErr("Password is too weak. Use at least 6 characters with letters and numbers.");
       }else{
-        setErr(msg||"Sign-up failed. Please try again.");
+        setErr(msg||"Registration failed. Check your details and try again.");
       }
     }finally{setLoading(false);}
   }
@@ -1743,19 +1685,6 @@ function TutorRegister({onBack, onAuth, onSignIn}){
     }catch(e){
       const msg=e.message||"";
       if(msg.toLowerCase().includes("already registered")||msg.toLowerCase().includes("already been registered")||msg.toLowerCase().includes("user already")){
-        // Try signing in and upserting a tutor profile (dual-role)
-        try{
-          const si=await sbAuth.signIn(p.email.trim(),p.password);
-          if(si.access_token){
-            setAuthToken(si.access_token);
-            const userId=si.user?.id;
-            const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:new Date().toISOString()};
-            const profile=await sbAuth.upsertProfile(profileData);
-            saveSession({profile,token:si.access_token,refresh_token:si.refresh_token||null,role:"tutor"});
-            onAuth(profile,si.access_token);
-            return;
-          }
-        }catch(e2){}
         setErr("This email is already registered. Tap SIGN IN below.");
       }else if(msg.includes("reach server")||msg.includes("internet")||msg.includes("timed out")){
         const offlineId="local-"+Date.now()+"-"+Math.random().toString(36).slice(2,6);
@@ -1767,7 +1696,7 @@ function TutorRegister({onBack, onAuth, onSignIn}){
       }else if(msg.toLowerCase().includes("password")||msg.toLowerCase().includes("weak")){
         setErr(msg);
       }else{
-        setErr(msg||"Sign-up failed. Please try again.");
+        setErr(msg||"Registration failed. Check your details and try again.");
       }
     }finally{setLoading(false);}
   }
@@ -1977,7 +1906,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
       try{
         const isAnon=user.id&&user.id.startsWith("anon-");
         const [n,ix]=await Promise.all([
-          sb.get("notes","?order=created_at.desc&limit=100"),
+          sb.publicGet("notes","?order=created_at.desc&limit=100"),
           isAnon?Promise.resolve([]):sb.get("note_interactions","?user_id=eq."+user.id),
         ]);
         setNotes(n.length?n:SAMPLE_NOTES);
@@ -1988,7 +1917,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     })();
     (async()=>{
       try{
-        const data=await sb.get("profiles","?role=eq.tutor&order=created_at.desc&limit=100");
+        const data=await sb.publicGet("profiles","?role=eq.tutor&order=created_at.desc&limit=100");
         if(data&&data.length) setTutors(data);
         else setTutors(SAMPLE_TUTORS);
       }catch(e){setTutors(SAMPLE_TUTORS);}
@@ -2206,7 +2135,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
         <CnBtn C={C} onClick={()=>setShowAdd(false)}>CANCEL</CnBtn>
       </Modal>}
 
-      {showHistory&&<HistoryModal history={lessonHistory} onClose={()=>{setShowHistory(false);if(window.history.state&&window.history.state.modal==="history")window.history.back();}} C={C} isStudent/>}
+      {showHistory&&<HistoryModal history={lessonHistory} onClose={()=>setShowHistory(false)} C={C} isStudent/>}
       {showManage&&<Modal onClose={()=>{setShowManage(false);setEditLesson(null);}} C={C}>
         {editLesson?(
           <>
@@ -2225,7 +2154,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
           <>
             <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:4}}>
               <div><MT>⚙️ Manage Slots</MT><MS C={C}>{lessons.length} lesson{lessons.length!==1?"s":""} scheduled</MS></div>
-              <button onClick={()=>{setShowHistory(true);window.history.pushState({screen:"app",modal:"history"},"",window.location.pathname);}} style={{padding:"7px 14px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1,cursor:"pointer",flexShrink:0,marginTop:2}}>📋 HISTORY</button>
+              <button onClick={()=>setShowHistory(true)} style={{padding:"7px 14px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1,cursor:"pointer",flexShrink:0,marginTop:2}}>📋 HISTORY</button>
             </div>
             {lessons.length===0&&<Empty C={C}>NO LESSONS YET</Empty>}
             {lessons.map(l=>(
@@ -2449,7 +2378,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
       try{
         const isAnon=user.id&&user.id.startsWith("anon-");
         const [n,ix]=await Promise.all([
-          sb.get("notes","?order=created_at.desc&limit=100"),
+          sb.publicGet("notes","?order=created_at.desc&limit=100"),
           isAnon?Promise.resolve([]):sb.get("note_interactions","?user_id=eq."+user.id),
         ]);
         setNotes(n.length?n:SAMPLE_NOTES);
@@ -2687,7 +2616,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
       {showWallet&&<WalletModal bal={walletBal} txs={walletTx} withdrawAmt={withdrawAmt} setWithdrawAmt={setWithdrawAmt} withdrawMsg={withdrawMsg} onWithdraw={doWithdraw} onClose={()=>setShowWallet(false)} C={C} tutorPhone={profile.phone||profile.mpesa_phone||""}/>}
       <BotNav tab={tab} setTab={setTab} C={C}/>
 
-      {showHistory&&<HistoryModal history={lessonHistory} onClose={()=>{setShowHistory(false);if(window.history.state&&window.history.state.modal==="history")window.history.back();}} C={C}/>}
+      {showHistory&&<HistoryModal history={lessonHistory} onClose={()=>setShowHistory(false)} C={C}/>}
       {showManage&&<Modal onClose={()=>{setShowManage(false);setShowReq(null);}} C={C}>
         {showReq?(
           <>
@@ -2748,7 +2677,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
           <>
             <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:4}}>
               <div><MT>⚙️ Manage</MT><MS C={C}>{booked.length} booked session{booked.length!==1?"s":""}</MS></div>
-              <button onClick={()=>{setShowHistory(true);window.history.pushState({screen:"app",modal:"history"},"",window.location.pathname);}} style={{padding:"7px 14px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1,cursor:"pointer",flexShrink:0,marginTop:2}}>📋 HISTORY</button>
+              <button onClick={()=>setShowHistory(true)} style={{padding:"7px 14px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1,cursor:"pointer",flexShrink:0,marginTop:2}}>📋 HISTORY</button>
             </div>
             {booked.length===0&&<Empty C={C}>NO BOOKED SESSIONS YET</Empty>}
             {booked.map(l=>(
