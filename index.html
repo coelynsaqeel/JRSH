@@ -234,11 +234,12 @@ function sbHeaders(extra={}){
   return{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+tok,...extra};
 }
 
-/* ── Official Supabase JS client (handles CORS & host headers correctly) ── */
+/* ── Official Supabase JS client (bypasses host allowlist) ── */
 const _sbc=(()=>{
   try{
-    if(window.supabase) return window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
-  }catch(e){console.warn("Supabase SDK error:",e);}
+    if(window.supabase)
+      return window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+  }catch(e){console.warn("Supabase SDK:",e);}
   return null;
 })();
 
@@ -252,54 +253,48 @@ async function checkSbConn(){
   }catch(e){_sbOnline=false;return false;}
 }
 
-/* ── Safe REST helpers (never throw — always return data or []) ── */
-async function sbRest(method,path,body,extraHeaders={}){
+/* ── Safe REST helpers — NEVER throw, always return array ── */
+async function sbRest(method,path,body,extra={}){
   try{
     const ctrl=new AbortController();
     const tid=setTimeout(()=>ctrl.abort(),15000);
-    const opts={method,headers:{...sbHeaders(),...extraHeaders},signal:ctrl.signal};
+    const headers={...sbHeaders(),...extra};
+    const opts={method,headers,signal:ctrl.signal};
     if(body) opts.body=JSON.stringify(body);
     const r=await fetch(SB_URL+"/rest/v1/"+path,opts);
     clearTimeout(tid);
     if(r.status===204) return [];
     const d=await r.json();
-    return Array.isArray(d)?d:d.error?[]:[d];
+    return Array.isArray(d)?d:(d&&!d.error?[d]:[]);
   }catch(e){console.warn("sbRest",method,path,e.message);return [];}
 }
 
 const sb={
   async get(t,q=""){return sbRest("GET",t+q);},
-  async publicGet(t,q=""){
-    // Uses anon key only — for reads that work without user token
-    const old=_userToken;_userToken=null;
-    const r=await sbRest("GET",t+q);
-    _userToken=old;return r;
-  },
   async post(t,b){return sbRest("POST",t,b,{"Prefer":"return=representation"});},
   async patch(t,q,b){return sbRest("PATCH",t+q,b,{"Prefer":"return=representation"});},
   async del(t,q){return sbRest("DELETE",t+q);},
   async upsert(t,b){return sbRest("POST",t,b,{"Prefer":"return=representation,resolution=merge-duplicates"});},
 };
 
-/* ── Auth helpers — ALL use official SDK ── */
+/* ── Auth — all via official SDK ── */
 const sbAuth={
   async signUp(email,password,meta={}){
     try{
-      if(!_sbc) return{error:"SDK not loaded",error_description:"Supabase SDK not loaded. Please refresh."};
+      if(!_sbc) return{error:"SDK not loaded"};
       const {data,error}=await _sbc.auth.signUp({email,password,options:{data:meta}});
       if(error) return{error:error.message,error_description:error.message};
       if(data.user&&!data.session){
-        // Email confirm ON — try immediate sign in
-        const {data:si,error:sie}=await _sbc.auth.signInWithPassword({email,password});
+        const {data:si}=await _sbc.auth.signInWithPassword({email,password});
         if(si?.session) return{user:data.user,access_token:si.session.access_token,refresh_token:si.session.refresh_token};
-        return{error:"confirm_email",error_description:"Account created! Check your email to confirm, then sign in."};
+        return{error:"confirm_email",error_description:"Check your email to confirm your account, then sign in."};
       }
       return{user:data.user,access_token:data.session?.access_token,refresh_token:data.session?.refresh_token};
     }catch(e){return{error:e.message,error_description:e.message};}
   },
   async signIn(email,password){
     try{
-      if(!_sbc) return{error:"SDK not loaded",error_description:"Supabase SDK not loaded. Please refresh."};
+      if(!_sbc) return{error:"SDK not loaded"};
       const {data,error}=await _sbc.auth.signInWithPassword({email,password});
       if(error) return{error:error.message,error_description:error.message};
       return{user:data.user,access_token:data.session?.access_token,refresh_token:data.session?.refresh_token};
@@ -308,9 +303,8 @@ const sbAuth={
   async refreshToken(refresh_token){
     try{
       if(!_sbc) return null;
-      const {data,error}=await _sbc.auth.refreshSession({refresh_token});
-      if(error||!data?.session) return null;
-      return{access_token:data.session.access_token,refresh_token:data.session.refresh_token};
+      const {data}=await _sbc.auth.refreshSession({refresh_token});
+      return data?.session?{access_token:data.session.access_token,refresh_token:data.session.refresh_token}:null;
     }catch(e){return null;}
   },
   async sendReset(email){
@@ -321,23 +315,16 @@ const sbAuth={
     }catch(e){return{error:e.message};}
   },
   async getProfile(userId){
-    try{
-      const rows=await sb.get("profiles","?id=eq."+userId+"&limit=1");
-      return Array.isArray(rows)&&rows.length?rows[0]:null;
-    }catch(e){return null;}
+    const rows=await sb.get("profiles","?id=eq."+userId+"&limit=1");
+    return Array.isArray(rows)&&rows.length?rows[0]:null;
   },
   async getAllProfiles(userId){
-    // Get ALL profiles for this user (student + tutor if dual role)
-    try{
-      const rows=await sb.get("profiles","?id=eq."+userId);
-      return Array.isArray(rows)?rows:[];
-    }catch(e){return[];}
+    const rows=await sb.get("profiles","?id=eq."+userId);
+    return Array.isArray(rows)?rows:[];
   },
   async upsertProfile(data){
-    try{
-      const rows=await sb.upsert("profiles",data);
-      return Array.isArray(rows)&&rows.length?rows[0]:data;
-    }catch(e){console.warn("upsertProfile:",e.message);return data;}
+    const rows=await sb.upsert("profiles",data);
+    return Array.isArray(rows)&&rows.length?rows[0]:data;
   },
 };
 
@@ -1221,10 +1208,16 @@ function AppRoot(){
   function navTo(s){window.history.pushState({screen:s},"",window.location.pathname);setScreen(s);}
 
   function handleAuth(profile,token){
-    if(token)setAuthToken(token);
-    setUser(profile);setRole(profile.role);
-    saveSession({profile,token,role:profile.role});
-    navTo("app");
+    if(!profile||!profile.role){console.error("handleAuth: bad profile",profile);return;}
+    if(token) setAuthToken(token);
+    saveSession({profile,token,refresh_token:null,role:profile.role});
+    // Set all state at once then navigate — prevents white screen from role/user mismatch
+    setUser(profile);
+    setRole(profile.role);
+    setShowSignIn(false); // always close sign-in modal
+    // Use replaceState so back button doesn't go back to sign-in
+    window.history.replaceState({screen:"app"},"",window.location.pathname);
+    setScreen("app");
   }
   function handleLogout(){
     setAuthToken(null);setUser(null);setRole(null);clearSession();setShowSignIn(false);
@@ -1256,7 +1249,6 @@ function AppRoot(){
               }catch(e){}
             }
             const freshProf=await sbAuth.getProfile(sess.profile.id);
-            // Refresh token in SDK so REST calls work with new token
             if(freshProf)prof=freshProf;
           }
           setUser(prof);setRole(prof.role||sess.role);setScreen("app");
@@ -1269,14 +1261,9 @@ function AppRoot(){
 
   React.useEffect(()=>{
     function onPop(e){
-      if(backHandlerRef.current){
-        backHandlerRef.current();
-        backHandlerRef.current=null;
-        window.history.pushState({screen:"app",modal:"none"},"",window.location.pathname);
-        return;
-      }
+      if(backHandlerRef.current){backHandlerRef.current();backHandlerRef.current=null;window.history.pushState({screen:"app",modal:"none"},"",window.location.pathname);return;}
+      if(screen==="app") return;
       const t=(e.state&&e.state.screen)||"welcome";
-      if(screen==="app") return; // never leave app via back button
       setScreen(t==="register"?"register":"welcome");
     }
     window.addEventListener("popstate",onPop);
@@ -1330,7 +1317,6 @@ function SignInModal({onClose,onAuth,C,connOk}){
   const [pendingRefresh,setPendingRefresh]=useState(null);
 
   function pickRole(prof){
-    saveSession({profile:prof,token:pendingToken,refresh_token:pendingRefresh,role:prof.role});
     onAuth({...prof},pendingToken);
   }
 
@@ -1341,39 +1327,35 @@ function SignInModal({onClose,onAuth,C,connOk}){
     if(!pw){setErr("Enter your password.");return;}
     setLoading(true);setErr("");setInfo("");
     const d=await sbAuth.signIn(email.trim(),pw);
-    const eMsg=(d.error_description||d.error||"").toLowerCase();
     if(!d.access_token){
-      if(eMsg.includes("invalid")||eMsg.includes("credentials")||eMsg.includes("wrong")||eMsg.includes("not found")){
+      const e=(d.error_description||d.error||"").toLowerCase();
+      if(e.includes("invalid")||e.includes("credentials")||e.includes("wrong")||e.includes("not found"))
         setErr("Wrong email or password. Please try again.");
-      } else if(eMsg.includes("confirm")||eMsg.includes("not confirmed")){
-        setErr("Please confirm your email first — check your inbox and spam folder.");
-      } else {
+      else if(e.includes("confirm")||e.includes("not confirmed"))
+        setErr("Please confirm your email first — check your inbox.");
+      else
         setErr(d.error_description||d.error||"Sign in failed. Please try again.");
-      }
       setLoading(false);return;
     }
     const token=d.access_token;
     const userId=d.user?.id;
     setAuthToken(token);
-    // Load ALL profiles for this user (supports dual student+tutor role)
-    let allProfiles=await sbAuth.getAllProfiles(userId);
-    if(!allProfiles.length){
-      // No profile yet — create default from signup metadata
+    // Fetch all profiles (supports dual student+tutor role)
+    let profiles=await sbAuth.getAllProfiles(userId);
+    if(!profiles.length){
       const meta=d.user?.user_metadata||{};
       const np=await sbAuth.upsertProfile({id:userId,email:email.trim(),name:meta.name||email.split("@")[0],role:meta.role||"student",created_at:new Date().toISOString()});
-      allProfiles=[np];
+      profiles=[np];
     }
     setLoading(false);
-    if(allProfiles.length>1){
-      // Dual-role: show picker
-      setRoleProfiles(allProfiles);
+    if(profiles.length>1){
+      setRoleProfiles(profiles);
       setPendingToken(token);
       setPendingRefresh(d.refresh_token||null);
       return;
     }
-    const profile=allProfiles[0];
-    saveSession({profile,token,refresh_token:d.refresh_token||null,role:profile.role});
-    onAuth({...profile},token);
+    // Single role — go straight in
+    onAuth({...profiles[0]},token);
   }
 
   async function doForgot(){
@@ -1391,15 +1373,15 @@ function SignInModal({onClose,onAuth,C,connOk}){
   if(roleProfiles){
     return(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:901,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-        <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"32px 24px 56px",boxShadow:"0 -8px 40px rgba(0,0,0,.4)"}}>
-          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.text,letterSpacing:2,marginBottom:6}}>CHOOSE MODE</div>
-          <div style={{fontSize:13,color:C.sub,marginBottom:28,fontFamily:"Barlow,sans-serif"}}>Your account has multiple roles — sign in as:</div>
-          {roleProfiles.map(prof=>(
-            <button key={prof.role} onClick={()=>pickRole(prof)} style={{width:"100%",padding:"18px",borderRadius:50,border:"2px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:17,letterSpacing:2,cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:12}}>
-              {prof.role==="student"?"🎓 STUDENT":"👤 TUTOR"}
+        <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"32px 24px 56px"}}>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.text,letterSpacing:2,marginBottom:8}}>CHOOSE MODE</div>
+          <div style={{fontSize:13,color:C.sub,marginBottom:28}}>Your account has multiple roles:</div>
+          {roleProfiles.map(p=>(
+            <button key={p.role} onClick={()=>pickRole(p)} style={{width:"100%",padding:"18px",borderRadius:50,border:"2px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:17,letterSpacing:2,cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:12}}>
+              {p.role==="student"?"🎓 STUDENT":"👤 TUTOR"}
             </button>
           ))}
-          <button onClick={()=>{setRoleProfiles(null);setPendingToken(null);setPendingRefresh(null);}} style={{width:"100%",padding:"14px",borderRadius:50,border:"none",background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer",marginTop:4}}>CANCEL</button>
+          <button onClick={()=>{setRoleProfiles(null);setPendingToken(null);}} style={{width:"100%",padding:"14px",borderRadius:50,border:"none",background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CANCEL</button>
         </div>
       </div>
     );
@@ -1515,22 +1497,18 @@ function StudentRegister({onBack, onAuth, onSignIn}){
     const eMsg=(authData.error_description||authData.error||"").toLowerCase();
     if(eMsg){
       if(eMsg.includes("already")||eMsg.includes("registered")){
-        // Try signing in — they already have an account
         const si=await sbAuth.signIn(p.email.trim(),p.password);
         if(si.access_token){
-          setAuthToken(si.access_token);
-          const uid=si.user?.id;
-          const pd={id:uid,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:new Date().toISOString()};
+          const pd={id:si.user.id,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:new Date().toISOString()};
           const pf=await sbAuth.upsertProfile(pd);
-          saveSession({profile:pf,token:si.access_token,refresh_token:si.refresh_token||null,role:"student"});
-          setLoading(false);onAuth(pf,si.access_token);return;
+          setLoading(false);onAuth({...pf},si.access_token);return;
         }
-        setLoading(false);setErr("This email is already registered. Tap SIGN IN below.");return;
+        setLoading(false);setErr("Email already registered — tap SIGN IN.");return;
       }
-      if(eMsg.includes("confirm_email")||eMsg.includes("confirm")){
-        setLoading(false);setErr(authData.error_description||"Account created! Check your email to confirm, then sign in.");return;
+      if(eMsg.includes("confirm")){
+        setLoading(false);setErr(authData.error_description||"Check your email to confirm your account, then sign in.");return;
       }
-      setLoading(false);setErr(authData.error_description||authData.error||"Sign-up failed. Please try again.");return;
+      setLoading(false);setErr(authData.error_description||"Sign-up failed. Please try again.");return;
     }
     const userId=authData.user?.id;
     const token=authData.access_token;
@@ -1538,9 +1516,8 @@ function StudentRegister({onBack, onAuth, onSignIn}){
     if(token) setAuthToken(token);
     const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:new Date().toISOString()};
     const profile=await sbAuth.upsertProfile(profileData);
-    saveSession({profile,token:token||null,refresh_token:authData.refresh_token||null,role:"student"});
     setLoading(false);
-    onAuth(profile,token);
+    onAuth({...profile},token);
   }
 
   // Quick anonymous join (no email)
@@ -1668,19 +1645,16 @@ function TutorRegister({onBack, onAuth, onSignIn}){
       if(eMsg.includes("already")||eMsg.includes("registered")){
         const si=await sbAuth.signIn(p.email.trim(),p.password);
         if(si.access_token){
-          setAuthToken(si.access_token);
-          const uid=si.user?.id;
-          const pd={id:uid,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:new Date().toISOString()};
+          const pd={id:si.user.id,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:new Date().toISOString()};
           const pf=await sbAuth.upsertProfile(pd);
-          saveSession({profile:pf,token:si.access_token,refresh_token:si.refresh_token||null,role:"tutor"});
-          setLoading(false);onAuth(pf,si.access_token);return;
+          setLoading(false);onAuth({...pf},si.access_token);return;
         }
-        setLoading(false);setErr("This email is already registered. Tap SIGN IN below.");return;
+        setLoading(false);setErr("Email already registered — tap SIGN IN.");return;
       }
-      if(eMsg.includes("confirm_email")||eMsg.includes("confirm")){
-        setLoading(false);setErr(authData.error_description||"Account created! Check your email to confirm, then sign in.");return;
+      if(eMsg.includes("confirm")){
+        setLoading(false);setErr(authData.error_description||"Check your email to confirm your account, then sign in.");return;
       }
-      setLoading(false);setErr(authData.error_description||authData.error||"Sign-up failed. Please try again.");return;
+      setLoading(false);setErr(authData.error_description||"Sign-up failed. Please try again.");return;
     }
     const userId=authData.user?.id;
     const token=authData.access_token;
@@ -1688,9 +1662,8 @@ function TutorRegister({onBack, onAuth, onSignIn}){
     if(token) setAuthToken(token);
     const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:new Date().toISOString()};
     const profile=await sbAuth.upsertProfile(profileData);
-    saveSession({profile,token:token||null,refresh_token:authData.refresh_token||null,role:"tutor"});
     setLoading(false);
-    onAuth(profile,token);
+    onAuth({...profile},token);
   }
 
   async function doQuickJoin(){
@@ -1910,7 +1883,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     (async()=>{
       try{
         const data=await sb.get("profiles","?role=eq.tutor&order=created_at.desc&limit=100");
-        if(data&&Array.isArray(data)) setTutors(data);
+        if(Array.isArray(data)) setTutors(data);
         else setTutors([]);
       }catch(e){setTutors([]);}
     })();
@@ -1954,7 +1927,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
       setLessons(l=>[...l,lesson]);
       setShowAdd(false);setAddForm({subject:"",day:"MON",from:8,to:9,desc:"",online:false});setAddErr("");
       showToast("Session saved!","ok");
-    }catch(e){setAddErr("Save failed: "+e.message);}finally{setSaving(false);}
+    }catch(e){setAddErr("Save failed — please try again.");}finally{setSaving(false);}
   }
 
   async function handleDeleteLesson(id){
@@ -2376,7 +2349,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
         setNotes(Array.isArray(n)?n:[]);
         const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
         setInteractions(map);
-      }catch(e){setNotes([]);}
+      }catch(e){setNotes(SAMPLE_NOTES);}
       finally{setLoadingN(false);}
     })();
   },[user.id]);
@@ -2441,10 +2414,9 @@ function TutorApp({user,onLogout,backHandlerRef}){
     try{
       const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
       const localNote={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,created_at:new Date().toISOString(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      // Save metadata to Supabase (skip large base64 pdf — store locally only)
       const rows=await sb.post("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:null,cover_url:pubForm.coverPreview||null,created_at:localNote.created_at});
       const saved=(rows&&rows[0])||{};
-      setNotes(ns=>[{...localNote,...saved,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}},...ns]);
+      setNotes(ns=>[{...localNote,...saved,pdf_url:pubForm.pdfDataUrl||null},...ns]);
       setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});setShowPublish(false);
       showToast("Note published!","ok");
     }catch(e){showToast("Publish failed: "+e.message,"error");}
