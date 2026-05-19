@@ -54,6 +54,7 @@
 </head>
 <body>
 <div id="root"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -223,6 +224,8 @@ function Logo({large,dm}){
 const SB_URL="https://bodeplbamprefhdrckyp.supabase.co";
 const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJvZGVwbGJhbXByZWZoZHJja3lwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1NDE1MjUsImV4cCI6MjA5MjExNzUyNX0.Au8NUHC_2eFFuNugM6JybzK6AzKNIUTLuyUo-F772FQ";
 const SB_AUTH_URL=SB_URL+"/auth/v1";
+// Official Supabase client - handles CORS/host allowlist properly
+const _supabaseClient = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null;
 
 /* ── Connection health ── */
 let _sbOnline=null; // null=unknown, true=ok, false=unreachable
@@ -324,45 +327,60 @@ const sb={
 
 /* ── Auth helpers ── */
 const sbAuth={
-  async signUp(email,password,meta={}){
-    // authFetch never throws — returns raw JSON including any error fields
-    const d=await authFetch(SB_AUTH_URL+"/signup",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","apikey":SB_KEY},
-      body:JSON.stringify({email,password,data:meta})
-    });
-    // If email-confirm is ON: user is returned but no access_token.
-    // Immediately try signing in with the same credentials.
-    if(d.user&&!d.access_token&&!(d.error||d.error_description)){
-      const si=await authFetch(SB_AUTH_URL+"/token?grant_type=password",{
-        method:"POST",headers:{"Content-Type":"application/json","apikey":SB_KEY},
-        body:JSON.stringify({email,password})
+  async signUp(email, password, meta={}){
+    try{
+      if(!_supabaseClient) throw new Error("Supabase client not loaded");
+      const {data, error} = await _supabaseClient.auth.signUp({
+        email, password, options:{data: meta}
       });
-      if(si.access_token) return{...d,access_token:si.access_token,refresh_token:si.refresh_token};
+      if(error) return {error: error.message, error_description: error.message};
+      // If email confirm is ON: user returned but no session
+      if(data.user && !data.session){
+        // Try signing in immediately
+        const {data: siData, error: siErr} = await _supabaseClient.auth.signInWithPassword({email, password});
+        if(siData?.session) return {
+          user: data.user,
+          access_token: siData.session.access_token,
+          refresh_token: siData.session.refresh_token
+        };
+      }
+      return {
+        user: data.user,
+        access_token: data.session?.access_token,
+        refresh_token: data.session?.refresh_token
+      };
+    }catch(e){
+      return {error: e.message, error_description: e.message};
     }
-    return d;
   },
-  async signIn(email,password){
-    return authFetch(SB_AUTH_URL+"/token?grant_type=password",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","apikey":SB_KEY},
-      body:JSON.stringify({email,password})
-    });
+  async signIn(email, password){
+    try{
+      if(!_supabaseClient) throw new Error("Supabase client not loaded");
+      const {data, error} = await _supabaseClient.auth.signInWithPassword({email, password});
+      if(error) return {error: error.message, error_description: error.message};
+      return {
+        user: data.user,
+        access_token: data.session?.access_token,
+        refresh_token: data.session?.refresh_token
+      };
+    }catch(e){
+      return {error: e.message, error_description: e.message};
+    }
   },
   async refreshToken(refresh_token){
-    const d=await authFetch(SB_AUTH_URL+"/token?grant_type=refresh_token",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","apikey":SB_KEY},
-      body:JSON.stringify({refresh_token})
-    });
-    return d.access_token?d:null;
+    try{
+      if(!_supabaseClient) return null;
+      const {data, error} = await _supabaseClient.auth.refreshSession({refresh_token});
+      if(error || !data.session) return null;
+      return {access_token: data.session.access_token, refresh_token: data.session.refresh_token};
+    }catch(e){return null;}
   },
   async sendReset(email){
-    return authFetch(SB_AUTH_URL+"/recover",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","apikey":SB_KEY},
-      body:JSON.stringify({email})
-    });
+    try{
+      if(!_supabaseClient) return {error: "Client not loaded"};
+      const {error} = await _supabaseClient.auth.resetPasswordForEmail(email);
+      return error ? {error: error.message} : {success: true};
+    }catch(e){return {error: e.message};}
   },
   async getProfile(userId){
     try{
@@ -373,7 +391,6 @@ const sbAuth={
   },
   async upsertProfile(data){
     try{
-      // Direct fetch so we can handle all errors gracefully
       const ctrl=new AbortController();
       const tid=setTimeout(()=>ctrl.abort(),12000);
       const r=await fetch(SB_URL+"/rest/v1/profiles",{
@@ -388,7 +405,6 @@ const sbAuth={
     }catch(e){console.warn("upsertProfile:",e.message);return data;}
   },
 };
-
 /* ── Session ── */
 const SESSION_KEY="jrsh_v3_session";
 function saveSession(s){try{localStorage.setItem(SESSION_KEY,JSON.stringify(s));}catch(e){}}
