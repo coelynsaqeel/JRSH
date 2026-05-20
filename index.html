@@ -234,23 +234,17 @@ function sbHeaders(extra={}){
   return{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+tok,...extra};
 }
 
-/* ── Official Supabase JS client (bypasses host allowlist) ── */
-const _sbc=(()=>{
-  try{
-    if(window.supabase)
-      return window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
-  }catch(e){console.warn("Supabase SDK:",e);}
-  return null;
-})();
+/* ── Official Supabase SDK client ── */
+const _sbc=(()=>{try{
+  if(window.supabase) return window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+}catch(e){console.warn("SB SDK:",e);}return null;})();
 
 /* ── Connection health ── */
 let _sbOnline=null;
 async function checkSbConn(){
   if(!_sbc){_sbOnline=false;return false;}
-  try{
-    const {error}=await _sbc.from("profiles").select("id").limit(1);
-    _sbOnline=!error;return _sbOnline;
-  }catch(e){_sbOnline=false;return false;}
+  try{const {error}=await _sbc.from("profiles").select("id").limit(1);_sbOnline=!error;return _sbOnline;}
+  catch(e){_sbOnline=false;return false;}
 }
 
 /* ── Safe REST helpers — NEVER throw, always return array ── */
@@ -258,14 +252,13 @@ async function sbRest(method,path,body,extra={}){
   try{
     const ctrl=new AbortController();
     const tid=setTimeout(()=>ctrl.abort(),15000);
-    const headers={...sbHeaders(),...extra};
-    const opts={method,headers,signal:ctrl.signal};
+    const opts={method,headers:{...sbHeaders(),...extra},signal:ctrl.signal};
     if(body) opts.body=JSON.stringify(body);
     const r=await fetch(SB_URL+"/rest/v1/"+path,opts);
     clearTimeout(tid);
     if(r.status===204) return [];
     const d=await r.json();
-    return Array.isArray(d)?d:(d&&!d.error?[d]:[]);
+    return Array.isArray(d)?d:(d&&!d.code&&!d.error?[d]:[]);
   }catch(e){console.warn("sbRest",method,path,e.message);return [];}
 }
 
@@ -277,7 +270,7 @@ const sb={
   async upsert(t,b){return sbRest("POST",t,b,{"Prefer":"return=representation,resolution=merge-duplicates"});},
 };
 
-/* ── Auth — all via official SDK ── */
+/* ── Auth — official SDK only ── */
 const sbAuth={
   async signUp(email,password,meta={}){
     try{
@@ -285,9 +278,10 @@ const sbAuth={
       const {data,error}=await _sbc.auth.signUp({email,password,options:{data:meta}});
       if(error) return{error:error.message,error_description:error.message};
       if(data.user&&!data.session){
+        // Email confirm ON — try immediate signin
         const {data:si}=await _sbc.auth.signInWithPassword({email,password});
         if(si?.session) return{user:data.user,access_token:si.session.access_token,refresh_token:si.session.refresh_token};
-        return{error:"confirm_email",error_description:"Check your email to confirm your account, then sign in."};
+        return{error:"confirm",error_description:"Account created! Check your email to confirm, then sign in."};
       }
       return{user:data.user,access_token:data.session?.access_token,refresh_token:data.session?.refresh_token};
     }catch(e){return{error:e.message,error_description:e.message};}
@@ -314,8 +308,18 @@ const sbAuth={
       return error?{error:error.message}:{success:true};
     }catch(e){return{error:e.message};}
   },
-  async getProfile(userId){
-    const rows=await sb.get("profiles","?id=eq."+userId+"&limit=1");
+  async deleteAccount(){
+    try{
+      if(!_sbc) return{error:"unavailable"};
+      // Delete user via admin endpoint using service key is not available on anon key
+      // Best we can do: sign out + clear data (full delete needs service_role key server-side)
+      const {error}=await _sbc.rpc("delete_user");
+      return error?{error:error.message}:{success:true};
+    }catch(e){return{error:e.message};}
+  },
+  async getProfile(userId,role){
+    const q=role?"?id=eq."+userId+"&role=eq."+role+"&limit=1":"?id=eq."+userId+"&limit=1";
+    const rows=await sb.get("profiles",q);
     return Array.isArray(rows)&&rows.length?rows[0]:null;
   },
   async getAllProfiles(userId){
@@ -1208,14 +1212,12 @@ function AppRoot(){
   function navTo(s){window.history.pushState({screen:s},"",window.location.pathname);setScreen(s);}
 
   function handleAuth(profile,token){
-    if(!profile||!profile.role){console.error("handleAuth: bad profile",profile);return;}
+    if(!profile||!profile.role) return;
     if(token) setAuthToken(token);
-    saveSession({profile,token,refresh_token:null,role:profile.role});
-    // Set all state at once then navigate — prevents white screen from role/user mismatch
-    setUser(profile);
+    saveSession({profile,token,role:profile.role});
+    setShowSignIn(false);
     setRole(profile.role);
-    setShowSignIn(false); // always close sign-in modal
-    // Use replaceState so back button doesn't go back to sign-in
+    setUser(profile);
     window.history.replaceState({screen:"app"},"",window.location.pathname);
     setScreen("app");
   }
@@ -1316,9 +1318,7 @@ function SignInModal({onClose,onAuth,C,connOk}){
   const [pendingToken,setPendingToken]=useState(null);
   const [pendingRefresh,setPendingRefresh]=useState(null);
 
-  function pickRole(prof){
-    onAuth({...prof},pendingToken);
-  }
+  function pickRole(prof){onAuth({...prof},pendingToken);}
 
   async function doSignIn(){
     const emailRe=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1328,10 +1328,10 @@ function SignInModal({onClose,onAuth,C,connOk}){
     setLoading(true);setErr("");setInfo("");
     const d=await sbAuth.signIn(email.trim(),pw);
     if(!d.access_token){
-      const e=(d.error_description||d.error||"").toLowerCase();
-      if(e.includes("invalid")||e.includes("credentials")||e.includes("wrong")||e.includes("not found"))
+      const em=(d.error_description||d.error||"").toLowerCase();
+      if(em.includes("invalid")||em.includes("credentials")||em.includes("wrong"))
         setErr("Wrong email or password. Please try again.");
-      else if(e.includes("confirm")||e.includes("not confirmed"))
+      else if(em.includes("confirm"))
         setErr("Please confirm your email first — check your inbox.");
       else
         setErr(d.error_description||d.error||"Sign in failed. Please try again.");
@@ -1340,7 +1340,6 @@ function SignInModal({onClose,onAuth,C,connOk}){
     const token=d.access_token;
     const userId=d.user?.id;
     setAuthToken(token);
-    // Fetch all profiles (supports dual student+tutor role)
     let profiles=await sbAuth.getAllProfiles(userId);
     if(!profiles.length){
       const meta=d.user?.user_metadata||{};
@@ -1354,7 +1353,6 @@ function SignInModal({onClose,onAuth,C,connOk}){
       setPendingRefresh(d.refresh_token||null);
       return;
     }
-    // Single role — go straight in
     onAuth({...profiles[0]},token);
   }
 
@@ -1375,13 +1373,13 @@ function SignInModal({onClose,onAuth,C,connOk}){
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:901,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
         <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"32px 24px 56px"}}>
           <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.text,letterSpacing:2,marginBottom:8}}>CHOOSE MODE</div>
-          <div style={{fontSize:13,color:C.sub,marginBottom:28}}>Your account has multiple roles:</div>
+          <div style={{fontSize:13,color:C.sub,marginBottom:28}}>Your account has multiple roles. Sign in as:</div>
           {roleProfiles.map(p=>(
             <button key={p.role} onClick={()=>pickRole(p)} style={{width:"100%",padding:"18px",borderRadius:50,border:"2px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:17,letterSpacing:2,cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:12}}>
               {p.role==="student"?"🎓 STUDENT":"👤 TUTOR"}
             </button>
           ))}
-          <button onClick={()=>{setRoleProfiles(null);setPendingToken(null);}} style={{width:"100%",padding:"14px",borderRadius:50,border:"none",background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CANCEL</button>
+          <button onClick={()=>{setRoleProfiles(null);setPendingToken(null);setLoading(false);}} style={{width:"100%",padding:"14px",borderRadius:50,border:"none",background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CANCEL</button>
         </div>
       </div>
     );
@@ -1494,20 +1492,23 @@ function StudentRegister({onBack, onAuth, onSignIn}){
     if(p.password!==p.confirmPw){setErr("Passwords do not match.");return;}
     setLoading(true);setErr("");
     const authData=await sbAuth.signUp(p.email.trim(),p.password,{name:p.name,role:"student"});
-    const eMsg=(authData.error_description||authData.error||"").toLowerCase();
-    if(eMsg){
-      if(eMsg.includes("already")||eMsg.includes("registered")){
+    const em=(authData.error_description||authData.error||"").toLowerCase();
+    if(em){
+      if(em.includes("already")||em.includes("registered")){
+        // Email exists — sign in and add student profile (dual-role support)
         const si=await sbAuth.signIn(p.email.trim(),p.password);
         if(si.access_token){
+          setAuthToken(si.access_token);
+          // Check if student profile already exists for this user
+          const existing=await sbAuth.getProfile(si.user.id,"student");
+          if(existing){setLoading(false);setErr("You already have a student account with this email. Tap SIGN IN.");return;}
           const pd={id:si.user.id,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:new Date().toISOString()};
           const pf=await sbAuth.upsertProfile(pd);
           setLoading(false);onAuth({...pf},si.access_token);return;
         }
-        setLoading(false);setErr("Email already registered — tap SIGN IN.");return;
+        setLoading(false);setErr("This email is registered. Tap SIGN IN below.");return;
       }
-      if(eMsg.includes("confirm")){
-        setLoading(false);setErr(authData.error_description||"Check your email to confirm your account, then sign in.");return;
-      }
+      if(em.includes("confirm")){setLoading(false);setErr(authData.error_description||"Check your email to confirm, then sign in.");return;}
       setLoading(false);setErr(authData.error_description||"Sign-up failed. Please try again.");return;
     }
     const userId=authData.user?.id;
@@ -1516,8 +1517,7 @@ function StudentRegister({onBack, onAuth, onSignIn}){
     if(token) setAuthToken(token);
     const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:new Date().toISOString()};
     const profile=await sbAuth.upsertProfile(profileData);
-    setLoading(false);
-    onAuth({...profile},token);
+    setLoading(false);onAuth({...profile},token);
   }
 
   // Quick anonymous join (no email)
@@ -1640,20 +1640,21 @@ function TutorRegister({onBack, onAuth, onSignIn}){
     if(p.password!==p.confirmPw){setErr("Passwords do not match.");return;}
     setLoading(true);setErr("");
     const authData=await sbAuth.signUp(p.email.trim(),p.password,{name:p.name,role:"tutor"});
-    const eMsg=(authData.error_description||authData.error||"").toLowerCase();
-    if(eMsg){
-      if(eMsg.includes("already")||eMsg.includes("registered")){
+    const em=(authData.error_description||authData.error||"").toLowerCase();
+    if(em){
+      if(em.includes("already")||em.includes("registered")){
         const si=await sbAuth.signIn(p.email.trim(),p.password);
         if(si.access_token){
+          setAuthToken(si.access_token);
+          const existing=await sbAuth.getProfile(si.user.id,"tutor");
+          if(existing){setLoading(false);setErr("You already have a tutor account with this email. Tap SIGN IN.");return;}
           const pd={id:si.user.id,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:new Date().toISOString()};
           const pf=await sbAuth.upsertProfile(pd);
           setLoading(false);onAuth({...pf},si.access_token);return;
         }
-        setLoading(false);setErr("Email already registered — tap SIGN IN.");return;
+        setLoading(false);setErr("This email is registered. Tap SIGN IN below.");return;
       }
-      if(eMsg.includes("confirm")){
-        setLoading(false);setErr(authData.error_description||"Check your email to confirm your account, then sign in.");return;
-      }
+      if(em.includes("confirm")){setLoading(false);setErr(authData.error_description||"Check your email to confirm, then sign in.");return;}
       setLoading(false);setErr(authData.error_description||"Sign-up failed. Please try again.");return;
     }
     const userId=authData.user?.id;
@@ -1662,8 +1663,7 @@ function TutorRegister({onBack, onAuth, onSignIn}){
     if(token) setAuthToken(token);
     const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:new Date().toISOString()};
     const profile=await sbAuth.upsertProfile(profileData);
-    setLoading(false);
-    onAuth({...profile},token);
+    setLoading(false);onAuth({...profile},token);
   }
 
   async function doQuickJoin(){
@@ -1883,8 +1883,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     (async()=>{
       try{
         const data=await sb.get("profiles","?role=eq.tutor&order=created_at.desc&limit=100");
-        if(Array.isArray(data)) setTutors(data);
-        else setTutors([]);
+        setTutors(Array.isArray(data)?data:[]);
       }catch(e){setTutors([]);}
     })();
   },[user.id]);
@@ -1927,7 +1926,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
       setLessons(l=>[...l,lesson]);
       setShowAdd(false);setAddForm({subject:"",day:"MON",from:8,to:9,desc:"",online:false});setAddErr("");
       showToast("Session saved!","ok");
-    }catch(e){setAddErr("Save failed — please try again.");}finally{setSaving(false);}
+    }catch(e){setAddErr("Save failed — try again.");}finally{setSaving(false);}
   }
 
   async function handleDeleteLesson(id){
@@ -2071,7 +2070,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{await sb.del("profiles","?id=eq."+user.id+"&role=eq.student");clearSession();onLogout();}}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
@@ -2568,7 +2567,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{await sb.del("profiles","?id=eq."+user.id+"&role=eq.tutor");clearSession();onLogout();}}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
@@ -2711,7 +2710,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
 function Shell({C,children}){return <div style={{fontFamily:"Barlow,sans-serif",background:C.bg,color:C.text,height:"100vh",maxWidth:430,margin:"0 auto",display:"flex",flexDirection:"column",overflow:"hidden",position:"relative"}}>{children}</div>;}
 function Scroll({children}){return <div style={{flex:1,overflowY:"auto",paddingBottom:72}}>{children}</div>;}
 function Hdr({C,dm,children}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{children}</div></div>);}
-function IdentHdr({C,dm,setDm,onWallet,onEditIdentity,onLogout}){
+function IdentHdr({C,dm,setDm,onWallet,onEditIdentity,onLogout,onDeleteAccount}){
   const [open,setOpen]=React.useState(false);
   return(
     <>
@@ -2722,12 +2721,48 @@ function IdentHdr({C,dm,setDm,onWallet,onEditIdentity,onLogout}){
           <button onClick={()=>setOpen(true)} style={{width:36,height:36,borderRadius:10,border:"1.5px solid "+C.border,background:C.surface,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>⚙️</button>
         </div>
       </div>
-      {open&&<SettingsSheet C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setOpen(false);onEditIdentity&&onEditIdentity();}} onLogout={onLogout} onClose={()=>setOpen(false)}/>}
+      {open&&<SettingsSheet C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setOpen(false);onEditIdentity&&onEditIdentity();}} onLogout={onLogout} onDeleteAccount={onDeleteAccount} onClose={()=>setOpen(false)}/>}
     </>
   );
 }
 
-function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onClose}){
+function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onDeleteAccount,onClose}){
+  const [showDel,setShowDel]=useState(false);
+  const [delWord,setDelWord]=useState("");
+  const [deleting,setDeleting]=useState(false);
+
+  async function confirmDelete(){
+    if(delWord.trim().toLowerCase()!=="delete") return;
+    setDeleting(true);
+    await onDeleteAccount();
+    setDeleting(false);
+  }
+
+  if(showDel){
+    return(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:251,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+        <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"32px 24px 56px"}}>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:"#EF4444",letterSpacing:1.5,marginBottom:8}}>🗑 DELETE ACCOUNT</div>
+          <div style={{fontSize:13,color:C.text,marginBottom:6,lineHeight:1.5}}>This will permanently delete your account and all your data. This cannot be undone.</div>
+          <div style={{fontSize:12,color:C.sub,marginBottom:20}}>Type <b>delete</b> below to confirm:</div>
+          <input
+            value={delWord}
+            onChange={e=>setDelWord(e.target.value)}
+            placeholder="Type: delete"
+            style={{width:"100%",padding:"14px 16px",borderRadius:14,border:"2px solid #FCA5A5",background:C.surfaceAlt,color:C.text,fontSize:15,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,boxSizing:"border-box",marginBottom:16,outline:"none"}}
+          />
+          <button
+            onClick={confirmDelete}
+            disabled={delWord.trim().toLowerCase()!=="delete"||deleting}
+            style={{width:"100%",padding:"16px",borderRadius:50,border:"none",background:delWord.trim().toLowerCase()==="delete"?"#EF4444":"#ccc",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:15,letterSpacing:2,cursor:delWord.trim().toLowerCase()==="delete"?"pointer":"not-allowed",marginBottom:12}}>
+            {deleting?"DELETING…":"DELETE MY ACCOUNT"}
+          </button>
+          <button onClick={()=>{setShowDel(false);setDelWord("");}} style={{width:"100%",padding:"14px",borderRadius:50,border:"none",background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CANCEL</button>
+        </div>
+      </div>
+    );
+  }
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:250,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"28px 22px 44px"}}>
@@ -2735,7 +2770,6 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onClose}){
           <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text,letterSpacing:1}}>⚙️ SETTINGS</div>
           <button onClick={onClose} style={{width:32,height:32,borderRadius:8,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,cursor:"pointer",fontSize:16}}>✕</button>
         </div>
-        {/* Light/dark mode */}
         <button onClick={()=>setDm(d=>!d)} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:16,border:"1.5px solid "+C.border,background:C.surfaceAlt,cursor:"pointer",marginBottom:12,textAlign:"left"}}>
           <span style={{fontSize:22}}>{dm?"☀️":"🌙"}</span>
           <div style={{flex:1}}>
@@ -2744,7 +2778,6 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onClose}){
           </div>
           <span style={{fontSize:16,color:C.sub}}>›</span>
         </button>
-        {/* Edit identity */}
         <button onClick={onEditIdentity} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:16,border:"1.5px solid "+C.border,background:C.surfaceAlt,cursor:"pointer",marginBottom:12,textAlign:"left"}}>
           <span style={{fontSize:22}}>✏️</span>
           <div style={{flex:1}}>
@@ -2753,12 +2786,19 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onClose}){
           </div>
           <span style={{fontSize:16,color:C.sub}}>›</span>
         </button>
-        {/* Sign out */}
-        <button onClick={onLogout} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:16,border:"1.5px solid #FCA5A5",background:"#FFF5F5",cursor:"pointer",textAlign:"left"}}>
+        <button onClick={onLogout} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:16,border:"1.5px solid #FCA5A5",background:"#FFF5F5",cursor:"pointer",marginBottom:12,textAlign:"left"}}>
           <span style={{fontSize:22}}>↪</span>
           <div style={{flex:1}}>
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:"#EF4444",letterSpacing:.5}}>SIGN OUT</div>
             <div style={{fontSize:11,color:"#F87171",fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Log out of your account</div>
+          </div>
+          <span style={{fontSize:16,color:"#EF4444"}}>›</span>
+        </button>
+        <button onClick={()=>setShowDel(true)} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:16,border:"1.5px solid #FCA5A5",background:"#FFF5F5",cursor:"pointer",textAlign:"left"}}>
+          <span style={{fontSize:22}}>🗑</span>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:"#EF4444",letterSpacing:.5}}>DELETE ACCOUNT</div>
+            <div style={{fontSize:11,color:"#F87171",fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Permanently remove your account</div>
           </div>
           <span style={{fontSize:16,color:"#EF4444"}}>›</span>
         </button>
