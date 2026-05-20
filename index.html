@@ -233,52 +233,115 @@ function sbHeaders(extra={}){
   return{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+tok,...extra};
 }
 
-/* ── Official Supabase SDK ── */
-const _sbc=(()=>{try{if(window.supabase)return window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:false,autoRefreshToken:false}});}catch(e){}return null;})();
+/* ── Official Supabase JS SDK client ── */
+const _sbc=(()=>{
+  try{
+    if(window.supabase)
+      return window.supabase.createClient(SB_URL,SB_KEY,{
+        auth:{persistSession:false,autoRefreshToken:false}
+      });
+  }catch(e){console.warn("SB SDK:",e);}
+  return null;
+})();
 
-/* ── Connection check ── */
+/* ── Connection health (uses SDK so host allowlist is bypassed) ── */
 let _sbOnline=null;
 async function checkSbConn(){
   if(!_sbc){_sbOnline=false;return false;}
-  try{const{error}=await _sbc.from("profiles").select("id").limit(1);_sbOnline=!error;return _sbOnline;}
-  catch(e){_sbOnline=false;return false;}
-}
-
-/* ── Safe REST — never throws, always returns array ── */
-async function sbRest(method,path,body,extra={}){
   try{
-    const ctrl=new AbortController();
-    const tid=setTimeout(()=>ctrl.abort(),15000);
-    const opts={method,headers:{...sbHeaders(),...extra},signal:ctrl.signal};
-    if(body) opts.body=JSON.stringify(body);
-    const r=await fetch(SB_URL+"/rest/v1/"+path,opts);
-    clearTimeout(tid);
-    if(r.status===204) return [];
-    const d=await r.json();
-    if(!r.ok){console.warn("sbRest",method,path,d);return [];}
-    return Array.isArray(d)?d:[d];
-  }catch(e){console.warn("sbRest",method,path,e.message);return [];}
+    const{error}=await _sbc.from("profiles").select("id").limit(1);
+    _sbOnline=!error; return _sbOnline;
+  }catch(e){_sbOnline=false;return false;}
 }
 
+/* ── Safe REST via SDK (never throws, always returns array) ── */
+async function sdkGet(table,filters={}){
+  if(!_sbc) return [];
+  try{
+    let q=_sbc.from(table).select("*");
+    Object.entries(filters).forEach(([k,v])=>{q=q.eq(k,v);});
+    const{data,error}=await q;
+    if(error){console.warn("sdkGet",table,error.message);return [];}
+    return data||[];
+  }catch(e){console.warn("sdkGet",table,e.message);return [];}
+}
+async function sdkPost(table,body){
+  if(!_sbc) return [];
+  try{
+    const{data,error}=await _sbc.from(table).insert(body).select();
+    if(error){console.warn("sdkPost",table,error.message);return [];}
+    return data||[];
+  }catch(e){console.warn("sdkPost",table,e.message);return [];}
+}
+async function sdkUpsert(table,body){
+  if(!_sbc) return [];
+  try{
+    const{data,error}=await _sbc.from(table).upsert(body).select();
+    if(error){console.warn("sdkUpsert",table,error.message);return [];}
+    return data||[];
+  }catch(e){console.warn("sdkUpsert",table,e.message);return [];}
+}
+async function sdkPatch(table,filters,body){
+  if(!_sbc) return [];
+  try{
+    let q=_sbc.from(table).update(body);
+    Object.entries(filters).forEach(([k,v])=>{q=q.eq(k,v);});
+    const{data,error}=await q.select();
+    if(error){console.warn("sdkPatch",table,error.message);return [];}
+    return data||[];
+  }catch(e){console.warn("sdkPatch",table,e.message);return [];}
+}
+async function sdkDel(table,filters){
+  if(!_sbc) return;
+  try{
+    let q=_sbc.from(table).delete();
+    Object.entries(filters).forEach(([k,v])=>{q=q.eq(k,v);});
+    await q;
+  }catch(e){console.warn("sdkDel",table,e.message);}
+}
+
+/* ── sb shim — keeps existing call sites working ── */
 const sb={
-  async get(t,q=""){return sbRest("GET",t+q);},
-  async post(t,b){return sbRest("POST",t,b,{"Prefer":"return=representation"});},
-  async patch(t,q,b){return sbRest("PATCH",t+q,b,{"Prefer":"return=representation"});},
-  async del(t,q){return sbRest("DELETE",t+q);},
-  async upsert(t,b){return sbRest("POST",t,b,{"Prefer":"return=representation,resolution=merge-duplicates"});},
+  async get(t,q=""){
+    // Parse simple query string into SDK filters
+    const filters={};
+    (q.replace("?","").split("&")).forEach(part=>{
+      const m=part.match(/^([^=]+)=eq\.(.+)$/);
+      if(m) filters[m[1]]=decodeURIComponent(m[2]);
+    });
+    return sdkGet(t,filters);
+  },
+  async post(t,b){return sdkPost(t,b);},
+  async patch(t,q,b){
+    const filters={};
+    (q.replace("?","").split("&")).forEach(part=>{
+      const m=part.match(/^([^=]+)=eq\.(.+)$/);
+      if(m) filters[m[1]]=decodeURIComponent(m[2]);
+    });
+    return sdkPatch(t,filters,b);
+  },
+  async del(t,q){
+    const filters={};
+    ((q||"").replace("?","").split("&")).forEach(part=>{
+      const m=part.match(/^([^=]+)=eq\.(.+)$/);
+      if(m) filters[m[1]]=decodeURIComponent(m[2]);
+    });
+    return sdkDel(t,filters);
+  },
+  async upsert(t,b){return sdkUpsert(t,b);},
 };
 
-/* ── Auth — SDK only (bypasses host allowlist) ── */
+/* ── Auth — SDK only ── */
 const sbAuth={
   async signUp(email,password,meta={}){
     try{
-      if(!_sbc)return{error:"SDK not loaded"};
+      if(!_sbc) return{error:"SDK not loaded"};
       const{data,error}=await _sbc.auth.signUp({email,password,options:{data:meta}});
-      if(error)return{error:error.message,error_description:error.message};
+      if(error) return{error:error.message,error_description:error.message};
       if(data.user&&!data.session){
-        // Email confirm ON: try immediate sign-in
+        // Email confirm ON — try immediate sign-in
         const{data:si}=await _sbc.auth.signInWithPassword({email,password});
-        if(si?.session)return{user:data.user,access_token:si.session.access_token,refresh_token:si.session.refresh_token};
+        if(si?.session) return{user:data.user,access_token:si.session.access_token,refresh_token:si.session.refresh_token};
         return{error:"confirm",error_description:"Account created! Check your email to confirm, then sign in."};
       }
       return{user:data.user,access_token:data.session?.access_token,refresh_token:data.session?.refresh_token};
@@ -286,53 +349,58 @@ const sbAuth={
   },
   async signIn(email,password){
     try{
-      if(!_sbc)return{error:"SDK not loaded"};
+      if(!_sbc) return{error:"SDK not loaded"};
       const{data,error}=await _sbc.auth.signInWithPassword({email,password});
-      if(error)return{error:error.message,error_description:error.message};
+      if(error) return{error:error.message,error_description:error.message};
       return{user:data.user,access_token:data.session?.access_token,refresh_token:data.session?.refresh_token};
     }catch(e){return{error:e.message,error_description:e.message};}
   },
   async refreshToken(refresh_token){
     try{
-      if(!_sbc)return null;
+      if(!_sbc) return null;
       const{data}=await _sbc.auth.refreshSession({refresh_token});
       return data?.session?{access_token:data.session.access_token,refresh_token:data.session.refresh_token}:null;
     }catch(e){return null;}
   },
   async sendReset(email){
     try{
-      if(!_sbc)return{error:"unavailable"};
+      if(!_sbc) return{error:"unavailable"};
       const{error}=await _sbc.auth.resetPasswordForEmail(email);
       return error?{error:error.message}:{success:true};
     }catch(e){return{error:e.message};}
   },
   async getProfile(userId,role){
-    const q=role?"?id=eq."+userId+"&role=eq."+encodeURIComponent(role)+"&limit=1":"?id=eq."+userId+"&limit=1";
-    const rows=await sb.get("profiles",q);
-    return Array.isArray(rows)&&rows.length?rows[0]:null;
+    // Uses SDK — no host allowlist issues
+    const rows=await sdkGet("profiles",role?{id:userId,role}:{id:userId});
+    return rows.length?rows[0]:null;
   },
   async getAllProfiles(userId){
-    const rows=await sb.get("profiles","?id=eq."+userId);
-    return Array.isArray(rows)?rows:[];
+    return sdkGet("profiles",{id:userId});
   },
   async upsertProfile(data){
-    const rows=await sb.upsert("profiles",data);
-    return Array.isArray(rows)&&rows.length?rows[0]:data;
+    const rows=await sdkUpsert("profiles",data);
+    return rows.length?rows[0]:data;
   },
-  async deleteProfile(userId,role){
-    // Delete this role's profile row
-    await sb.del("profiles","?id=eq."+userId+(role?"&role=eq."+encodeURIComponent(role):""));
-    // Delete all user data
-    await sb.del("lessons","?student_id=eq."+userId);
-    await sb.del("tutor_requests","?student_id=eq."+userId);
-    await sb.del("tutor_requests","?tutor_id=eq."+userId);
-    await sb.del("notes","?tutor_id=eq."+userId);
-    await sb.del("note_interactions","?user_id=eq."+userId);
-    await sb.del("wallets","?user_id=eq."+userId);
-    // Delete auth account via SDK
-    try{if(_sbc)await _sbc.auth.admin?.deleteUser(userId);}catch(e){}
-    // Sign out of SDK session
-    try{if(_sbc)await _sbc.auth.signOut();}catch(e){}
+  async deleteAccount(userId,role){
+    // Delete all data for this role
+    if(role==="student"){
+      await sdkDel("lessons",{student_id:userId});
+      await sdkDel("tutor_requests",{student_id:userId});
+      await sdkDel("note_interactions",{user_id:userId});
+    }
+    if(role==="tutor"){
+      await sdkDel("notes",{tutor_id:userId});
+      await sdkDel("tutor_requests",{tutor_id:userId});
+      await sdkDel("wallets",{user_id:userId});
+    }
+    // Delete profile row for this role
+    await sdkDel("profiles",{id:userId,role});
+    // Check if any other role profiles remain
+    const remaining=await sdkGet("profiles",{id:userId});
+    // If no profiles left, sign out of auth
+    if(!remaining.length){
+      try{await _sbc.auth.signOut();}catch(e){}
+    }
   },
 };
 
@@ -1216,9 +1284,10 @@ function AppRoot(){
   function navTo(s){window.history.pushState({screen:s},"",window.location.pathname);setScreen(s);}
 
   function handleAuth(profile,token){
-    if(!profile||!profile.role)return;
-    if(token)setAuthToken(token);
+    if(!profile||!profile.role) return;
+    if(token) setAuthToken(token);
     saveSession({profile,token,role:profile.role});
+    // Close modal FIRST, then set state in order
     setShowSignIn(false);
     setRole(profile.role);
     setUser(profile);
@@ -1255,9 +1324,15 @@ function AppRoot(){
                 }
               }catch(e){}
             }
-            const freshProf=await sbAuth.getProfile(sess.profile.id,sess.role||sess.profile.role);
-            if(freshProf)prof=freshProf;
-            else{clearSession();setRestoring(false);return;} // profile deleted — don't restore
+            const freshProf=await sbAuth.getProfile(sess.profile.id, sess.role||sess.profile.role);
+            if(freshProf){
+              prof=freshProf;
+            } else {
+              // Profile no longer exists (deleted account) — clear and go to welcome
+              clearSession();
+              setRestoring(false);
+              return;
+            }
           }
           setUser(prof);setRole(prof.role||sess.role);setScreen("app");
         }
@@ -1270,7 +1345,7 @@ function AppRoot(){
   React.useEffect(()=>{
     function onPop(e){
       if(backHandlerRef.current){backHandlerRef.current();backHandlerRef.current=null;window.history.pushState({screen:"app",modal:"none"},"",window.location.pathname);return;}
-      if(screen==="app")return;
+      if(screen==="app") return;
       const t=(e.state&&e.state.screen)||"welcome";
       setScreen(t==="register"?"register":"welcome");
     }
@@ -1322,7 +1397,6 @@ function SignInModal({onClose,onAuth,C,connOk}){
 
   const [roleProfiles,setRoleProfiles]=useState(null);
   const [pendingToken,setPendingToken]=useState(null);
-  const [pendingRefresh,setPendingRefresh]=useState(null);
   function pickRole(prof){onAuth({...prof},pendingToken);}
 
   async function doSignIn(){
@@ -1331,15 +1405,14 @@ function SignInModal({onClose,onAuth,C,connOk}){
     if(!emailRe.test(email.trim())){setErr("Please enter a valid email address.");return;}
     if(!pw){setErr("Enter your password.");return;}
     setLoading(true);setErr("");setInfo("");
+    // Sign in via SDK
     const d=await sbAuth.signIn(email.trim(),pw);
     if(!d.access_token){
       const em=(d.error_description||d.error||"").toLowerCase();
       if(em.includes("invalid")||em.includes("credentials")||em.includes("wrong")||em.includes("not found"))
         setErr("Wrong email or password. Please try again.");
       else if(em.includes("confirm"))
-        setErr("Please confirm your email — check your inbox and spam.");
-      else if(em.includes("sdk")||em.includes("loaded"))
-        setErr("App not ready yet — please refresh the page.");
+        setErr("Please confirm your email — check your inbox and spam folder.");
       else
         setErr(d.error_description||d.error||"Sign in failed. Please try again.");
       setLoading(false);return;
@@ -1347,19 +1420,24 @@ function SignInModal({onClose,onAuth,C,connOk}){
     const token=d.access_token;
     const userId=d.user?.id;
     setAuthToken(token);
-    // Load all profile rows for this user (student + tutor if dual-role)
+    // Load ALL profile rows from DB (real saved data, not cache)
     let profiles=await sbAuth.getAllProfiles(userId);
     if(!profiles.length){
-      // First sign-in — create profile from signup metadata
+      // No profile yet — create one from signup metadata
       const meta=d.user?.user_metadata||{};
-      const np=await sbAuth.upsertProfile({id:userId,email:email.trim(),name:meta.name||email.split("@")[0],role:meta.role||"student",created_at:new Date().toISOString()});
+      const np=await sbAuth.upsertProfile({
+        id:userId,email:email.trim(),
+        name:meta.name||email.split("@")[0],
+        role:meta.role||"student",
+        created_at:new Date().toISOString()
+      });
       profiles=[np];
     }
     setLoading(false);
     if(profiles.length>1){
+      // Dual role — show picker
       setRoleProfiles(profiles);
       setPendingToken(token);
-      setPendingRefresh(d.refresh_token||null);
       return;
     }
     onAuth({...profiles[0]},token);
@@ -1378,7 +1456,7 @@ function SignInModal({onClose,onAuth,C,connOk}){
   }
 
   if(roleProfiles){return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:901,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",zIndex:901,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"32px 24px 56px"}}>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.text,letterSpacing:2,marginBottom:8}}>CHOOSE MODE</div>
         <div style={{fontSize:13,color:C.sub,marginBottom:28}}>Your account has multiple roles. Sign in as:</div>
@@ -1498,25 +1576,25 @@ function StudentRegister({onBack, onAuth, onSignIn}){
     const em=(authData.error_description||authData.error||"").toLowerCase();
     if(em){
       if(em.includes("already")||em.includes("registered")){
-        // Email exists — sign in and add student profile (dual-role)
+        // Email exists — sign in and add student profile row (dual-role support)
         const si=await sbAuth.signIn(p.email.trim(),p.password);
         if(si.access_token){
           setAuthToken(si.access_token);
           const existing=await sbAuth.getProfile(si.user.id,"student");
-          if(existing){setLoading(false);setErr("You already have a student account. Tap SIGN IN.");return;}
+          if(existing){setLoading(false);setErr("You already have a student account with this email. Tap SIGN IN.");return;}
           const pd={id:si.user.id,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:new Date().toISOString()};
           const pf=await sbAuth.upsertProfile(pd);
           setLoading(false);onAuth({...pf},si.access_token);return;
         }
-        setLoading(false);setErr("Wrong password for this email. Tap SIGN IN.");return;
+        setLoading(false);setErr("Wrong password for this email. Tap SIGN IN to try again.");return;
       }
-      if(em.includes("confirm")){setLoading(false);setErr(authData.error_description||"Check your email to confirm your account.");return;}
+      if(em.includes("confirm")){setLoading(false);setErr(authData.error_description||"Check your email to confirm your account, then sign in.");return;}
       setLoading(false);setErr(authData.error_description||"Sign-up failed. Please try again.");return;
     }
     const userId=authData.user?.id;
     const token=authData.access_token;
     if(!userId){setLoading(false);setErr("Sign-up failed. Please try again.");return;}
-    if(token)setAuthToken(token);
+    if(token) setAuthToken(token);
     const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:new Date().toISOString()};
     const profile=await sbAuth.upsertProfile(profileData);
     setLoading(false);onAuth({...profile},token);
@@ -1649,20 +1727,20 @@ function TutorRegister({onBack, onAuth, onSignIn}){
         if(si.access_token){
           setAuthToken(si.access_token);
           const existing=await sbAuth.getProfile(si.user.id,"tutor");
-          if(existing){setLoading(false);setErr("You already have a tutor account. Tap SIGN IN.");return;}
+          if(existing){setLoading(false);setErr("You already have a tutor account with this email. Tap SIGN IN.");return;}
           const pd={id:si.user.id,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:new Date().toISOString()};
           const pf=await sbAuth.upsertProfile(pd);
           setLoading(false);onAuth({...pf},si.access_token);return;
         }
-        setLoading(false);setErr("Wrong password for this email. Tap SIGN IN.");return;
+        setLoading(false);setErr("Wrong password for this email. Tap SIGN IN to try again.");return;
       }
-      if(em.includes("confirm")){setLoading(false);setErr(authData.error_description||"Check your email to confirm your account.");return;}
+      if(em.includes("confirm")){setLoading(false);setErr(authData.error_description||"Check your email to confirm your account, then sign in.");return;}
       setLoading(false);setErr(authData.error_description||"Sign-up failed. Please try again.");return;
     }
     const userId=authData.user?.id;
     const token=authData.access_token;
     if(!userId){setLoading(false);setErr("Sign-up failed. Please try again.");return;}
-    if(token)setAuthToken(token);
+    if(token) setAuthToken(token);
     const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:new Date().toISOString()};
     const profile=await sbAuth.upsertProfile(profileData);
     setLoading(false);onAuth({...profile},token);
@@ -1884,13 +1962,10 @@ function StudentApp({user,onLogout,backHandlerRef}){
     })();
     (async()=>{
       try{
-        // Load tutors filtered by student's curriculum level
+        // Filter tutors by student's curriculum level so mismatched tutors don't show
         const studentLevel=gradeToLevel(user.grade);
-        const q=studentLevel
-          ?"?role=eq.tutor&curriculum_level=eq."+encodeURIComponent(studentLevel)+"&order=created_at.desc&limit=100"
-          :"?role=eq.tutor&order=created_at.desc&limit=100";
-        const data=await sb.get("profiles",q);
-        setTutors(Array.isArray(data)?data:[]);
+        const rows=await sdkGet("profiles",studentLevel?{role:"tutor",curriculum_level:studentLevel}:{role:"tutor"});
+        setTutors(Array.isArray(rows)?rows:[]);
       }catch(e){setTutors([]);}
     })();
   },[user.id]);
@@ -1933,7 +2008,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
       setLessons(l=>[...l,lesson]);
       setShowAdd(false);setAddForm({subject:"",day:"MON",from:8,to:9,desc:"",online:false});setAddErr("");
       showToast("Session saved!","ok");
-    }catch(e){setAddErr("Save failed — try again.");}finally{setSaving(false);}
+    }catch(e){setAddErr("Save failed. Please try again.");}finally{setSaving(false);}
   }
 
   async function handleDeleteLesson(id){
@@ -2077,7 +2152,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{await sbAuth.deleteProfile(user.id,"student");clearSession();onLogout();}}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{await sbAuth.deleteAccount(user.id,"student");clearSession();onLogout();}}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
@@ -2574,7 +2649,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{await sbAuth.deleteProfile(user.id,"tutor");clearSession();onLogout();}}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{await sbAuth.deleteAccount(user.id,"tutor");clearSession();onLogout();}}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
@@ -2739,21 +2814,15 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onDeleteAccount,onClo
   const [deleting,setDeleting]=useState(false);
   const confirmed=delWord.trim().toLowerCase()==="delete";
 
-  async function doDelete(){
-    if(!confirmed||deleting)return;
-    setDeleting(true);
-    await onDeleteAccount();
-  }
-
   if(showDel) return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",zIndex:251,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.9)",zIndex:251,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"32px 24px 56px"}}>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:"#EF4444",letterSpacing:1.5,marginBottom:8}}>🗑 DELETE ACCOUNT</div>
-        <div style={{fontSize:13,color:C.text,marginBottom:4,lineHeight:1.6}}>This will permanently delete your account, profile, lessons, notes and all data. <b>This cannot be undone.</b></div>
-        <div style={{fontSize:12,color:C.sub,marginBottom:18}}>Type <b style={{color:C.text}}>delete</b> below to confirm:</div>
-        <input value={delWord} onChange={e=>setDelWord(e.target.value)} placeholder="Type: delete"
-          style={{width:"100%",padding:"14px 16px",borderRadius:14,border:"2px solid "+(confirmed?"#EF4444":"#FCA5A5"),background:C.surfaceAlt,color:C.text,fontSize:16,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,boxSizing:"border-box",marginBottom:16,outline:"none"}}/>
-        <button onClick={doDelete} disabled={!confirmed||deleting}
+        <div style={{fontSize:13,color:C.text,marginBottom:4,lineHeight:1.6}}>This permanently deletes your profile, lessons, notes and all data. <b>Cannot be undone.</b></div>
+        <div style={{fontSize:12,color:C.sub,marginBottom:18}}>Type <b style={{color:C.text}}>delete</b> to confirm:</div>
+        <input value={delWord} onChange={e=>setDelWord(e.target.value)} placeholder="delete"
+          style={{width:"100%",padding:"14px 16px",borderRadius:14,border:"2px solid "+(confirmed?"#EF4444":"#FCA5A5"),background:C.surfaceAlt,color:C.text,fontSize:16,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,boxSizing:"border-box",marginBottom:16,outline:"none"}}/>
+        <button onClick={async()=>{if(!confirmed||deleting)return;setDeleting(true);await onDeleteAccount();}} disabled={!confirmed||deleting}
           style={{width:"100%",padding:"16px",borderRadius:50,border:"none",background:confirmed?"#EF4444":"#ccc",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,letterSpacing:2,cursor:confirmed?"pointer":"not-allowed",marginBottom:12}}>
           {deleting?"DELETING…":"DELETE MY ACCOUNT"}
         </button>
@@ -2771,31 +2840,23 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onDeleteAccount,onClo
         </div>
         <button onClick={()=>setDm(d=>!d)} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:16,border:"1.5px solid "+C.border,background:C.surfaceAlt,cursor:"pointer",marginBottom:12,textAlign:"left"}}>
           <span style={{fontSize:22}}>{dm?"☀️":"🌙"}</span>
-          <div style={{flex:1}}>
-            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:C.text,letterSpacing:.5}}>{dm?"LIGHT MODE":"DARK MODE"}</div>
-            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Currently {dm?"dark":"light"}</div>
-          </div><span style={{fontSize:16,color:C.sub}}>›</span>
+          <div style={{flex:1}}><div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:C.text,letterSpacing:.5}}>{dm?"LIGHT MODE":"DARK MODE"}</div><div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Currently {dm?"dark":"light"}</div></div>
+          <span style={{fontSize:16,color:C.sub}}>›</span>
         </button>
         <button onClick={onEditIdentity} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:16,border:"1.5px solid "+C.border,background:C.surfaceAlt,cursor:"pointer",marginBottom:12,textAlign:"left"}}>
           <span style={{fontSize:22}}>✏️</span>
-          <div style={{flex:1}}>
-            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:C.text,letterSpacing:.5}}>EDIT IDENTITY</div>
-            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Update your profile details</div>
-          </div><span style={{fontSize:16,color:C.sub}}>›</span>
+          <div style={{flex:1}}><div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:C.text,letterSpacing:.5}}>EDIT IDENTITY</div><div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Update your profile details</div></div>
+          <span style={{fontSize:16,color:C.sub}}>›</span>
         </button>
         <button onClick={onLogout} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:16,border:"1.5px solid #FCA5A5",background:"#FFF5F5",cursor:"pointer",marginBottom:12,textAlign:"left"}}>
           <span style={{fontSize:22}}>↪</span>
-          <div style={{flex:1}}>
-            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:"#EF4444",letterSpacing:.5}}>SIGN OUT</div>
-            <div style={{fontSize:11,color:"#F87171",fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Log out of your account</div>
-          </div><span style={{fontSize:16,color:"#EF4444"}}>›</span>
+          <div style={{flex:1}}><div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:"#EF4444",letterSpacing:.5}}>SIGN OUT</div><div style={{fontSize:11,color:"#F87171",fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Log out of your account</div></div>
+          <span style={{fontSize:16,color:"#EF4444"}}>›</span>
         </button>
         <button onClick={()=>setShowDel(true)} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:16,border:"1.5px solid #FCA5A5",background:"#FFF5F5",cursor:"pointer",textAlign:"left"}}>
           <span style={{fontSize:22}}>🗑</span>
-          <div style={{flex:1}}>
-            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:"#EF4444",letterSpacing:.5}}>DELETE ACCOUNT</div>
-            <div style={{fontSize:11,color:"#F87171",fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Permanently remove your account & data</div>
-          </div><span style={{fontSize:16,color:"#EF4444"}}>›</span>
+          <div style={{flex:1}}><div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,color:"#EF4444",letterSpacing:.5}}>DELETE ACCOUNT</div><div style={{fontSize:11,color:"#F87171",fontFamily:"'Barlow Condensed',sans-serif",marginTop:1}}>Permanently remove your account & data</div></div>
+          <span style={{fontSize:16,color:"#EF4444"}}>›</span>
         </button>
       </div>
     </div>
