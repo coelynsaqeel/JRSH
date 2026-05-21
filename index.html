@@ -64,8 +64,9 @@
   JRSH SUPABASE SCHEMA  — run in Supabase SQL Editor
 ════════════════════════════════════════════════════════════
 
--- PROFILES  (composite PK so one email = student + tutor)
--- To upgrade existing: ALTER TABLE profiles DROP CONSTRAINT profiles_pkey; ALTER TABLE profiles ADD PRIMARY KEY (id,role);
+-- PROFILES (run this to upgrade for dual-role support)
+-- ALTER TABLE profiles DROP CONSTRAINT profiles_pkey;
+-- ALTER TABLE profiles ADD PRIMARY KEY (id,role);
 create table if not exists profiles (
   id uuid not null,
   role text not null check (role in ('student','tutor')),
@@ -226,6 +227,36 @@ const SB_URL="https://bodeplbamprefhdrckyp.supabase.co";
 const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJvZGVwbGJhbXByZWZoZHJja3lwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1NDE1MjUsImV4cCI6MjA5MjExNzUyNX0.Au8NUHC_2eFFuNugM6JybzK6AzKNIUTLuyUo-F772FQ";
 const SB_AUTH_URL=SB_URL+"/auth/v1";
 
+/* ── Kenya time helpers (EAT = UTC+3) ── */
+function nowKE(){
+  // Returns current Date object shifted to Kenya time
+  return fmtKEDateTime(new Date());
+}
+function nowKEiso(){
+  // ISO string with +03:00 offset for DB storage
+  const d=new Date();
+  const ke=new Date(d.getTime()+3*60*60*1000);
+  return ke.toISOString().replace("Z","+03:00");
+}
+function fmtKETime(dateStr){
+  if(!dateStr) return "";
+  try{
+    return fmtKETime(dateStr);
+  }catch(e){return "";}
+}
+function fmtKEDate(dateStr){
+  if(!dateStr) return "";
+  try{
+    return fmtKEDate(dateStr);
+  }catch(e){return "";}
+}
+function fmtKEDateTime(dateStr){
+  if(!dateStr) return "";
+  try{
+    return fmtKEDateTime(dateStr);
+  }catch(e){return "";}
+}
+
 /* ── Token store ── */
 let _userToken=null;
 function setAuthToken(t){_userToken=t||null;}
@@ -234,9 +265,10 @@ function sbHeaders(extra={}){
   return{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+tok,...extra};
 }
 
-/* ── Official Supabase JS SDK (bypasses host-allowlist) ── */
+/* ── Official Supabase JS SDK ── */
 const _sbc=(()=>{try{
-  if(window.supabase) return window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+  if(window.supabase)
+    return window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
 }catch(e){console.warn("SB SDK:",e);}return null;})();
 
 /* ── Connection health ── */
@@ -247,73 +279,57 @@ async function checkSbConn(){
   catch(e){_sbOnline=false;return false;}
 }
 
-/* ── SDK helpers — NEVER throw, always return array ── */
-async function sdkGet(table,eq={}){
-  if(!_sbc)return[];
-  try{
-    let q=_sbc.from(table).select("*");
-    Object.entries(eq).forEach(([k,v])=>{q=q.eq(k,v);});
-    const{data,error}=await q;
-    if(error){console.warn("sdkGet",table,error.message);return[];}
-    return data||[];
-  }catch(e){console.warn("sdkGet",e.message);return[];}
-}
-async function sdkInsert(table,body){
-  if(!_sbc)return[];
-  try{
-    const{data,error}=await _sbc.from(table).insert(body).select();
-    if(error){console.warn("sdkInsert",table,error.message);return[];}
-    return data||[];
-  }catch(e){console.warn("sdkInsert",e.message);return[];}
-}
-async function sdkUpsert(table,body,onConflict){
-  if(!_sbc)return[];
-  try{
-    let q=_sbc.from(table).upsert(body,onConflict?{onConflict}:{});
-    const{data,error}=await q.select();
-    if(error){console.warn("sdkUpsert",table,error.message);return[];}
-    return data||[];
-  }catch(e){console.warn("sdkUpsert",e.message);return[];}
-}
-async function sdkUpdate(table,eq,body){
-  if(!_sbc)return[];
-  try{
-    let q=_sbc.from(table).update(body);
-    Object.entries(eq).forEach(([k,v])=>{q=q.eq(k,v);});
-    const{data,error}=await q.select();
-    if(error){console.warn("sdkUpdate",table,error.message);return[];}
-    return data||[];
-  }catch(e){console.warn("sdkUpdate",e.message);return[];}
-}
-async function sdkDel(table,eq={}){
-  if(!_sbc)return;
-  try{
-    let q=_sbc.from(table).delete();
-    Object.entries(eq).forEach(([k,v])=>{q=q.eq(k,v);});
-    const{error}=await q;
-    if(error) console.warn("sdkDel",table,error.message);
-  }catch(e){console.warn("sdkDel",e.message);}
-}
+/* ── SDK data helpers — always return array, never throw ── */
+async function _q(fn){try{const{data,error}=await fn();if(error){console.warn("SB:",error.message);return[];}return data||[];}catch(e){console.warn("SB:",e.message);return[];}}
 
-/* ── sb shim — keeps existing call-sites working ── */
 const sb={
   async get(t,q=""){
-    const eq={};
-    (q.replace("?","").split("&")).forEach(p=>{const m=p.match(/^([^=]+)=eq\.(.+)$/);if(m)eq[m[1]]=decodeURIComponent(m[2]);});
-    return sdkGet(t,eq);
+    if(!_sbc)return[];
+    // Parse ?key=eq.val&key2=eq.val2 into SDK filters
+    const parts=(q||"").replace("?","").split("&").filter(Boolean);
+    const eq={},order={limit:100};
+    parts.forEach(p=>{
+      const mEq=p.match(/^([^=]+)=eq\.(.+)$/);if(mEq)eq[mEq[1]]=decodeURIComponent(mEq[2]);
+      const mOrd=p.match(/^order=(.+)$/);if(mOrd)order.orderBy=mOrd[1].replace(".desc","").replace(".asc","");
+      const mLim=p.match(/^limit=(\d+)$/);if(mLim)order.limit=+mLim[1];
+    });
+    return _q(()=>{
+      let r=_sbc.from(t).select("*");
+      Object.entries(eq).forEach(([k,v])=>{r=r.eq(k,v);});
+      if(order.orderBy)r=r.order(order.orderBy,{ascending:false});
+      return r.limit(order.limit);
+    });
   },
-  async post(t,b){return sdkInsert(t,b);},
+  async post(t,b){
+    if(!_sbc)return[];
+    return _q(()=>_sbc.from(t).insert(b).select());
+  },
   async patch(t,q,b){
+    if(!_sbc)return[];
+    const parts=(q||"").replace("?","").split("&").filter(Boolean);
     const eq={};
-    (q.replace("?","").split("&")).forEach(p=>{const m=p.match(/^([^=]+)=eq\.(.+)$/);if(m)eq[m[1]]=decodeURIComponent(m[2]);});
-    return sdkUpdate(t,eq,b);
+    parts.forEach(p=>{const m=p.match(/^([^=]+)=eq\.(.+)$/);if(m)eq[m[1]]=decodeURIComponent(m[2]);});
+    return _q(()=>{
+      let r=_sbc.from(t).update(b);
+      Object.entries(eq).forEach(([k,v])=>{r=r.eq(k,v);});
+      return r.select();
+    });
   },
   async del(t,q){
+    if(!_sbc)return[];
+    const parts=(q||"").replace("?","").split("&").filter(Boolean);
     const eq={};
-    ((q||"").replace("?","").split("&")).forEach(p=>{const m=p.match(/^([^=]+)=eq\.(.+)$/);if(m)eq[m[1]]=decodeURIComponent(m[2]);});
-    return sdkDel(t,eq);
+    parts.forEach(p=>{const m=p.match(/^([^=]+)=eq\.(.+)$/);if(m)eq[m[1]]=decodeURIComponent(m[2]);});
+    return _q(()=>{
+      let r=_sbc.from(t).delete();
+      Object.entries(eq).forEach(([k,v])=>{r=r.eq(k,v);});
+      return r;
+    });
   },
-  async upsert(t,b){return sdkUpsert(t,b);},
+  async upsert(t,b,conflict){
+    if(!_sbc)return[];
+    return _q(()=>_sbc.from(t).upsert(b,conflict?{onConflict:conflict}:{}).select());
+  },
 };
 
 /* ══ AUTH — SDK only ══ */
@@ -324,7 +340,6 @@ const sbAuth={
       const{data,error}=await _sbc.auth.signUp({email,password,options:{data:meta}});
       if(error)return{error:error.message,error_description:error.message};
       if(data.user&&!data.session){
-        // Email confirm ON — try immediate sign-in
         const{data:si}=await _sbc.auth.signInWithPassword({email,password});
         if(si?.session)return{user:data.user,access_token:si.session.access_token,refresh_token:si.session.refresh_token};
         return{error:"confirm",error_description:"Account created! Check your email to confirm, then sign in."};
@@ -355,41 +370,33 @@ const sbAuth={
     }catch(e){return{error:e.message};}
   },
   async getProfile(userId,role){
-    // Composite PK: (id, role)
-    const eq=role?{id:userId,role}:{id:userId};
-    const rows=await sdkGet("profiles",eq);
+    const rows=await sb.get("profiles","?id=eq."+userId+(role?"&role=eq."+role:"")+"&limit=1");
     return rows.length?rows[0]:null;
   },
   async getAllProfiles(userId){
-    return sdkGet("profiles",{id:userId});
+    return sb.get("profiles","?id=eq."+userId);
   },
   async upsertProfile(data){
-    // Upsert on composite key (id, role)
-    const rows=await sdkUpsert("profiles",data,"id,role");
+    // Upsert on (id, role) composite key
+    const rows=await sb.upsert("profiles",data,"id,role");
     return rows.length?rows[0]:data;
   },
   async deleteAccount(userId,role){
-    // Delete all data for this role
     if(role==="student"){
-      await sdkDel("lessons",{student_id:userId});
-      await sdkDel("note_interactions",{user_id:userId});
-      await sdkDel("tutor_requests",{student_id:userId});
+      await sb.del("lessons","?student_id=eq."+userId);
+      await sb.del("note_interactions","?user_id=eq."+userId);
+      await sb.del("tutor_requests","?student_id=eq."+userId);
     }
     if(role==="tutor"){
-      await sdkDel("notes",{tutor_id:userId});
-      await sdkDel("tutor_requests",{tutor_id:userId});
-      await sdkDel("wallets",{user_id:userId});
+      await sb.del("notes","?tutor_id=eq."+userId);
+      await sb.del("tutor_requests","?tutor_id=eq."+userId);
+      await sb.del("wallets","?user_id=eq."+userId);
     }
-    // Delete this role's profile row
-    await sdkDel("profiles",{id:userId,role});
-    // Check if any profile rows remain for this user
-    const remaining=await sdkGet("profiles",{id:userId});
+    await sb.del("profiles","?id=eq."+userId+(role?"&role=eq."+role:""));
+    const remaining=await sb.get("profiles","?id=eq."+userId);
     if(!remaining.length){
-      // No profiles left — delete the auth account too
-      // Anon key can't delete auth users; sign out so session is invalid
       try{await _sbc.auth.signOut();}catch(e){}
-      // Store a flag so session restore knows this account is gone
-      try{localStorage.setItem("jrsh_deleted","1");}catch(e){}
+      try{localStorage.setItem("jrsh_acct_deleted","1");}catch(e){}
     }
   },
 };
@@ -625,7 +632,7 @@ function CallDialog({lesson, user, onEnd, C}){
       try{sb.patch("tutor_requests","?id=eq."+lesson.id,{
         [user.role+"_lat"]: myLoc.lat,
         [user.role+"_lng"]: myLoc.lng,
-        location_updated_at: new Date().toISOString()
+        location_updated_at: nowKEiso()
       });}catch(e){}
     };
     push();
@@ -903,7 +910,7 @@ function LocationModal({lesson,user,myLoc,otherLoc,locErr,otherRole,onClose,C}){
   const otherRoleCap=otherRole.charAt(0).toUpperCase()+otherRole.slice(1);
   const mapsUrl=myLoc?`https://www.google.com/maps?q=${myLoc.lat},${myLoc.lng}`:"";
   const otherMapsUrl=otherLoc?`https://www.google.com/maps?q=${otherLoc.lat},${otherLoc.lng}`:"";
-  const fmtTs=ts=>{if(!ts)return"";try{return new Date(ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});}catch(e){return "";}};
+  const fmtTs=ts=>{if(!ts)return"";try{return fmtKETime(ts);}catch(e){return "";}};
 
   return(
     <div style={{position:"fixed",inset:0,zIndex:600,background:"#0d0d0d",display:"flex",flexDirection:"column"}}>
@@ -983,7 +990,7 @@ function OfflineStartButton({lesson,started,onStart,onDrop,onCancel,C}){
 
   React.useEffect(()=>{
     // Only show/countdown once lesson start time is reached
-    const now=Date.now();
+    const now=nowKE().getTime();
     if(now<startMs)return; // not yet time
     if(started){setPhase("live");return;}
     // Count down 5 min grace
@@ -1274,10 +1281,10 @@ function AppRoot(){
   function navTo(s){window.history.pushState({screen:s},"",window.location.pathname);setScreen(s);}
 
   function handleAuth(profile,token){
-    if(!profile?.role) return;
-    if(token) setAuthToken(token);
+    if(!profile?.role)return;
+    if(token)setAuthToken(token);
     saveSession({profile,token,role:profile.role});
-    setShowSignIn(false); // close modal first
+    setShowSignIn(false);
     setRole(profile.role);
     setUser(profile);
     window.history.replaceState({screen:"app"},"",window.location.pathname);
@@ -1285,7 +1292,7 @@ function AppRoot(){
   }
   function handleLogout(){
     try{if(_sbc)_sbc.auth.signOut();}catch(e){}
-    try{localStorage.removeItem("jrsh_deleted");}catch(e){}
+    try{localStorage.removeItem("jrsh_acct_deleted");}catch(e){}
     setAuthToken(null);setUser(null);setRole(null);clearSession();setShowSignIn(false);
     window.history.replaceState({screen:"welcome"},"",window.location.pathname);
     setScreen("welcome");
@@ -1314,16 +1321,15 @@ function AppRoot(){
                 }
               }catch(e){}
             }
-            // If account was deleted, don't restore
-            try{if(localStorage.getItem("jrsh_deleted")){clearSession();setRestoring(false);return;}}catch(e){}
-            const freshProf=await sbAuth.getProfile(sess.profile.id, sess.role||sess.profile.role);
+            // Check if account was deleted
+            try{if(localStorage.getItem("jrsh_acct_deleted")){clearSession();setRestoring(false);return;}}catch(e){}
+            // Load fresh profile from DB (real saved data)
+            const freshProf=await sbAuth.getProfile(sess.profile.id,sess.role||sess.profile.role);
             if(freshProf){
               prof=freshProf;
             }else{
-              // Profile deleted — clear session and go to welcome
-              clearSession();
-              setRestoring(false);
-              return;
+              // Profile gone (deleted) — clear session
+              clearSession();setRestoring(false);return;
             }
           }
           setUser(prof);setRole(prof.role||sess.role);setScreen("app");
@@ -1337,7 +1343,7 @@ function AppRoot(){
   React.useEffect(()=>{
     function onPop(e){
       if(backHandlerRef.current){backHandlerRef.current();backHandlerRef.current=null;window.history.pushState({screen:"app",modal:"none"},"",window.location.pathname);return;}
-      if(screen==="app") return;
+      if(screen==="app")return;
       const t=(e.state&&e.state.screen)||"welcome";
       setScreen(t==="register"?"register":"welcome");
     }
@@ -1397,8 +1403,7 @@ function SignInModal({onClose,onAuth,C,connOk}){
     if(!emailRe.test(email.trim())){setErr("Please enter a valid email address.");return;}
     if(!pw){setErr("Enter your password.");return;}
     setLoading(true);setErr("");setInfo("");
-    // Check if previously deleted
-    try{if(localStorage.getItem("jrsh_deleted")){setErr("This account has been deleted.");setLoading(false);return;}}catch(e){}
+    try{if(localStorage.getItem("jrsh_acct_deleted")){setErr("This account no longer exists.");setLoading(false);return;}}catch(e){}
     const d=await sbAuth.signIn(email.trim(),pw);
     if(!d.access_token){
       const em=(d.error_description||d.error||"").toLowerCase();
@@ -1413,18 +1418,15 @@ function SignInModal({onClose,onAuth,C,connOk}){
     const token=d.access_token;
     const userId=d.user?.id;
     setAuthToken(token);
-    // Load ALL profile rows from DB — this is the user's real saved data
+    // Always load from DB — this is where all the user's real saved data lives
     let profiles=await sbAuth.getAllProfiles(userId);
     if(!profiles.length){
-      // No profile in DB yet — create one from signup metadata
       const meta=d.user?.user_metadata||{};
-      const np=await sbAuth.upsertProfile({id:userId,email:email.trim(),name:meta.name||email.split("@")[0],role:meta.role||"student",created_at:new Date().toISOString()});
+      const np=await sbAuth.upsertProfile({id:userId,email:email.trim(),name:meta.name||email.split("@")[0],role:meta.role||"student",created_at:nowKEiso()});
       profiles=[np];
     }
     setLoading(false);
-    if(profiles.length>1){
-      setRoleProfiles(profiles);setPendingToken(token);return;
-    }
+    if(profiles.length>1){setRoleProfiles(profiles);setPendingToken(token);return;}
     onAuth({...profiles[0]},token);
   }
 
@@ -1444,13 +1446,12 @@ function SignInModal({onClose,onAuth,C,connOk}){
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",zIndex:901,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"32px 24px 56px"}}>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.text,letterSpacing:2,marginBottom:8}}>CHOOSE MODE</div>
-        <div style={{fontSize:13,color:C.sub,marginBottom:28}}>Your account has multiple roles. Sign in as:</div>
+        <div style={{fontSize:13,color:C.sub,marginBottom:28}}>Your account has multiple roles:</div>
         {roleProfiles.map(p=>(<button key={p.role} onClick={()=>pickRole(p)} style={{width:"100%",padding:"18px",borderRadius:50,border:"2px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:17,letterSpacing:2,cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:12}}>{p.role==="student"?"🎓 STUDENT":"👤 TUTOR"}</button>))}
         <button onClick={()=>{setRoleProfiles(null);setPendingToken(null);setLoading(false);}} style={{width:"100%",padding:"14px",borderRadius:50,border:"none",background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CANCEL</button>
       </div>
     </div>
   );}
-
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.72)",zIndex:900,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"28px 22px 48px",boxShadow:"0 -8px 40px rgba(0,0,0,.25)"}}>
@@ -1561,13 +1562,13 @@ function StudentRegister({onBack, onAuth, onSignIn}){
     const em=(authData.error_description||authData.error||"").toLowerCase();
     if(em){
       if(em.includes("already")||em.includes("registered")){
-        // Email exists — sign in and add a student profile row (dual-role)
+        // Email exists — sign in and add student profile (dual-role support)
         const si=await sbAuth.signIn(p.email.trim(),p.password);
         if(si.access_token){
           setAuthToken(si.access_token);
           const existing=await sbAuth.getProfile(si.user.id,"student");
-          if(existing){setLoading(false);setErr("You already have a student account with this email. Tap SIGN IN.");return;}
-          const pd={id:si.user.id,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:new Date().toISOString()};
+          if(existing){setLoading(false);setErr("You already have a student account. Tap SIGN IN.");return;}
+          const pd={id:si.user.id,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:nowKEiso()};
           const pf=await sbAuth.upsertProfile(pd);
           setLoading(false);onAuth({...pf},si.access_token);return;
         }
@@ -1579,8 +1580,8 @@ function StudentRegister({onBack, onAuth, onSignIn}){
     const userId=authData.user?.id;
     const token=authData.access_token;
     if(!userId){setLoading(false);setErr("Sign-up failed. Please try again.");return;}
-    if(token) setAuthToken(token);
-    const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:new Date().toISOString()};
+    if(token)setAuthToken(token);
+    const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:nowKEiso()};
     const profile=await sbAuth.upsertProfile(profileData);
     setLoading(false);onAuth({...profile},token);
   }
@@ -1712,8 +1713,8 @@ function TutorRegister({onBack, onAuth, onSignIn}){
         if(si.access_token){
           setAuthToken(si.access_token);
           const existing=await sbAuth.getProfile(si.user.id,"tutor");
-          if(existing){setLoading(false);setErr("You already have a tutor account with this email. Tap SIGN IN.");return;}
-          const pd={id:si.user.id,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:new Date().toISOString()};
+          if(existing){setLoading(false);setErr("You already have a tutor account. Tap SIGN IN.");return;}
+          const pd={id:si.user.id,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:nowKEiso()};
           const pf=await sbAuth.upsertProfile(pd);
           setLoading(false);onAuth({...pf},si.access_token);return;
         }
@@ -1725,8 +1726,8 @@ function TutorRegister({onBack, onAuth, onSignIn}){
     const userId=authData.user?.id;
     const token=authData.access_token;
     if(!userId){setLoading(false);setErr("Sign-up failed. Please try again.");return;}
-    if(token) setAuthToken(token);
-    const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:new Date().toISOString()};
+    if(token)setAuthToken(token);
+    const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:nowKEiso()};
     const profile=await sbAuth.upsertProfile(profileData);
     setLoading(false);onAuth({...profile},token);
   }
@@ -1986,12 +1987,12 @@ function StudentApp({user,onLogout,backHandlerRef}){
     }
     setSaving(true);
     try{
-      const rows=await sb.post("lessons",{student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online});
-      const lesson=(rows&&rows[0])||{id:"local-"+Date.now(),student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online};
+      const _slotRows=await sb.post("lessons",{student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online});
+      const lesson=(_slotRows&&_slotRows[0])||{id:"local-"+Date.now(),student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online};
       setLessons(l=>[...l,lesson]);
       setShowAdd(false);setAddForm({subject:"",day:"MON",from:8,to:9,desc:"",online:false});setAddErr("");
       showToast("Session saved!","ok");
-    }catch(e){setAddErr("Save failed. Please try again.");}finally{setSaving(false);}
+    }catch(e){setAddErr("Save failed — try again.");}finally{setSaving(false);}
   }
 
   async function handleDeleteLesson(id){
@@ -2022,7 +2023,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     setInteractions(i=>({...i,[noteId]:next}));
     try{
       if(cur.id){await sb.patch("note_interactions","?id=eq."+cur.id,{[field]:next[field]});}
-      else{const ixRows=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=(ixRows&&ixRows[0])||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
+      else{const _ixRows=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=(_ixRows&&_ixRows[0])||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
     }catch(e){setInteractions(i=>({...i,[noteId]:cur}));}
   }
 
@@ -2087,9 +2088,9 @@ function StudentApp({user,onLogout,backHandlerRef}){
                 const isDeclined=l._declined;
                 const isUnbooked=!isPending&&!isAccepted&&!isDeclined;
                 const tutorName=l._tutorName||null;
-                const startStr=l.start_ts?new Date(l.start_ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):timeLbl(l.from_hour);
+                const startStr=l.start_ts?fmtKETime(l.start_ts):timeLbl(l.from_hour);
                 const endMs=l.start_ts?(l.start_ts+(l.to_hour-l.from_hour)*3600000):null;
-                const endStr=endMs?new Date(endMs).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):timeLbl(l.to_hour);
+                const endStr=endMs?fmtKETime(endMs):timeLbl(l.to_hour);
                 const isOffline=!l.online;
                 const started=offlineStarted[l.id];
                 const dropped=offlineDropped.has(l.id);
@@ -2323,7 +2324,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
         if(wrow){setWalletBal(wrow.balance||0);}
         const txs=await sb.get("wallet_transactions","?user_id=eq."+user.id+"&order=created_at.desc&limit=50");
         if(txs&&txs.length){
-          setWalletTx(txs.map(t=>({id:t.id,label:t.label||"Transaction",amount:t.amount,type:t.amount>=0?"credit":"debit",date:new Date(t.created_at).toLocaleDateString()})));
+          setWalletTx(txs.map(t=>({id:t.id,label:t.label||"Transaction",amount:t.amount,type:t.amount>=0?"credit":"debit",date:fmtKEDate(t.created_at)})));
         }
       }catch(e){}
     })();
@@ -2477,10 +2478,13 @@ function TutorApp({user,onLogout,backHandlerRef}){
     setPublishing(true);
     try{
       const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
-      const localNote={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,created_at:new Date().toISOString(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      const rows=await sb.post("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:null,cover_url:pubForm.coverPreview||null,created_at:localNote.created_at});
-      const saved=(rows&&rows[0])||{};
-      setNotes(ns=>[{...localNote,...saved,pdf_url:pubForm.pdfDataUrl||null},...ns]);
+      const localNote={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
+      // Save metadata to DB (skip large base64 pdf)
+      const _pubRows=await sb.post("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:null,cover_url:pubForm.coverPreview||null,created_at:localNote.created_at});
+      const dbNote=(_pubRows&&_pubRows[0])||{};
+      // Merge DB row with local (keep pdf in memory for this session)
+      const finalNote={...localNote,...dbNote,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
+      setNotes(ns=>[finalNote,...ns]);
       setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});setShowPublish(false);
       showToast("Note published!","ok");
     }catch(e){showToast("Publish failed: "+e.message,"error");}
@@ -2493,7 +2497,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
     setInteractions(i=>({...i,[noteId]:next}));
     try{
       if(cur.id){await sb.patch("note_interactions","?id=eq."+cur.id,{[field]:next[field]});}
-      else{const ixRows=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=(ixRows&&ixRows[0])||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
+      else{const _ixRows=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=(_ixRows&&_ixRows[0])||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
     }catch(e){setInteractions(i=>({...i,[noteId]:cur}));}
   }
 
@@ -2795,18 +2799,18 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onDeleteAccount,onClo
   const [showDel,setShowDel]=useState(false);
   const [delWord,setDelWord]=useState("");
   const [deleting,setDeleting]=useState(false);
-  const ok=delWord.trim().toLowerCase()==="delete";
+  const confirmed=delWord.trim().toLowerCase()==="delete";
 
   if(showDel) return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.92)",zIndex:252,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"32px 24px 56px"}}>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:"#EF4444",letterSpacing:1.5,marginBottom:8}}>🗑 DELETE ACCOUNT</div>
-        <div style={{fontSize:13,color:C.text,lineHeight:1.6,marginBottom:4}}>This permanently deletes your profile, lessons, notes and all your data.<br/><b>This cannot be undone.</b></div>
-        <div style={{fontSize:12,color:C.sub,marginBottom:18}}>Type <b style={{color:C.text}}>delete</b> to confirm:</div>
+        <div style={{fontSize:13,color:C.text,lineHeight:1.6,marginBottom:4}}>Permanently deletes your profile, lessons, notes and all data.<br/><b>Cannot be undone.</b></div>
+        <div style={{fontSize:12,color:C.sub,marginBottom:16}}>Type <b style={{color:C.text}}>delete</b> to confirm:</div>
         <input value={delWord} onChange={e=>setDelWord(e.target.value)} placeholder="delete"
-          style={{width:"100%",padding:"14px 16px",borderRadius:14,border:"2px solid "+(ok?"#EF4444":"#FCA5A5"),background:C.surfaceAlt,color:C.text,fontSize:16,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,boxSizing:"border-box",marginBottom:16,outline:"none"}}/>
-        <button onClick={async()=>{if(!ok||deleting)return;setDeleting(true);await onDeleteAccount();setDeleting(false);}} disabled={!ok||deleting}
-          style={{width:"100%",padding:"16px",borderRadius:50,border:"none",background:ok?"#EF4444":"#ccc",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,letterSpacing:2,cursor:ok?"pointer":"not-allowed",marginBottom:12}}>
+          style={{width:"100%",padding:"14px 16px",borderRadius:14,border:"2px solid "+(confirmed?"#EF4444":"#FCA5A5"),background:C.surfaceAlt,color:C.text,fontSize:16,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,boxSizing:"border-box",marginBottom:16,outline:"none"}}/>
+        <button onClick={async()=>{if(!confirmed||deleting)return;setDeleting(true);await onDeleteAccount();}} disabled={!confirmed||deleting}
+          style={{width:"100%",padding:"16px",borderRadius:50,border:"none",background:confirmed?"#EF4444":"#ccc",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,letterSpacing:2,cursor:confirmed?"pointer":"not-allowed",marginBottom:12}}>
           {deleting?"DELETING…":"DELETE MY ACCOUNT"}
         </button>
         <button onClick={()=>{setShowDel(false);setDelWord("");}} style={{width:"100%",padding:"14px",borderRadius:50,border:"none",background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CANCEL</button>
@@ -3106,7 +3110,7 @@ async function darajaStkPush(phone, amount, accountRef="JRSH"){
   // For production: replace shortCode, passkey, callbackURL
   const shortCode = "174379"; // sandbox test shortcode
   const passkey   = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"; // sandbox
-  const ts = new Date().toISOString().replace(/[^0-9]/g,"").slice(0,14);
+  const ts = nowKEiso().replace(/[^0-9]/g,"").slice(0,14);
   const password  = btoa(shortCode+passkey+ts);
   const normalized = phone.replace(/\D/g,"");
   const msisdn = normalized.startsWith("0")?"254"+normalized.slice(1):normalized.startsWith("254")?normalized:"254"+normalized;
