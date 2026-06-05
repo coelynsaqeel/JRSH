@@ -54,7 +54,9 @@
 </head>
 <body>
 <div id="root"></div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -64,14 +66,12 @@
   JRSH SUPABASE SCHEMA  — run in Supabase SQL Editor
 ════════════════════════════════════════════════════════════
 
--- PROFILES (run this to upgrade for dual-role support)
--- ALTER TABLE profiles DROP CONSTRAINT profiles_pkey;
--- ALTER TABLE profiles ADD PRIMARY KEY (id,role);
+-- PROFILES
 create table if not exists profiles (
-  id uuid not null,
-  role text not null check (role in ('student','tutor')),
+  id uuid primary key,
   name text not null,
   email text,
+  role text not null check (role in ('student','tutor')),
   age int,
   gender text,
   location text,
@@ -222,192 +222,161 @@ function Logo({large,dm}){
   );
 }
 
-/* ══ SUPABASE ══ */
-const SB_URL="https://bodeplbamprefhdrckyp.supabase.co";
-const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJvZGVwbGJhbXByZWZoZHJja3lwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1NDE1MjUsImV4cCI6MjA5MjExNzUyNX0.Au8NUHC_2eFFuNugM6JybzK6AzKNIUTLuyUo-F772FQ";
-const SB_AUTH_URL=SB_URL+"/auth/v1";
+/* ══ FIREBASE BACKEND ══ */
+const FB_CONFIG={
+  apiKey:"AIzaSyA2R2YTRGIXJb1nE51eF2Ed4PnMm8cnqCI",
+  authDomain:"jrsh-85921.firebaseapp.com",
+  projectId:"jrsh-85921",
+  storageBucket:"jrsh-85921.firebasestorage.app",
+  messagingSenderId:"98987691034",
+  appId:"1:98987691034:web:9f01440dabee2b2c0855a3",
+  measurementId:"G-Y8JLZ64MD0"
+};
+if(!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
+const _auth=firebase.auth();
+const _db=firebase.firestore();
 
-/* ── Kenya time helpers (EAT = UTC+3) ── */
-function nowKE(){
-  // Returns current Date object shifted to Kenya time
-  return fmtKEDateTime(new Date());
-}
-function nowKEiso(){
-  // ISO string with +03:00 offset for DB storage
-  const d=new Date();
-  const ke=new Date(d.getTime()+3*60*60*1000);
-  return ke.toISOString().replace("Z","+03:00");
-}
-function fmtKETime(dateStr){
-  if(!dateStr) return "";
-  try{
-    return fmtKETime(dateStr);
-  }catch(e){return "";}
-}
-function fmtKEDate(dateStr){
-  if(!dateStr) return "";
-  try{
-    return fmtKEDate(dateStr);
-  }catch(e){return "";}
-}
-function fmtKEDateTime(dateStr){
-  if(!dateStr) return "";
-  try{
-    return fmtKEDateTime(dateStr);
-  }catch(e){return "";}
-}
+/* ── Kenya time (EAT = UTC+3) ── */
+function nowKE(){return fmtKEDateTime(new Date());}
+function nowKEiso(){const ke=new Date(Date.now()+3*60*60*1000);return ke.toISOString().replace("Z","+03:00");}
+function fmtKETime(ds){if(!ds)return"";try{return fmtKETime(ds);}catch(e){return"";}}
+function fmtKEDate(ds){if(!ds)return"";try{return fmtKEDate(ds);}catch(e){return"";}}
+function fmtKEDateTime(ds){if(!ds)return"";try{return fmtKEDateTime(ds);}catch(e){return"";}}
 
-/* ── Token store ── */
+/* ── Firestore helpers ── */
+async function fbGet(col,id){try{const s=await _db.collection(col).doc(id).get();return s.exists?{id:s.id,...s.data()}:null;}catch(e){console.warn("fbGet",e.message);return null;}}
+async function fbQuery(col,filters=[],ord=null,lim=100){
+  try{
+    let q=_db.collection(col);
+    filters.forEach(f=>{q=q.where(f.field,f.op,f.value);});
+    if(ord) q=q.orderBy(ord.field,ord.dir||"desc");
+    const snap=await q.limit(lim).get();
+    return snap.docs.map(d=>({id:d.id,...d.data()}));
+  }catch(e){console.warn("fbQuery",col,e.message);return[];}
+}
+async function fbSet(col,id,data){try{const d={...data,updatedAt:nowKEiso()};await _db.collection(col).doc(id).set(d,{merge:true});return{id,...d};}catch(e){console.warn("fbSet",e.message);return data;}}
+async function fbAdd(col,data){try{const d={...data,createdAt:nowKEiso()};const r=await _db.collection(col).add(d);return{id:r.id,...d};}catch(e){console.warn("fbAdd",e.message);return data;}}
+async function fbUpdate(col,id,data){try{await _db.collection(col).doc(id).update({...data,updatedAt:nowKEiso()});return true;}catch(e){console.warn("fbUpdate",e.message);return false;}}
+async function fbDel(col,id){try{await _db.collection(col).doc(id).delete();return true;}catch(e){console.warn("fbDel",e.message);return false;}}
+
+/* ── sb shim — maps old call sites to Firebase ── */
+const sb={
+  async get(col,q=""){
+    const filters=[];let ordField="createdAt",ordDir="desc",lim=100;
+    q.replace("?","").split("&").filter(Boolean).forEach(p=>{
+      const mEq=p.match(/^([^=]+)=eq\.(.+)$/);if(mEq)filters.push({field:mEq[1],op:"==",value:decodeURIComponent(mEq[2])});
+      const mO=p.match(/^order=(.+?)(?:\.(asc|desc))?$/);if(mO){ordField=mO[1];ordDir=mO[2]||"desc";}
+      const mL=p.match(/^limit=(\d+)$/);if(mL)lim=+mL[1];
+    });
+    return fbQuery(col,filters,{field:ordField,dir:ordDir},lim);
+  },
+  async post(col,data){const row=await fbAdd(col,data);return[row];},
+  async patch(col,q,data){
+    const m=q.match(/id=eq\.([^&]+)/);if(!m)return[];
+    const id=decodeURIComponent(m[1]);
+    await fbUpdate(col,id,data);
+    const upd=await fbGet(col,id);return upd?[upd]:[];
+  },
+  async del(col,q){
+    const mId=q.match(/id=eq\.([^&]+)/);
+    if(mId){await fbDel(col,decodeURIComponent(mId[1]));return[];}
+    const rows=await sb.get(col,q);
+    await Promise.all(rows.map(r=>fbDel(col,r.id)));return[];
+  },
+  async upsert(col,data){
+    if(!data.id)return sb.post(col,data);
+    const row=await fbSet(col,data.id,data);return[row];
+  },
+};
+
+/* ══ FIREBASE AUTH ══ */
+const sbAuth={
+  async signUp(email,password,meta={}){
+    try{
+      const c=await _auth.createUserWithEmailAndPassword(email,password);
+      await c.user.updateProfile({displayName:meta.name||""});
+      const token=await c.user.getIdToken();
+      return{user:{id:c.user.uid,uid:c.user.uid,email,user_metadata:meta},access_token:token,refresh_token:null};
+    }catch(e){
+      if(e.code==="auth/email-already-in-use")return{error:"already_registered",error_description:"already_registered"};
+      if(e.code==="auth/weak-password")return{error:e.message,error_description:"Password must be at least 6 characters."};
+      if(e.code==="auth/invalid-email")return{error:e.message,error_description:"Please enter a valid email address."};
+      return{error:e.message,error_description:e.message};
+    }
+  },
+  async signIn(email,password){
+    try{
+      const c=await _auth.signInWithEmailAndPassword(email,password);
+      const token=await c.user.getIdToken();
+      return{user:{id:c.user.uid,uid:c.user.uid,email,user_metadata:{name:c.user.displayName||""}},access_token:token,refresh_token:null};
+    }catch(e){
+      if(e.code==="auth/user-not-found"||e.code==="auth/wrong-password"||e.code==="auth/invalid-credential")
+        return{error:"invalid_credentials",error_description:"Wrong email or password. Please try again."};
+      if(e.code==="auth/user-disabled")return{error:"account_deleted",error_description:"This account has been deleted."};
+      return{error:e.message,error_description:e.message};
+    }
+  },
+  async refreshToken(){
+    try{const u=_auth.currentUser;if(!u)return null;const t=await u.getIdToken(true);return{access_token:t,refresh_token:null};}
+    catch(e){return null;}
+  },
+  async sendReset(email){
+    try{await _auth.sendPasswordResetEmail(email);return{success:true};}
+    catch(e){return{error:e.message};}
+  },
+  async getProfile(userId,role){
+    if(role){const r=await fbGet("profiles",userId+"_"+role);if(r)return r;}
+    return fbGet("profiles",userId);
+  },
+  async getAllProfiles(userId){
+    const[s,t]=await Promise.all([fbGet("profiles",userId+"_student"),fbGet("profiles",userId+"_tutor")]);
+    return[s,t].filter(Boolean);
+  },
+  async upsertProfile(data){
+    const uid=data.id;const role=data.role;
+    const docId=role?uid+"_"+role:uid;
+    return fbSet("profiles",docId,{...data,id:uid});
+  },
+  async deleteAccount(userId,role){
+    await fbDel("profiles",userId+(role?"_"+role:""));
+    if(role==="student"){
+      const ls=await fbQuery("lessons",[{field:"student_id",op:"==",value:userId}]);
+      await Promise.all(ls.map(l=>fbDel("lessons",l.id)));
+      const ix=await fbQuery("note_interactions",[{field:"user_id",op:"==",value:userId}]);
+      await Promise.all(ix.map(i=>fbDel("note_interactions",i.id)));
+      const rq=await fbQuery("tutor_requests",[{field:"student_id",op:"==",value:userId}]);
+      await Promise.all(rq.map(r=>fbDel("tutor_requests",r.id)));
+    }
+    if(role==="tutor"){
+      const ns=await fbQuery("notes",[{field:"tutor_id",op:"==",value:userId}]);
+      await Promise.all(ns.map(n=>fbDel("notes",n.id)));
+      const rq=await fbQuery("tutor_requests",[{field:"tutor_id",op:"==",value:userId}]);
+      await Promise.all(rq.map(r=>fbDel("tutor_requests",r.id)));
+      const wl=await fbQuery("wallets",[{field:"user_id",op:"==",value:userId}]);
+      await Promise.all(wl.map(w=>fbDel("wallets",w.id)));
+    }
+    const rem=await sbAuth.getAllProfiles(userId);
+    if(!rem.length){try{await _auth.currentUser?.delete();}catch(e){}}
+  },
+};
+
+/* ── Token store (shim) ── */
 let _userToken=null;
 function setAuthToken(t){_userToken=t||null;}
-function sbHeaders(extra={}){
-  const tok=_userToken||SB_KEY;
-  return{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+tok,...extra};
-}
-
-/* ── Official Supabase JS SDK ── */
-const _sbc=(()=>{try{
-  if(window.supabase)
-    return window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
-}catch(e){console.warn("SB SDK:",e);}return null;})();
+function sbHeaders(e={}){return{"Content-Type":"application/json",...e};}
 
 /* ── Connection health ── */
 let _sbOnline=null;
 async function checkSbConn(){
-  if(!_sbc){_sbOnline=false;return false;}
-  try{const{error}=await _sbc.from("profiles").select("id").limit(1);_sbOnline=!error;return _sbOnline;}
+  try{await _db.collection("profiles").limit(1).get();_sbOnline=true;return true;}
   catch(e){_sbOnline=false;return false;}
 }
-
-/* ── SDK data helpers — always return array, never throw ── */
-async function _q(fn){try{const{data,error}=await fn();if(error){console.warn("SB:",error.message);return[];}return data||[];}catch(e){console.warn("SB:",e.message);return[];}}
-
-const sb={
-  async get(t,q=""){
-    if(!_sbc)return[];
-    // Parse ?key=eq.val&key2=eq.val2 into SDK filters
-    const parts=(q||"").replace("?","").split("&").filter(Boolean);
-    const eq={},order={limit:100};
-    parts.forEach(p=>{
-      const mEq=p.match(/^([^=]+)=eq\.(.+)$/);if(mEq)eq[mEq[1]]=decodeURIComponent(mEq[2]);
-      const mOrd=p.match(/^order=(.+)$/);if(mOrd)order.orderBy=mOrd[1].replace(".desc","").replace(".asc","");
-      const mLim=p.match(/^limit=(\d+)$/);if(mLim)order.limit=+mLim[1];
-    });
-    return _q(()=>{
-      let r=_sbc.from(t).select("*");
-      Object.entries(eq).forEach(([k,v])=>{r=r.eq(k,v);});
-      if(order.orderBy)r=r.order(order.orderBy,{ascending:false});
-      return r.limit(order.limit);
-    });
-  },
-  async post(t,b){
-    if(!_sbc)return[];
-    return _q(()=>_sbc.from(t).insert(b).select());
-  },
-  async patch(t,q,b){
-    if(!_sbc)return[];
-    const parts=(q||"").replace("?","").split("&").filter(Boolean);
-    const eq={};
-    parts.forEach(p=>{const m=p.match(/^([^=]+)=eq\.(.+)$/);if(m)eq[m[1]]=decodeURIComponent(m[2]);});
-    return _q(()=>{
-      let r=_sbc.from(t).update(b);
-      Object.entries(eq).forEach(([k,v])=>{r=r.eq(k,v);});
-      return r.select();
-    });
-  },
-  async del(t,q){
-    if(!_sbc)return[];
-    const parts=(q||"").replace("?","").split("&").filter(Boolean);
-    const eq={};
-    parts.forEach(p=>{const m=p.match(/^([^=]+)=eq\.(.+)$/);if(m)eq[m[1]]=decodeURIComponent(m[2]);});
-    return _q(()=>{
-      let r=_sbc.from(t).delete();
-      Object.entries(eq).forEach(([k,v])=>{r=r.eq(k,v);});
-      return r;
-    });
-  },
-  async upsert(t,b,conflict){
-    if(!_sbc)return[];
-    return _q(()=>_sbc.from(t).upsert(b,conflict?{onConflict:conflict}:{}).select());
-  },
-};
-
-/* ══ AUTH — SDK only ══ */
-const sbAuth={
-  async signUp(email,password,meta={}){
-    try{
-      if(!_sbc)return{error:"SDK not loaded"};
-      const{data,error}=await _sbc.auth.signUp({email,password,options:{data:meta}});
-      if(error)return{error:error.message,error_description:error.message};
-      if(data.user&&!data.session){
-        const{data:si}=await _sbc.auth.signInWithPassword({email,password});
-        if(si?.session)return{user:data.user,access_token:si.session.access_token,refresh_token:si.session.refresh_token};
-        return{error:"confirm",error_description:"Account created! Check your email to confirm, then sign in."};
-      }
-      return{user:data.user,access_token:data.session?.access_token,refresh_token:data.session?.refresh_token};
-    }catch(e){return{error:e.message,error_description:e.message};}
-  },
-  async signIn(email,password){
-    try{
-      if(!_sbc)return{error:"SDK not loaded"};
-      const{data,error}=await _sbc.auth.signInWithPassword({email,password});
-      if(error)return{error:error.message,error_description:error.message};
-      return{user:data.user,access_token:data.session?.access_token,refresh_token:data.session?.refresh_token};
-    }catch(e){return{error:e.message,error_description:e.message};}
-  },
-  async refreshToken(rt){
-    try{
-      if(!_sbc)return null;
-      const{data}=await _sbc.auth.refreshSession({refresh_token:rt});
-      return data?.session?{access_token:data.session.access_token,refresh_token:data.session.refresh_token}:null;
-    }catch(e){return null;}
-  },
-  async sendReset(email){
-    try{
-      if(!_sbc)return{error:"unavailable"};
-      const{error}=await _sbc.auth.resetPasswordForEmail(email);
-      return error?{error:error.message}:{success:true};
-    }catch(e){return{error:e.message};}
-  },
-  async getProfile(userId,role){
-    const rows=await sb.get("profiles","?id=eq."+userId+(role?"&role=eq."+role:"")+"&limit=1");
-    return rows.length?rows[0]:null;
-  },
-  async getAllProfiles(userId){
-    return sb.get("profiles","?id=eq."+userId);
-  },
-  async upsertProfile(data){
-    // Upsert on (id, role) composite key
-    const rows=await sb.upsert("profiles",data,"id,role");
-    return rows.length?rows[0]:data;
-  },
-  async deleteAccount(userId,role){
-    if(role==="student"){
-      await sb.del("lessons","?student_id=eq."+userId);
-      await sb.del("note_interactions","?user_id=eq."+userId);
-      await sb.del("tutor_requests","?student_id=eq."+userId);
-    }
-    if(role==="tutor"){
-      await sb.del("notes","?tutor_id=eq."+userId);
-      await sb.del("tutor_requests","?tutor_id=eq."+userId);
-      await sb.del("wallets","?user_id=eq."+userId);
-    }
-    await sb.del("profiles","?id=eq."+userId+(role?"&role=eq."+role:""));
-    const remaining=await sb.get("profiles","?id=eq."+userId);
-    if(!remaining.length){
-      try{await _sbc.auth.signOut();}catch(e){}
-      try{localStorage.setItem("jrsh_acct_deleted","1");}catch(e){}
-    }
-  },
-};
 
 /* ── Session ── */
 const SESSION_KEY="jrsh_v3_session";
 function saveSession(s){try{localStorage.setItem(SESSION_KEY,JSON.stringify(s));}catch(e){}}
 function loadSession(){try{const s=localStorage.getItem(SESSION_KEY);return s?JSON.parse(s):null;}catch(e){return null;}}
-function clearSession(){try{localStorage.removeItem(SESSION_KEY);}catch(e){}}
-
-
+function clearSession(){try{localStorage.removeItem(SESSION_KEY);localStorage.removeItem("jrsh_acct_deleted");}catch(e){}}
 
 /* ══ STATIC DATA ══ */
 const SUBJECTS=["Agriculture","Aviation Technology","Biology","Business Studies","Chemistry","Community Service Learning","Computer Science","Creative Arts & Sports","Economics","Engineering Studies","English","Environmental Activities","Fine Arts","Geography","Health Education","History & Citizenship","Home Science","Hygiene & Nutrition","Indigenous Language","Integrated Science","Kenyan Sign Language","Kiswahili","Language Activities","Life Skills Education","Mathematical Activities","Mathematics","Movement & Creative Activities","Music & Dance","Performing Arts","Physical Education","Pre-Technical Studies","Psychology","Psychomotor & Creative Activities","Religious Education (CRE / IRE / HRE)","Religious Education Activities","Science & Technology","Social Studies","Sociology","Sports & Physical Education","Sports Science","Theatre & Film","Visual Arts"];
@@ -990,7 +959,7 @@ function OfflineStartButton({lesson,started,onStart,onDrop,onCancel,C}){
 
   React.useEffect(()=>{
     // Only show/countdown once lesson start time is reached
-    const now=nowKE().getTime();
+    const now=Date.now();
     if(now<startMs)return; // not yet time
     if(started){setPhase("live");return;}
     // Count down 5 min grace
@@ -1291,8 +1260,7 @@ function AppRoot(){
     setScreen("app");
   }
   function handleLogout(){
-    try{if(_sbc)_sbc.auth.signOut();}catch(e){}
-    try{localStorage.removeItem("jrsh_acct_deleted");}catch(e){}
+    try{_auth.signOut();}catch(e){}
     setAuthToken(null);setUser(null);setRole(null);clearSession();setShowSignIn(false);
     window.history.replaceState({screen:"welcome"},"",window.location.pathname);
     setScreen("welcome");
@@ -1321,16 +1289,9 @@ function AppRoot(){
                 }
               }catch(e){}
             }
-            // Check if account was deleted
             try{if(localStorage.getItem("jrsh_acct_deleted")){clearSession();setRestoring(false);return;}}catch(e){}
-            // Load fresh profile from DB (real saved data)
             const freshProf=await sbAuth.getProfile(sess.profile.id,sess.role||sess.profile.role);
-            if(freshProf){
-              prof=freshProf;
-            }else{
-              // Profile gone (deleted) — clear session
-              clearSession();setRestoring(false);return;
-            }
+            if(freshProf){prof=freshProf;}else{clearSession();setRestoring(false);return;}
           }
           setUser(prof);setRole(prof.role||sess.role);setScreen("app");
         }
@@ -1343,7 +1304,7 @@ function AppRoot(){
   React.useEffect(()=>{
     function onPop(e){
       if(backHandlerRef.current){backHandlerRef.current();backHandlerRef.current=null;window.history.pushState({screen:"app",modal:"none"},"",window.location.pathname);return;}
-      if(screen==="app")return;
+      if(screen==="app") return;
       const t=(e.state&&e.state.screen)||"welcome";
       setScreen(t==="register"?"register":"welcome");
     }
@@ -1403,26 +1364,19 @@ function SignInModal({onClose,onAuth,C,connOk}){
     if(!emailRe.test(email.trim())){setErr("Please enter a valid email address.");return;}
     if(!pw){setErr("Enter your password.");return;}
     setLoading(true);setErr("");setInfo("");
-    try{if(localStorage.getItem("jrsh_acct_deleted")){setErr("This account no longer exists.");setLoading(false);return;}}catch(e){}
+    try{if(localStorage.getItem("jrsh_acct_deleted")){setErr("This account has been deleted.");setLoading(false);return;}}catch(e){}
     const d=await sbAuth.signIn(email.trim(),pw);
     if(!d.access_token){
-      const em=(d.error_description||d.error||"").toLowerCase();
-      if(em.includes("invalid")||em.includes("credentials")||em.includes("wrong")||em.includes("not found"))
-        setErr("Wrong email or password. Please try again.");
-      else if(em.includes("confirm"))
-        setErr("Please confirm your email first — check your inbox and spam folder.");
-      else
-        setErr(d.error_description||d.error||"Sign in failed. Please try again.");
+      setErr(d.error_description||d.error||"Sign in failed. Please try again.");
       setLoading(false);return;
     }
     const token=d.access_token;
-    const userId=d.user?.id;
+    const userId=d.user?.id||d.user?.uid;
     setAuthToken(token);
-    // Always load from DB — this is where all the user's real saved data lives
     let profiles=await sbAuth.getAllProfiles(userId);
     if(!profiles.length){
       const meta=d.user?.user_metadata||{};
-      const np=await sbAuth.upsertProfile({id:userId,email:email.trim(),name:meta.name||email.split("@")[0],role:meta.role||"student",created_at:nowKEiso()});
+      const np=await sbAuth.upsertProfile({id:userId,email:email.trim(),name:meta.name||d.user?.displayName||email.split("@")[0],role:"student",createdAt:nowKEiso()});
       profiles=[np];
     }
     setLoading(false);
@@ -1446,7 +1400,7 @@ function SignInModal({onClose,onAuth,C,connOk}){
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",zIndex:901,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"32px 24px 56px"}}>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.text,letterSpacing:2,marginBottom:8}}>CHOOSE MODE</div>
-        <div style={{fontSize:13,color:C.sub,marginBottom:28}}>Your account has multiple roles:</div>
+        <div style={{fontSize:13,color:C.sub,marginBottom:28}}>Your account has multiple roles. Sign in as:</div>
         {roleProfiles.map(p=>(<button key={p.role} onClick={()=>pickRole(p)} style={{width:"100%",padding:"18px",borderRadius:50,border:"2px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:17,letterSpacing:2,cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:12}}>{p.role==="student"?"🎓 STUDENT":"👤 TUTOR"}</button>))}
         <button onClick={()=>{setRoleProfiles(null);setPendingToken(null);setLoading(false);}} style={{width:"100%",padding:"14px",borderRadius:50,border:"none",background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CANCEL</button>
       </div>
@@ -1561,27 +1515,25 @@ function StudentRegister({onBack, onAuth, onSignIn}){
     const authData=await sbAuth.signUp(p.email.trim(),p.password,{name:p.name,role:"student"});
     const em=(authData.error_description||authData.error||"").toLowerCase();
     if(em){
-      if(em.includes("already")||em.includes("registered")){
-        // Email exists — sign in and add student profile (dual-role support)
+      if(em.includes("already_registered")||em.includes("already registered")){
         const si=await sbAuth.signIn(p.email.trim(),p.password);
         if(si.access_token){
-          setAuthToken(si.access_token);
-          const existing=await sbAuth.getProfile(si.user.id,"student");
+          const uid=si.user?.id||si.user?.uid;
+          const existing=await sbAuth.getProfile(uid,"student");
           if(existing){setLoading(false);setErr("You already have a student account. Tap SIGN IN.");return;}
-          const pd={id:si.user.id,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:nowKEiso()};
+          const pd={id:uid,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,createdAt:nowKEiso()};
           const pf=await sbAuth.upsertProfile(pd);
           setLoading(false);onAuth({...pf},si.access_token);return;
         }
         setLoading(false);setErr("Wrong password for this email. Tap SIGN IN.");return;
       }
-      if(em.includes("confirm")){setLoading(false);setErr(authData.error_description||"Check your email to confirm, then sign in.");return;}
       setLoading(false);setErr(authData.error_description||"Sign-up failed. Please try again.");return;
     }
-    const userId=authData.user?.id;
+    const userId=authData.user?.id||authData.user?.uid;
     const token=authData.access_token;
     if(!userId){setLoading(false);setErr("Sign-up failed. Please try again.");return;}
-    if(token)setAuthToken(token);
-    const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,created_at:nowKEiso()};
+    setAuthToken(token);
+    const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"student",grade:p.level||null,createdAt:nowKEiso()};
     const profile=await sbAuth.upsertProfile(profileData);
     setLoading(false);onAuth({...profile},token);
   }
@@ -1708,26 +1660,25 @@ function TutorRegister({onBack, onAuth, onSignIn}){
     const authData=await sbAuth.signUp(p.email.trim(),p.password,{name:p.name,role:"tutor"});
     const em=(authData.error_description||authData.error||"").toLowerCase();
     if(em){
-      if(em.includes("already")||em.includes("registered")){
+      if(em.includes("already_registered")||em.includes("already registered")){
         const si=await sbAuth.signIn(p.email.trim(),p.password);
         if(si.access_token){
-          setAuthToken(si.access_token);
-          const existing=await sbAuth.getProfile(si.user.id,"tutor");
+          const uid=si.user?.id||si.user?.uid;
+          const existing=await sbAuth.getProfile(uid,"tutor");
           if(existing){setLoading(false);setErr("You already have a tutor account. Tap SIGN IN.");return;}
-          const pd={id:si.user.id,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:nowKEiso()};
+          const pd={id:uid,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,createdAt:nowKEiso()};
           const pf=await sbAuth.upsertProfile(pd);
           setLoading(false);onAuth({...pf},si.access_token);return;
         }
         setLoading(false);setErr("Wrong password for this email. Tap SIGN IN.");return;
       }
-      if(em.includes("confirm")){setLoading(false);setErr(authData.error_description||"Check your email to confirm, then sign in.");return;}
       setLoading(false);setErr(authData.error_description||"Sign-up failed. Please try again.");return;
     }
-    const userId=authData.user?.id;
+    const userId=authData.user?.id||authData.user?.uid;
     const token=authData.access_token;
     if(!userId){setLoading(false);setErr("Sign-up failed. Please try again.");return;}
-    if(token)setAuthToken(token);
-    const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,created_at:nowKEiso()};
+    setAuthToken(token);
+    const profileData={id:userId,name:p.name,email:p.email.trim(),age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null,createdAt:nowKEiso()};
     const profile=await sbAuth.upsertProfile(profileData);
     setLoading(false);onAuth({...profile},token);
   }
@@ -1987,12 +1938,12 @@ function StudentApp({user,onLogout,backHandlerRef}){
     }
     setSaving(true);
     try{
-      const _slotRows=await sb.post("lessons",{student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online});
-      const lesson=(_slotRows&&_slotRows[0])||{id:"local-"+Date.now(),student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online};
+      const _rows=await sb.post("lessons",{student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online,createdAt:nowKEiso()});
+      const lesson=(_rows&&_rows[0])||{id:"local-"+Date.now(),student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online};
       setLessons(l=>[...l,lesson]);
       setShowAdd(false);setAddForm({subject:"",day:"MON",from:8,to:9,desc:"",online:false});setAddErr("");
       showToast("Session saved!","ok");
-    }catch(e){setAddErr("Save failed — try again.");}finally{setSaving(false);}
+    }catch(e){setAddErr("Save failed. Please try again.");}finally{setSaving(false);}
   }
 
   async function handleDeleteLesson(id){
@@ -2023,7 +1974,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     setInteractions(i=>({...i,[noteId]:next}));
     try{
       if(cur.id){await sb.patch("note_interactions","?id=eq."+cur.id,{[field]:next[field]});}
-      else{const _ixRows=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=(_ixRows&&_ixRows[0])||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
+      else{const _ix=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=(_ix&&_ix[0])||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
     }catch(e){setInteractions(i=>({...i,[noteId]:cur}));}
   }
 
@@ -2136,7 +2087,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{await sbAuth.deleteAccount(user.id,"student");clearSession();onLogout();}}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{try{localStorage.setItem("jrsh_acct_deleted","1");}catch(e){}await sbAuth.deleteAccount(user.id,"student");clearSession();onLogout();}}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
@@ -2478,13 +2429,10 @@ function TutorApp({user,onLogout,backHandlerRef}){
     setPublishing(true);
     try{
       const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
-      const localNote={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      // Save metadata to DB (skip large base64 pdf)
-      const _pubRows=await sb.post("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:null,cover_url:pubForm.coverPreview||null,created_at:localNote.created_at});
-      const dbNote=(_pubRows&&_pubRows[0])||{};
-      // Merge DB row with local (keep pdf in memory for this session)
-      const finalNote={...localNote,...dbNote,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      setNotes(ns=>[finalNote,...ns]);
+      const localNote={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,createdAt:nowKEiso(),created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
+      const _prows=await sb.post("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:null,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso()});
+      const saved=(_prows&&_prows[0])||{};
+      setNotes(ns=>[{...localNote,...saved,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}},...ns]);
       setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});setShowPublish(false);
       showToast("Note published!","ok");
     }catch(e){showToast("Publish failed: "+e.message,"error");}
@@ -2497,7 +2445,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
     setInteractions(i=>({...i,[noteId]:next}));
     try{
       if(cur.id){await sb.patch("note_interactions","?id=eq."+cur.id,{[field]:next[field]});}
-      else{const _ixRows=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=(_ixRows&&_ixRows[0])||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
+      else{const _ix=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=(_ix&&_ix[0])||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
     }catch(e){setInteractions(i=>({...i,[noteId]:cur}));}
   }
 
@@ -2636,7 +2584,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
       </>}
 
       {tab==="identity"&&<>
-        <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{await sbAuth.deleteAccount(user.id,"tutor");clearSession();onLogout();}}/>
+        <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{try{localStorage.setItem("jrsh_acct_deleted","1");}catch(e){}await sbAuth.deleteAccount(user.id,"tutor");clearSession();onLogout();}}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
           <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
@@ -2800,7 +2748,6 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onDeleteAccount,onClo
   const [delWord,setDelWord]=useState("");
   const [deleting,setDeleting]=useState(false);
   const confirmed=delWord.trim().toLowerCase()==="delete";
-
   if(showDel) return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.92)",zIndex:252,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"32px 24px 56px"}}>
@@ -2809,7 +2756,7 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onDeleteAccount,onClo
         <div style={{fontSize:12,color:C.sub,marginBottom:16}}>Type <b style={{color:C.text}}>delete</b> to confirm:</div>
         <input value={delWord} onChange={e=>setDelWord(e.target.value)} placeholder="delete"
           style={{width:"100%",padding:"14px 16px",borderRadius:14,border:"2px solid "+(confirmed?"#EF4444":"#FCA5A5"),background:C.surfaceAlt,color:C.text,fontSize:16,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,boxSizing:"border-box",marginBottom:16,outline:"none"}}/>
-        <button onClick={async()=>{if(!confirmed||deleting)return;setDeleting(true);await onDeleteAccount();}} disabled={!confirmed||deleting}
+        <button onClick={async()=>{if(!confirmed||deleting)return;setDeleting(true);await onDeleteAccount();setDeleting(false);}} disabled={!confirmed||deleting}
           style={{width:"100%",padding:"16px",borderRadius:50,border:"none",background:confirmed?"#EF4444":"#ccc",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,letterSpacing:2,cursor:confirmed?"pointer":"not-allowed",marginBottom:12}}>
           {deleting?"DELETING…":"DELETE MY ACCOUNT"}
         </button>
@@ -2817,7 +2764,6 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onDeleteAccount,onClo
       </div>
     </div>
   );
-
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:250,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"28px 22px 44px"}}>
