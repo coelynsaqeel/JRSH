@@ -237,11 +237,11 @@ const _auth=firebase.auth();
 const _db=firebase.firestore();
 
 /* ── Kenya time (EAT = UTC+3) ── */
-function nowKE(){return fmtKEDateTime(new Date());}
+function nowKE(){return new Date(new Date().toLocaleString("en-US",{timeZone:"Africa/Nairobi"}));}
 function nowKEiso(){const ke=new Date(Date.now()+3*60*60*1000);return ke.toISOString().replace("Z","+03:00");}
-function fmtKETime(ds){if(!ds)return"";try{return fmtKETime(ds);}catch(e){return"";}}
-function fmtKEDate(ds){if(!ds)return"";try{return fmtKEDate(ds);}catch(e){return"";}}
-function fmtKEDateTime(ds){if(!ds)return"";try{return fmtKEDateTime(ds);}catch(e){return"";}}
+function fmtKETime(ds){if(!ds)return"";try{return new Date(ds).toLocaleTimeString("en-KE",{timeZone:"Africa/Nairobi",hour:"2-digit",minute:"2-digit"});}catch(e){return"";}}
+function fmtKEDate(ds){if(!ds)return"";try{return new Date(ds).toLocaleDateString("en-KE",{timeZone:"Africa/Nairobi",day:"2-digit",month:"short",year:"numeric"});}catch(e){return"";}}
+function fmtKEDateTime(ds){if(!ds)return"";try{return new Date(ds).toLocaleString("en-KE",{timeZone:"Africa/Nairobi",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});}catch(e){return"";}}
 
 /* ── Firestore helpers ── */
 async function fbGet(col,id){try{const s=await _db.collection(col).doc(id).get();return s.exists?{id:s.id,...s.data()}:null;}catch(e){console.warn("fbGet",e.message);return null;}}
@@ -597,8 +597,8 @@ function CallDialog({lesson, user, onEnd, C}){
   // ── Push my GPS to Supabase while map is open ──
   React.useEffect(()=>{
     if(!showLocMap||!myLoc||!lesson.id) return;
-    const push=()=>{
-      try{const _ereqs=await fbQuery("tutor_requests",[{field:"lesson_id",op:"==",value:lesson.id}]);if(_ereqs.length)fbUpdate("tutor_requests",_ereqs[0].id,{
+    const push=async()=>{
+      try{const _ereqs=await fbQuery("tutor_requests",[{field:"lesson_id",op:"==",value:lesson.id}]);if(_ereqs.length)await fbUpdate("tutor_requests",_ereqs[0].id,{
         [user.role+"_lat"]: myLoc.lat,
         [user.role+"_lng"]: myLoc.lng,
         location_updated_at: nowKEiso()
