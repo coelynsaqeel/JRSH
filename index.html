@@ -238,6 +238,29 @@ const _db=firebase.firestore();
 // Keep user signed in across page reloads
 _auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>console.warn("persist:",e));
 
+// ── DEBUG: Test Firebase on load ──
+(async()=>{
+  try{
+    // Test 1: Can we read Firestore at all?
+    const testSnap = await _db.collection("_debug").limit(1).get();
+    console.log("✅ Firestore read OK");
+  }catch(e){
+    console.error("❌ Firestore read FAILED:", e.code, e.message);
+    // Show visible error on screen
+    setTimeout(()=>{
+      const d=document.createElement("div");
+      d.style.cssText="position:fixed;top:0;left:0;right:0;background:#EF4444;color:#fff;padding:12px;font-size:13px;z-index:9999;font-family:monospace;";
+      d.textContent="Firebase Error: "+e.code+" — "+e.message;
+      document.body.appendChild(d);
+    },2000);
+  }
+  // Test 2: Auth state
+  _auth.onAuthStateChanged(u=>{
+    if(u) console.log("✅ Firebase Auth user:", u.uid, u.email);
+    else console.log("ℹ️ No Firebase Auth user (not signed in)");
+  });
+})();
+
 /* ── Kenya time (EAT = UTC+3) ── */
 function nowKE(){return new Date(new Date().toLocaleString("en-US",{timeZone:"Africa/Nairobi"}));}
 function nowKEiso(){const ke=new Date(Date.now()+3*60*60*1000);return ke.toISOString().replace("Z","+03:00");}
@@ -1914,16 +1937,19 @@ function StudentApp({user,onLogout,backHandlerRef}){
           fbQuery("notes",[],{field:"createdAt",dir:"desc"},100),
           isAnon?Promise.resolve([]):fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]),
         ]);
+        console.log("Notes loaded:", n?.length, n?.map?.(x=>x.title));
         setNotes(Array.isArray(n)?n:[]);
         const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
         setInteractions(map);
-      }catch(e){console.warn("Notes load:",e.message);setNotes([]);}
+      }catch(e){console.warn("Notes load FAILED:",e.message,e.code);setNotes([]);}
       finally{setLoadingN(false);}
     })();
     (async()=>{
       try{
         // Query tutors — filter by role field in doc data
+        console.log("Loading tutors for user:", user.id, "grade:", user.grade);
         const allTutors=await fbQuery("profiles",[{field:"role",op:"==",value:"tutor"}],null,100);
+        console.log("Tutors found:", allTutors.length, allTutors.map(t=>t.name));
         const studentLevel=gradeToLevel(user.grade||profile?.grade);
         const filtered=studentLevel
           ? allTutors.filter(t=>!t.curriculum_level||t.curriculum_level===studentLevel)
