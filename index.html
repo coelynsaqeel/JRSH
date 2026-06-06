@@ -238,28 +238,10 @@ const _db=firebase.firestore();
 // Keep user signed in across page reloads
 _auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>console.warn("persist:",e));
 
-// ── DEBUG: Test Firebase on load ──
-(async()=>{
-  try{
-    // Test 1: Can we read Firestore at all?
-    const testSnap = await _db.collection("_debug").limit(1).get();
-    console.log("✅ Firestore read OK");
-  }catch(e){
-    console.error("❌ Firestore read FAILED:", e.code, e.message);
-    // Show visible error on screen
-    setTimeout(()=>{
-      const d=document.createElement("div");
-      d.style.cssText="position:fixed;top:0;left:0;right:0;background:#EF4444;color:#fff;padding:12px;font-size:13px;z-index:9999;font-family:monospace;";
-      d.textContent="Firebase Error: "+e.code+" — "+e.message;
-      document.body.appendChild(d);
-    },2000);
-  }
-  // Test 2: Auth state
-  _auth.onAuthStateChanged(u=>{
-    if(u) console.log("✅ Firebase Auth user:", u.uid, u.email);
-    else console.log("ℹ️ No Firebase Auth user (not signed in)");
-  });
-})();
+// Auth state observer
+_auth.onAuthStateChanged(u=>{
+  if(u) console.log("Firebase Auth user:", u.uid, u.email);
+});
 
 /* ── Kenya time (EAT = UTC+3) ── */
 function nowKE(){return new Date(new Date().toLocaleString("en-US",{timeZone:"Africa/Nairobi"}));}
@@ -1937,7 +1919,6 @@ function StudentApp({user,onLogout,backHandlerRef}){
           fbQuery("notes",[],{field:"createdAt",dir:"desc"},100),
           isAnon?Promise.resolve([]):fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]),
         ]);
-        console.log("Notes loaded:", n?.length, n?.map?.(x=>x.title));
         setNotes(Array.isArray(n)?n:[]);
         const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
         setInteractions(map);
@@ -1947,9 +1928,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     (async()=>{
       try{
         // Query tutors — filter by role field in doc data
-        console.log("Loading tutors for user:", user.id, "grade:", user.grade);
         const allTutors=await fbQuery("profiles",[{field:"role",op:"==",value:"tutor"}],null,100);
-        console.log("Tutors found:", allTutors.length, allTutors.map(t=>t.name));
         const studentLevel=gradeToLevel(user.grade||profile?.grade);
         const filtered=studentLevel
           ? allTutors.filter(t=>!t.curriculum_level||t.curriculum_level===studentLevel)
@@ -2042,13 +2021,16 @@ function StudentApp({user,onLogout,backHandlerRef}){
   async function handleSaveProfile(){
     setProfSaving(true);
     try{
-      const updated={...profile,...editP,id:user.id,role:"student",pfp_url:editP.pfp_local||editP.pfp_url||profile.pfp_url||null};
+      const pfpUrl=editP.pfp_local||editP.pfp_url||profile.pfp_url||null;
+      const updated={...profile,...editP,id:user.id,role:"student",pfp_url:pfpUrl};
       delete updated.pfp_local;
       await sbAuth.upsertProfile(updated);
       setProfile(updated);
       const _sess1=loadSession();
-      saveSession({profile:updated,token:_sess1?.token||null,role:"student"});
+      const _tok1=_sess1?.token||null;
+      saveSession({profile:updated,token:_tok1,role:"student"});
       setProfEdit(false);
+      showToast("Profile saved!","ok");
     }catch(e){console.warn("Save profile:",e.message);}finally{setProfSaving(false);}
   }
 
@@ -2271,8 +2253,11 @@ function StudentApp({user,onLogout,backHandlerRef}){
             <div key={tutor.id} style={{background:C.surfaceAlt,borderRadius:16,padding:"14px 14px",marginBottom:10,border:"1px solid "+C.border}}>
               <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
                 {/* Avatar */}
-                <div style={{width:48,height:48,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,color:C.accentText}}>{initials}</span>
+                <div style={{width:48,height:48,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden"}}>
+                  {tutor.pfp_url
+                    ?<img src={tutor.pfp_url} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={tutor.name}/>
+                    :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,color:C.accentText}}>{initials}</span>
+                  }
                 </div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,color:C.text}}>{tutor.name}</div>
@@ -2489,7 +2474,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
     try{
       const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
       const localNote={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,createdAt:nowKEiso(),created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:null,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso(),published:true})||{};
+      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:null,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso(),published:true})||{};
       setNotes(ns=>[{...localNote,...saved,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}},...ns]);
       setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});setShowPublish(false);
       showToast("Note published!","ok");
@@ -2510,13 +2495,16 @@ function TutorApp({user,onLogout,backHandlerRef}){
   async function handleSaveProfile(){
     setProfSaving(true);
     try{
-      const updated={...profile,...editP,id:user.id,role:"tutor",pfp_url:editP.pfp_local||editP.pfp_url||profile.pfp_url||null};
+      const pfpUrl2=editP.pfp_local||editP.pfp_url||profile.pfp_url||null;
+      const updated={...profile,...editP,id:user.id,role:"tutor",pfp_url:pfpUrl2};
       delete updated.pfp_local;
       await sbAuth.upsertProfile(updated);
       setProfile(updated);
       const _sess2=loadSession();
-      saveSession({profile:updated,token:_sess2?.token||null,role:"tutor"});
+      const _tok2=_sess2?.token||null;
+      saveSession({profile:updated,token:_tok2,role:"tutor"});
       setProfEdit(false);
+      showToast("Profile saved!","ok");
     }catch(e){console.warn("Save profile:",e.message);}finally{setProfSaving(false);}
   }
 
@@ -3060,7 +3048,7 @@ function NoteGrid({notes,C,onLike,onSave,onOpen,onEdit}){
   );
 }
 function ProfCard({profile,editP,setEditP,editing,pfpRef,C}){
-  const src=editP.pfp_local||profile.pfp_url||null;
+  const src=editP.pfp_local||editP.pfp_url||profile.pfp_url||null;
   return(
     <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:24,margin:"14px 14px 16px",padding:"16px 14px 14px",display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
       <div onClick={()=>editing&&pfpRef.current.click()} style={{width:96,height:96,borderRadius:"50%",background:C.surfaceAlt,border:"2px solid "+C.border,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",cursor:editing?"pointer":"default"}}>
