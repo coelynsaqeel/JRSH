@@ -235,6 +235,8 @@ const FB_CONFIG={
 if(!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
 const _auth=firebase.auth();
 const _db=firebase.firestore();
+// Keep user signed in across page reloads
+_auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>console.warn("persist:",e));
 
 /* ── Kenya time (EAT = UTC+3) ── */
 function nowKE(){return new Date(new Date().toLocaleString("en-US",{timeZone:"Africa/Nairobi"}));}
@@ -249,10 +251,24 @@ async function fbQuery(col,filters=[],ord=null,lim=100){
   try{
     let q=_db.collection(col);
     filters.forEach(f=>{q=q.where(f.field,f.op,f.value);});
-    if(ord) q=q.orderBy(ord.field,ord.dir||"desc");
+    // ord can be a string or {field,dir} object
+    if(ord){
+      const ordField=typeof ord==="string"?ord:ord.field;
+      const ordDir=typeof ord==="string"?"desc":(ord.dir||"desc");
+      q=q.orderBy(ordField,ordDir);
+    }
     const snap=await q.limit(lim).get();
     return snap.docs.map(d=>({id:d.id,...d.data()}));
-  }catch(e){console.warn("fbQuery",col,e.message);return[];}
+  }catch(e){
+    console.warn("fbQuery",col,e.message);
+    // If orderBy fails (needs index), retry without ordering
+    try{
+      let q2=_db.collection(col);
+      filters.forEach(f=>{q2=q2.where(f.field,f.op,f.value);});
+      const snap2=await q2.limit(lim).get();
+      return snap2.docs.map(d=>({id:d.id,...d.data()}));
+    }catch(e2){return[];}
+  }
 }
 async function fbSet(col,id,data){try{const d={...data,updatedAt:nowKEiso()};await _db.collection(col).doc(id).set(d,{merge:true});return{id,...d};}catch(e){console.warn("fbSet",e.message);return data;}}
 async function fbAdd(col,data){try{const d={...data,createdAt:nowKEiso()};const r=await _db.collection(col).add(d);return{id:r.id,...d};}catch(e){console.warn("fbAdd",e.message);return data;}}
@@ -1291,6 +1307,12 @@ function AppRoot(){
               }catch(e){}
             }
             try{if(localStorage.getItem("jrsh_acct_deleted")){clearSession();setRestoring(false);return;}}catch(e){}
+            // Refresh Firebase token so all DB reads work
+            try{
+              const fbUser=_auth.currentUser;
+              if(fbUser){const t=await fbUser.getIdToken(false);if(t){setAuthToken(t);}}
+            }catch(e){}
+            // Load real profile from Firebase DB
             const freshProf=await sbAuth.getProfile(sess.profile.id,sess.role||sess.profile.role);
             if(freshProf){prof=freshProf;}else{clearSession();setRestoring(false);return;}
           }
@@ -1900,14 +1922,14 @@ function StudentApp({user,onLogout,backHandlerRef}){
     })();
     (async()=>{
       try{
-        // Load ALL tutors first, then filter by student's curriculum level
-        const allTutors=await fbQuery("profiles",[{field:"role",op:"==",value:"tutor"}],"createdAt",100);
-        const studentLevel=gradeToLevel(user.grade);
+        // Query tutors — filter by role field in doc data
+        const allTutors=await fbQuery("profiles",[{field:"role",op:"==",value:"tutor"}],null,100);
+        const studentLevel=gradeToLevel(user.grade||profile?.grade);
         const filtered=studentLevel
           ? allTutors.filter(t=>!t.curriculum_level||t.curriculum_level===studentLevel)
           : allTutors;
         setTutors(filtered);
-      }catch(e){setTutors([]);}
+      }catch(e){console.warn("tutors:",e.message);setTutors([]);}
     })();
   },[user.id]);
 
@@ -1998,7 +2020,8 @@ function StudentApp({user,onLogout,backHandlerRef}){
       delete updated.pfp_local;
       await sbAuth.upsertProfile(updated);
       setProfile(updated);
-      saveSession({profile:updated,token:null,role:"student"});
+      const _sess1=loadSession();
+      saveSession({profile:updated,token:_sess1?.token||null,role:"student"});
       setProfEdit(false);
     }catch(e){console.warn("Save profile:",e.message);}finally{setProfSaving(false);}
   }
@@ -2375,7 +2398,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
         setNotes(Array.isArray(n)?n:[]);
         const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
         setInteractions(map);
-      }catch(e){setNotes(SAMPLE_NOTES);}
+      }catch(e){console.warn("notes:",e.message);setNotes([]);}
       finally{setLoadingN(false);}
     })();
   },[user.id]);
@@ -2440,7 +2463,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
     try{
       const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
       const localNote={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,createdAt:nowKEiso(),created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:null,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso()})||{};
+      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:null,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso(),published:true})||{};
       setNotes(ns=>[{...localNote,...saved,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}},...ns]);
       setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});setShowPublish(false);
       showToast("Note published!","ok");
@@ -2465,7 +2488,8 @@ function TutorApp({user,onLogout,backHandlerRef}){
       delete updated.pfp_local;
       await sbAuth.upsertProfile(updated);
       setProfile(updated);
-      saveSession({profile:updated,token:null,role:"tutor"});
+      const _sess2=loadSession();
+      saveSession({profile:updated,token:_sess2?.token||null,role:"tutor"});
       setProfEdit(false);
     }catch(e){console.warn("Save profile:",e.message);}finally{setProfSaving(false);}
   }
