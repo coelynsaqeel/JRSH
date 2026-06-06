@@ -560,7 +560,7 @@ async function startAgoraVoiceCall(appId, channel, uid){
 // Format: {from: userId, type: "ring"|"accept"|"decline"|"end", ts: timestamp}
 async function sendCallSignal(lessonId, signal){
   try{
-    await sb.patch("tutor_requests","?id=eq."+lessonId,{call_signal:JSON.stringify({...signal,ts:Date.now()})});
+    const _sreqs=await fbQuery("tutor_requests",[{field:"lesson_id",op:"==",value:lessonId}]);if(_sreqs.length)await fbUpdate("tutor_requests",_sreqs[0].id,{call_signal:JSON.stringify({...signal,ts:Date.now()})});
   }catch(e){}
 }
 
@@ -598,7 +598,7 @@ function CallDialog({lesson, user, onEnd, C}){
   React.useEffect(()=>{
     if(!showLocMap||!myLoc||!lesson.id) return;
     const push=()=>{
-      try{sb.patch("tutor_requests","?id=eq."+lesson.id,{
+      try{const _ereqs=await fbQuery("tutor_requests",[{field:"lesson_id",op:"==",value:lesson.id}]);if(_ereqs.length)fbUpdate("tutor_requests",_ereqs[0].id,{
         [user.role+"_lat"]: myLoc.lat,
         [user.role+"_lng"]: myLoc.lng,
         location_updated_at: nowKEiso()
@@ -614,7 +614,8 @@ function CallDialog({lesson, user, onEnd, C}){
     if(!showLocMap||!lesson.id) return;
     const poll=async()=>{
       try{
-        const [row]=await sb.get("tutor_requests","?id=eq."+lesson.id+"&select="+otherRole+"_lat,"+otherRole+"_lng,location_updated_at");
+        const _lreqs=await fbQuery("tutor_requests",[{field:"lesson_id",op:"==",value:lesson.id}],null,1);
+        const [row]=_lreqs;
         if(row&&row[otherRole+"_lat"]){
           setOtherLoc({lat:row[otherRole+"_lat"],lng:row[otherRole+"_lng"],ts:row.location_updated_at});
         }
@@ -1553,7 +1554,7 @@ function StudentRegister({onBack, onAuth, onSignIn}){
         role:"student",
         grade:p.level||null,
       };
-      const [prof]=await sb.post("profiles",profileData);
+      const prof=await fbAdd("profiles",profileData)||profileData;
       const profile=prof||profileData;
       saveSession({profile,token:null,role:"student"});
       onAuth(profile,null);
@@ -1689,7 +1690,7 @@ function TutorRegister({onBack, onAuth, onSignIn}){
     try{
       const anonId="anon-t-"+Date.now()+"-"+Math.random().toString(36).slice(2,7);
       const profileData={id:anonId,name:p.name,age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null};
-      const [prof]=await sb.post("profiles",profileData);
+      const prof=await fbAdd("profiles",profileData)||profileData;
       const profile=prof||profileData;
       saveSession({profile,token:null,role:"tutor"});
       onAuth(profile,null);
@@ -1849,8 +1850,8 @@ function StudentApp({user,onLogout,backHandlerRef}){
         if(isAnon){setLessons([]);setLoadingL(false);return;}
         // Lessons + tutor request acceptance map
         const [data,reqs]=await Promise.all([
-          sb.get("lessons","?student_id=eq."+user.id+"&order=from_hour.asc"),
-          sb.get("tutor_requests","?student_id=eq."+user.id+"&order=created_at.desc"),
+          fbQuery("lessons",[{field:"student_id",op:"==",value:user.id}],{field:"from_hour",dir:"asc"},100),
+          fbQuery("tutor_requests",[{field:"student_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100),
         ]);
         const m={};
         const declinedIds=new Set();
@@ -1888,8 +1889,8 @@ function StudentApp({user,onLogout,backHandlerRef}){
       try{
         const isAnon=user.id&&user.id.startsWith("anon-");
         const [n,ix]=await Promise.all([
-          sb.get("notes","?order=created_at.desc&limit=100"),
-          isAnon?Promise.resolve([]):sb.get("note_interactions","?user_id=eq."+user.id),
+          fbQuery("notes",[],{field:"createdAt",dir:"desc"},100),
+          isAnon?Promise.resolve([]):fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]),
         ]);
         setNotes(Array.isArray(n)?n:[]);
         const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
@@ -1899,8 +1900,13 @@ function StudentApp({user,onLogout,backHandlerRef}){
     })();
     (async()=>{
       try{
-        const data=await sb.get("profiles","?role=eq.tutor&order=created_at.desc&limit=100");
-        setTutors(Array.isArray(data)?data:[]);
+        // Load ALL tutors first, then filter by student's curriculum level
+        const allTutors=await fbQuery("profiles",[{field:"role",op:"==",value:"tutor"}],"createdAt",100);
+        const studentLevel=gradeToLevel(user.grade);
+        const filtered=studentLevel
+          ? allTutors.filter(t=>!t.curriculum_level||t.curriculum_level===studentLevel)
+          : allTutors;
+        setTutors(filtered);
       }catch(e){setTutors([]);}
     })();
   },[user.id]);
@@ -1938,8 +1944,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     }
     setSaving(true);
     try{
-      const _rows=await sb.post("lessons",{student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online,createdAt:nowKEiso()});
-      const lesson=(_rows&&_rows[0])||{id:"local-"+Date.now(),student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online};
+      const lesson=await fbAdd("lessons",{student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to,description:addForm.desc,online:addForm.online,createdAt:nowKEiso()})||{id:"local-"+Date.now(),student_id:user.id,subject:addForm.subject,day:addForm.day,from_hour:addForm.from,to_hour:addForm.to};
       setLessons(l=>[...l,lesson]);
       setShowAdd(false);setAddForm({subject:"",day:"MON",from:8,to:9,desc:"",online:false});setAddErr("");
       showToast("Session saved!","ok");
@@ -1947,13 +1952,13 @@ function StudentApp({user,onLogout,backHandlerRef}){
   }
 
   async function handleDeleteLesson(id){
-    try{await sb.del("lessons","?id=eq."+id);setLessons(l=>l.filter(x=>x.id!==id));showToast("Session removed","ok");}catch(e){showToast("Remove failed","error");}
+    try{await fbDel("lessons",id);setLessons(l=>l.filter(x=>x.id!==id));showToast("Session removed","ok");}catch(e){showToast("Remove failed","error");}
   }
 
   async function handleSaveEdit(){
     if(!editLesson||saving)return;setSaving(true);
     try{
-      await sb.patch("lessons","?id=eq."+editLesson.id,{subject:editLesson.subject,day:editLesson.day,from_hour:editLesson.from_hour,to_hour:editLesson.to_hour,description:editLesson.description,online:editLesson.online});
+      await fbUpdate("lessons",editLesson.id,{subject:editLesson.subject,day:editLesson.day,from_hour:editLesson.from_hour,to_hour:editLesson.to_hour,description:editLesson.description,online:editLesson.online});
       setLessons(l=>l.map(x=>x.id===editLesson.id?{...x,...editLesson}:x));setEditLesson(null);showToast("Changes saved","ok");
     }catch(e){showToast("Save failed","error");}finally{setSaving(false);}
   }
@@ -1965,7 +1970,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     // Mark lesson orange (pending) and store tutor info
     setLessons(ls=>ls.map(l=>l.id===lesson.id?{...l,_pending:true,_accepted:false,_tutorName:tutor.name,_tutorId:tutor.id,_tutorObj:tutor}:l));
     setShowTutors(null); // close modal
-    try{await sb.post("tutor_requests",{lesson_id:lesson.id,student_id:user.id,tutor_id:tutor.id,subject:lesson.subject,day:lesson.day,from_hour:lesson.from_hour,to_hour:lesson.to_hour,online:lesson.online,description:lesson.description,student_name:user.name,status:"pending"});}catch(e){}
+    try{await fbAdd("tutor_requests",{lesson_id:lesson.id,student_id:user.id,tutor_id:tutor.id,subject:lesson.subject,day:lesson.day,from_hour:lesson.from_hour,to_hour:lesson.to_hour,online:lesson.online,description:lesson.description,student_name:user.name,status:"pending",createdAt:nowKEiso()});}catch(e){}
   }
 
   async function handleInteraction(noteId,field){
@@ -1973,15 +1978,15 @@ function StudentApp({user,onLogout,backHandlerRef}){
     const next={...cur,[field]:!cur[field]};
     setInteractions(i=>({...i,[noteId]:next}));
     try{
-      if(cur.id){await sb.patch("note_interactions","?id=eq."+cur.id,{[field]:next[field]});}
-      else{const _ix=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=(_ix&&_ix[0])||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
+      if(cur.id){await fbUpdate("note_interactions",cur.id,{[field]:next[field]});}
+      else{const _ixRow=await fbAdd("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=_ixRow||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
     }catch(e){setInteractions(i=>({...i,[noteId]:cur}));}
   }
 
   async function handleCancelSession(lesson,type){
     setCancelLesson(null);
     if(!1){
-      try{await sb.patch("tutor_requests","?lesson_id=eq."+lesson.id,{status:"cancelled"});}catch(e){}
+      try{const reqs=await fbQuery("tutor_requests",[{field:"lesson_id",op:"==",value:lesson.id}]);await Promise.all(reqs.map(r=>fbUpdate("tutor_requests",r.id,{status:"cancelled"})));}catch(e){}
     }
     handleDeleteLesson(lesson.id);
   }
@@ -1989,9 +1994,13 @@ function StudentApp({user,onLogout,backHandlerRef}){
   async function handleSaveProfile(){
     setProfSaving(true);
     try{
-      if(!1)await sb.patch("profiles","?id=eq."+user.id,{name:editP.name,age:editP.age?+editP.age:null,gender:editP.gender,location:editP.location,grade:editP.grade});
-      setProfile({...profile,...editP});setProfEdit(false);
-    }catch(e){}finally{setProfSaving(false);}
+      const updated={...profile,...editP,id:user.id,role:"student",pfp_url:editP.pfp_local||editP.pfp_url||profile.pfp_url||null};
+      delete updated.pfp_local;
+      await sbAuth.upsertProfile(updated);
+      setProfile(updated);
+      saveSession({profile:updated,token:null,role:"student"});
+      setProfEdit(false);
+    }catch(e){console.warn("Save profile:",e.message);}finally{setProfSaving(false);}
   }
 
   const studentLevel=gradeToLevel(user.grade||profile.grade);
@@ -2271,9 +2280,10 @@ function TutorApp({user,onLogout,backHandlerRef}){
     if(!user.id||user.id.startsWith("anon-"))return;
     (async()=>{
       try{
-        const [wrow]=await sb.get("wallets","?user_id=eq."+user.id+"&limit=1");
+        const _wall=await fbQuery("wallets",[{field:"user_id",op:"==",value:user.id}],null,1);
+        const [wrow]=_wall;
         if(wrow){setWalletBal(wrow.balance||0);}
-        const txs=await sb.get("wallet_transactions","?user_id=eq."+user.id+"&order=created_at.desc&limit=50");
+        const txs=await fbQuery("wallets",[{field:"user_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},50);
         if(txs&&txs.length){
           setWalletTx(txs.map(t=>({id:t.id,label:t.label||"Transaction",amount:t.amount,type:t.amount>=0?"credit":"debit",date:fmtKEDate(t.created_at)})));
         }
@@ -2339,7 +2349,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
         const isAnon=user.id&&user.id.startsWith("anon-");
         if(isAnon){setRequests([]);setLoadingR(false);return;}
         // Fetch all tutor requests + lesson history
-        const data=await sb.get("tutor_requests","?tutor_id=eq."+user.id+"&order=created_at.desc");
+        const data=await fbQuery("tutor_requests",[{field:"tutor_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100);
         setRequests(data||[]);
         // History = completed/cancelled requests
         const now=Date.now();
@@ -2359,8 +2369,8 @@ function TutorApp({user,onLogout,backHandlerRef}){
       try{
         const isAnon=user.id&&user.id.startsWith("anon-");
         const [n,ix]=await Promise.all([
-          sb.get("notes","?order=created_at.desc&limit=100"),
-          isAnon?Promise.resolve([]):sb.get("note_interactions","?user_id=eq."+user.id),
+          fbQuery("notes",[],{field:"createdAt",dir:"desc"},100),
+          isAnon?Promise.resolve([]):fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]),
         ]);
         setNotes(Array.isArray(n)?n:[]);
         const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
@@ -2407,7 +2417,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
     }
     setReqSaving(true);
     try{
-      await sb.patch("tutor_requests","?id=eq."+reqId,{status});
+      await fbUpdate("tutor_requests",reqId,{status});
       if(status==="declined"){
         // Remove declined requests from the list entirely
         setRequests(r=>r.filter(x=>x.id!==reqId));
@@ -2420,7 +2430,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
 
   async function handleCancelBooked(req,type){
     setCancelReq(null);
-    try{await sb.patch("tutor_requests","?id=eq."+req.id,{status:"cancelled"});showToast("Session cancelled","ok");}catch(e){showToast("Cancel failed","error");}
+    try{await fbUpdate("tutor_requests",req.id,{status:"cancelled"});showToast("Session cancelled","ok");}catch(e){showToast("Cancel failed","error");}
     setRequests(r=>r.map(x=>x.id===req.id?{...x,status:"cancelled"}:x));
   }
 
@@ -2430,8 +2440,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
     try{
       const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
       const localNote={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,createdAt:nowKEiso(),created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      const _prows=await sb.post("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:null,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso()});
-      const saved=(_prows&&_prows[0])||{};
+      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:null,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso()})||{};
       setNotes(ns=>[{...localNote,...saved,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}},...ns]);
       setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});setShowPublish(false);
       showToast("Note published!","ok");
@@ -2444,17 +2453,21 @@ function TutorApp({user,onLogout,backHandlerRef}){
     const next={...cur,[field]:!cur[field]};
     setInteractions(i=>({...i,[noteId]:next}));
     try{
-      if(cur.id){await sb.patch("note_interactions","?id=eq."+cur.id,{[field]:next[field]});}
-      else{const _ix=await sb.post("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=(_ix&&_ix[0])||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
+      if(cur.id){await fbUpdate("note_interactions",cur.id,{[field]:next[field]});}
+      else{const _ixRow=await fbAdd("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=_ixRow||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
     }catch(e){setInteractions(i=>({...i,[noteId]:cur}));}
   }
 
   async function handleSaveProfile(){
     setProfSaving(true);
     try{
-      await sb.patch("profiles","?id=eq."+user.id,{name:editP.name,age:editP.age?+editP.age:null,gender:editP.gender,location:editP.location,curriculum_level:editP.curriculum_level,hourly_rate_online:editP.hourly_rate_online?+editP.hourly_rate_online:null,hourly_rate_offline:editP.hourly_rate_offline?+editP.hourly_rate_offline:null});
-      setProfile({...profile,...editP});setProfEdit(false);
-    }catch(e){}finally{setProfSaving(false);}
+      const updated={...profile,...editP,id:user.id,role:"tutor",pfp_url:editP.pfp_local||editP.pfp_url||profile.pfp_url||null};
+      delete updated.pfp_local;
+      await sbAuth.upsertProfile(updated);
+      setProfile(updated);
+      saveSession({profile:updated,token:null,role:"tutor"});
+      setProfEdit(false);
+    }catch(e){console.warn("Save profile:",e.message);}finally{setProfSaving(false);}
   }
 
   const filteredNotes=()=>{
