@@ -59,6 +59,26 @@
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
     @keyframes ring{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.4)}50%{box-shadow:0 0 0 8px rgba(34,197,94,0)}}
     @keyframes spin{to{transform:rotate(360deg)}}
+    /* ── Responsive layout ── */
+    .jrsh-shell{max-width:100%!important;}
+    .jrsh-daygrid{margin:14px 14px 0!important;}
+    .jrsh-day-label{width:52px!important;padding:14px 0 14px 14px!important;font-size:11px!important;}
+    .jrsh-day-row{min-height:64px!important;}
+    .jrsh-card-pad{padding:6px 10px!important;}
+    .jrsh-card-subj{font-size:11px!important;}
+    .jrsh-card-time{font-size:9px!important;}
+    .jrsh-card-icon{font-size:13px!important;}
+    .jrsh-day-content{padding:8px 10px 8px 6px!important;}
+    @media(min-width:600px){
+      .jrsh-daygrid{margin:16px 24px 0!important;}
+      .jrsh-day-label{width:68px!important;padding:16px 0 16px 20px!important;font-size:13px!important;}
+      .jrsh-day-row{min-height:76px!important;}
+      .jrsh-card-pad{padding:10px 14px!important;}
+      .jrsh-card-subj{font-size:14px!important;}
+      .jrsh-card-time{font-size:11px!important;}
+      .jrsh-card-icon{font-size:16px!important;}
+      .jrsh-day-content{padding:10px 14px 10px 8px!important;}
+    }
   </style>
 </head>
 <body>
@@ -2180,11 +2200,12 @@ function StudentApp({user,onLogout,backHandlerRef}){
               const isAccepted=l._accepted||acceptedMap[l.id];
               const isPending=l._pending&&!isAccepted;
               if(isAccepted&&l._tutorObj){
-                // Accepted — show tutor (other user) details
+                // Accepted → show tutor (other user) profile with call/location buttons
                 setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);
               } else if(isAccepted||isPending){
+                // Accepted with no tutorObj cached, or pending → show lesson details
                 setShowLessonDetails(l);
-              } else if(l._tutorObj&&(l._pending||l._accepted||acceptedMap[l.id])){
+              } else if(l._tutorObj){
                 setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);
               } else {
                 setShowTutors(l);
@@ -2612,7 +2633,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
     try{
       const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
       const localNote={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,createdAt:nowKEiso(),created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:null,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso()})||{};
+      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:pubForm.pdfDataUrl||null,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso()})||{};
       setNotes(ns=>[{...localNote,...saved,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}},...ns]);
       setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});setShowPublish(false);
       showToast("Note published!","ok");
@@ -2698,7 +2719,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
         </div>
         <input type="file" accept=".pdf" ref={editPdfRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditingNote(n=>({...n,pdf_url:ev.target.result}));r.readAsDataURL(f);}}/>
         <div style={{display:"flex",gap:10,marginTop:16}}>
-          <button onClick={()=>{setNotes(ns=>ns.map(n=>n.id===editingNote.id?{...n,...editingNote}:n));setEditingNote(null);}} style={{flex:1,padding:"13px",borderRadius:50,border:"none",background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:"pointer"}}>SAVE</button>
+          <button onClick={async()=>{setNotes(ns=>ns.map(n=>n.id===editingNote.id?{...n,...editingNote}:n));try{await fbUpdate("notes",editingNote.id,{title:editingNote.title,subject:editingNote.subject,pdf_url:editingNote.pdf_url||null,cover_url:editingNote.cover_url||null,cover_color:editingNote.cover_color||null,cover_pos:editingNote.cover_pos||null});}catch(e){}setEditingNote(null);}} style={{flex:1,padding:"13px",borderRadius:50,border:"none",background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:"pointer"}}>SAVE</button>
           <button onClick={()=>{setNotes(ns=>ns.filter(n=>n.id!==editingNote.id));setEditingNote(null);}} style={{flex:1,padding:"13px",borderRadius:50,border:"1.5px solid #EF4444",background:"transparent",color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:"pointer"}}>DELETE</button>
         </div>
         <CnBtn C={C} onClick={()=>setEditingNote(null)}>CANCEL</CnBtn>
@@ -2910,9 +2931,9 @@ function TutorApp({user,onLogout,backHandlerRef}){
 }
 
 /* ══ SHARED COMPONENTS ══ */
-function Shell({C,children}){return <div style={{fontFamily:"Barlow,sans-serif",background:C.bg,color:C.text,height:"100dvh",width:"100%",maxWidth:"100%",margin:"0 auto",display:"flex",flexDirection:"column",overflow:"hidden",position:"relative"}}>{children}</div>;}
+function Shell({C,children}){return <div className="jrsh-shell" style={{fontFamily:"Barlow,sans-serif",background:C.bg,color:C.text,height:"100dvh",width:"100%",margin:"0 auto",display:"flex",flexDirection:"column",overflow:"hidden",position:"relative"}}>{children}</div>;}
 function Scroll({children}){return <div style={{flex:1,overflowY:"auto",paddingBottom:72}}>{children}</div>;}
-function Hdr({C,dm,children}){const w=window.innerWidth;return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:w>=700?"12px 24px":"10px 16px",minHeight:w>=700?60:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{children}</div></div>);}
+function Hdr({C,dm,children}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{children}</div></div>);}
 function IdentHdr({C,dm,setDm,onWallet,onEditIdentity,onLogout,onDeleteAccount}){
   const [open,setOpen]=React.useState(false);
   return(
@@ -2987,15 +3008,14 @@ function Ldg({C}){return <div style={{display:"flex",alignItems:"center",justify
 function Empty({C,children}){return <div style={{textAlign:"center",padding:"24px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{children}</div>;}
 
 function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
-  const isWide=window.innerWidth>=700;
   return(
-    <div style={{background:C.surface,margin:isWide?"14px 24px 0":"14px 14px 0",borderRadius:20,overflow:"hidden",border:"1px solid "+C.border}}>
+    <div className="jrsh-daygrid" style={{background:C.surface,margin:"14px 14px 0",borderRadius:20,overflow:"hidden",border:"1px solid "+C.border}}>
       {days.map((day,idx)=>{
         const dl=getLessons(day);
         return(
-          <div key={day} style={{display:"flex",borderBottom:idx<days.length-1?"1px solid "+C.border:"none",minHeight:isWide?72:64}}>
-            <div style={{width:isWide?72:52,padding:isWide?"16px 0 16px 20px":"14px 0 14px 14px",flexShrink:0}}><span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:isWide?13:11,letterSpacing:1.5,color:C.sub}}>{day}</span></div>
-            <div style={{flex:1,padding:isWide?"10px 16px 10px 8px":"8px 10px 8px 6px",display:"flex",flexDirection:"column",gap:5}}>
+          <div key={day} className="jrsh-day-row" style={{display:"flex",borderBottom:idx<days.length-1?"1px solid "+C.border:"none",minHeight:64}}>
+            <div className="jrsh-day-label" style={{width:52,padding:"14px 0 14px 14px",flexShrink:0}}><span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1.5,color:C.sub}}>{day}</span></div>
+            <div className="jrsh-day-content" style={{flex:1,padding:"8px 10px 8px 6px",display:"flex",flexDirection:"column",gap:5}}>
               {dl.length===0?<span style={{fontSize:10,color:C.border,letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,paddingTop:4}}>NO PLANS</span>:
   dl.map(l=>{
                     // Determine role context from showStudent prop
@@ -3013,15 +3033,15 @@ function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
                       else{cardBg="#FCE4EC";cardBorder="#F8BBD9";} // light pink — added, no tutor yet
                     }
                     return(
-                  <div key={l.id} onClick={()=>onTap&&onTap(l)} style={{borderRadius:10,padding:isWide?"10px 14px":"6px 10px",background:cardBg,border:"1px solid "+cardBorder,cursor:onTap?"pointer":"default",display:"flex",flexDirection:"column",gap:1}}>
+                  <div key={l.id} onClick={()=>onTap&&onTap(l)} className="jrsh-card-pad" style={{borderRadius:10,padding:"6px 10px",background:cardBg,border:"1px solid "+cardBorder,cursor:onTap?"pointer":"default",display:"flex",flexDirection:"column",gap:1}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                       <div style={{display:"flex",alignItems:"center",gap:5}}>
-                        <span style={{fontSize:isWide?15:13}}>{l.online?"🌐":"📍"}</span>
-                        <div style={{fontSize:isWide?13:11,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",color:"#111"}}>{l.subject}</div>
+                        <span className="jrsh-card-icon" style={{fontSize:13}}>{l.online?"🌐":"📍"}</span>
+                        <div className="jrsh-card-subj" style={{fontSize:11,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",color:"#111"}}>{l.subject}</div>
                       </div>
-                      <div style={{fontSize:isWide?11:9,fontWeight:700,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",whiteSpace:"nowrap"}}>{timeLbl(l.from_hour)}–{timeLbl(l.to_hour)}</div>
+                      <div className="jrsh-card-time" style={{fontSize:9,fontWeight:700,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",whiteSpace:"nowrap"}}>{timeLbl(l.from_hour)}–{timeLbl(l.to_hour)}</div>
                     </div>
-                    {showStudent&&l.student_name&&<div style={{fontSize:isWide?12:10,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>👤 {l.student_name}</div>}
+                    {showStudent&&l.student_name&&<div className="jrsh-card-subj" style={{fontSize:11,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>👤 {l.student_name}</div>}
                     {renderExtra&&renderExtra(l)}
                   </div>
                   );
