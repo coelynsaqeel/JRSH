@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <title>JRSH</title>
+  <style>
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+    html,body{margin:0;padding:0;height:100%;background:#f0f0f0;}
+    #root{height:100%;display:flex;align-items:stretch;justify-content:center;}
+    @media(min-width:600px){
+      #root{background:#e8e8e8;padding:0 0;align-items:flex-start;}
+    }
+    @supports(height:100dvh){html,body{height:100dvh;}}
+  </style>
   
     <link rel="apple-touch-icon" href="data:image/png;base64,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"/>
   <meta name="theme-color" content="#000000"/>
@@ -593,12 +602,11 @@ async function startAgoraVoiceCall(appId, channel, uid){
   return{client,audioTrack};
 }
 
-/* ══ CALL SIGNAL HELPERS (via Supabase realtime-lite: poll) ══ */
-// We store call signals in a "call_signals" column on tutor_requests row
-// Format: {from: userId, type: "ring"|"accept"|"decline"|"end", ts: timestamp}
+/* ══ CALL SIGNAL HELPERS (via Firebase Firestore polling) ══ */
+// Store call signals in tutor_requests doc
 async function sendCallSignal(lessonId, signal){
   try{
-    await sb.patch("tutor_requests","?id=eq."+lessonId,{call_signal:JSON.stringify({...signal,ts:Date.now()})});
+    await fbUpdate("tutor_requests",lessonId,{call_signal:JSON.stringify({...signal,ts:Date.now()})});
   }catch(e){}
 }
 
@@ -612,9 +620,21 @@ function CallDialog({lesson, user, onEnd, C}){
   const [ringTimer, setRingTimer] = React.useState(30);
   const [callSecs, setCallSecs]   = React.useState(0);
   const [muted, setMuted]   = React.useState(false);
+  const [cameraOn, setCameraOn]   = React.useState(true); // for online video calls
   const [agoraErr, setAgoraErr] = React.useState("");
-  const [showLocMap, setShowLocMap] = React.useState(false);
+  const [showLocMap, setShowLocMap] = React.useState(lesson._openLocation||false);
   const [otherLoc, setOtherLoc]   = React.useState(null);
+
+  // Auto-initiate outgoing ring for online auto-triggered calls
+  // (runs once after first render; initiateCall defined below via ref)
+  const initiateCallRef = React.useRef(null);
+  React.useEffect(()=>{
+    if(lesson._autoRing&&lesson.online){
+      // Small delay to allow initiateCallRef to be set
+      const t=setTimeout(()=>{ if(initiateCallRef.current) initiateCallRef.current(); },200);
+      return()=>clearTimeout(t);
+    }
+  },[]);
 
   const engineRef  = React.useRef(null); // {client, audioTrack}
   const pollRef    = React.useRef(null);
@@ -630,13 +650,13 @@ function CallDialog({lesson, user, onEnd, C}){
   const lessonEndMs   = lessonStartMs ? lessonStartMs+(lesson.to_hour-lesson.from_hour)*3600000 : null;
   const now = Date.now();
   const withinLocationWindow = isOffline && lessonStartMs &&
-    (now >= lessonStartMs - 3600000) && (now <= (lessonEndMs||lessonStartMs+3600000));
+    (now >= lessonStartMs - 1800000) && (now <= (lessonEndMs||lessonStartMs+3600000));
 
   // ── Push my GPS to Supabase while map is open ──
   React.useEffect(()=>{
     if(!showLocMap||!myLoc||!lesson.id) return;
     const push=()=>{
-      try{sb.patch("tutor_requests","?id=eq."+lesson.id,{
+      try{fbUpdate("tutor_requests",lesson.id,{
         [user.role+"_lat"]: myLoc.lat,
         [user.role+"_lng"]: myLoc.lng,
         location_updated_at: nowKEiso()
@@ -652,7 +672,7 @@ function CallDialog({lesson, user, onEnd, C}){
     if(!showLocMap||!lesson.id) return;
     const poll=async()=>{
       try{
-        const [row]=await sb.get("tutor_requests","?id=eq."+lesson.id+"&select="+otherRole+"_lat,"+otherRole+"_lng,location_updated_at");
+        const row=await fbGet("tutor_requests",lesson.id);
         if(row&&row[otherRole+"_lat"]){
           setOtherLoc({lat:row[otherRole+"_lat"],lng:row[otherRole+"_lng"],ts:row.location_updated_at});
         }
@@ -668,7 +688,7 @@ function CallDialog({lesson, user, onEnd, C}){
     if(!lesson.id||phase==="ended") return;
     const poll=async()=>{
       try{
-        const [row]=await sb.get("tutor_requests","?id=eq."+lesson.id+"&select=call_signal");
+        const row=await fbGet("tutor_requests",lesson.id);
         if(!row?.call_signal) return;
         const sig=JSON.parse(row.call_signal);
         if(!sig||sig.ts<=lastSigTs.current) return;
@@ -692,10 +712,11 @@ function CallDialog({lesson, user, onEnd, C}){
     return()=>clearTimeout(id);
   },[phase,ringTimer]);
 
-  // ── Outgoing ring timeout (30 s) ──
+  // ── Outgoing ring timeout (5 min for online auto-trigger, 30s for manual) ──
   React.useEffect(()=>{
     if(phase!=="outgoing") return;
-    const id=setTimeout(()=>hangUp("no_answer"),30000);
+    const timeout=lesson._autoRing?5*60*1000:30000;
+    const id=setTimeout(()=>hangUp("no_answer"),timeout);
     return()=>clearTimeout(id);
   },[phase]);
 
@@ -733,6 +754,7 @@ function CallDialog({lesson, user, onEnd, C}){
     setPhase("outgoing");
     await sendCallSignal(lesson.id,{from:user.id,type:"ring"});
   }
+  initiateCallRef.current = initiateCall;
 
   // ── Accept incoming ──
   async function acceptCall(){
@@ -758,7 +780,10 @@ function CallDialog({lesson, user, onEnd, C}){
       engineRef.current=null;
     }
     setPhase("ended");
-    onEnd(reason||"ended");
+    // Only pass "ended"/"no_answer"/"timeout" to parent for auto-ring online lessons
+    // Manual 3-min voice calls: close dialog without dropping the lesson
+    const isAutoRingDrop=lesson._autoRing&&lesson.online&&(reason==="no_answer"||reason==="timeout"||reason==="ended");
+    onEnd(isAutoRingDrop?reason:"cancelled");
   }
 
   async function toggleMute(){
@@ -775,7 +800,7 @@ function CallDialog({lesson, user, onEnd, C}){
   if(phase==="idle"){
     return(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onEnd("cancelled");}}>
-        <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"28px 22px 44px"}}>
+        <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:600,padding:"28px 22px 44px"}}>
           <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
             <div style={{width:56,height:56,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
               <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.accentText}}>{(lesson.student_name||lesson._tutorName||"?")[0].toUpperCase()}</span>
@@ -797,7 +822,7 @@ function CallDialog({lesson, user, onEnd, C}){
           </div>
           {withinLocationWindow&&(
             <div style={{marginTop:8,fontSize:10,color:C.sub,textAlign:"center",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
-              📍 LIVE LOCATION AVAILABLE — within 1 hr of lesson
+              📍 LIVE LOCATION AVAILABLE — within 30 min of lesson
             </div>
           )}
           <button onClick={()=>onEnd("cancelled")} style={{marginTop:14,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
@@ -826,9 +851,9 @@ function CallDialog({lesson, user, onEnd, C}){
 
         <div style={{textAlign:"center"}}>
           <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1}}>
-            {phase==="outgoing"&&"CALLING…"}
-            {phase==="incoming"&&"INCOMING VOICE CALL"}
-            {phase==="live"&&"VOICE CALL LIVE"}
+            {phase==="outgoing"&&(isOffline?"CALLING…":"📹 VIDEO CALLING…")}
+            {phase==="incoming"&&(isOffline?"INCOMING VOICE CALL":"📹 INCOMING VIDEO CALL")}
+            {phase==="live"&&(isOffline?"VOICE CALL LIVE":"📹 VIDEO CALL LIVE")}
           </div>
           <div style={{color:"#888",fontSize:13,marginTop:4}}>{lesson.subject} · {isOffline?"Offline":"Online"}</div>
 
@@ -887,6 +912,14 @@ function CallDialog({lesson, user, onEnd, C}){
                 <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{muted?"UNMUTE":"MUTE"}</div>
               </div>
             )}
+            {phase==="live"&&!isOffline&&(
+              <div style={{textAlign:"center"}}>
+                <button onClick={()=>setCameraOn(c=>!c)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:cameraOn?"rgba(255,255,255,.12)":"#EF4444",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
+                  {cameraOn?"📹":"🚫"}
+                </button>
+                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{cameraOn?"CAMERA":"NO CAM"}</div>
+              </div>
+            )}
             {phase==="live"&&withinLocationWindow&&(
               <div style={{textAlign:"center"}}>
                 <button onClick={()=>setShowLocMap(true)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
@@ -903,7 +936,7 @@ function CallDialog({lesson, user, onEnd, C}){
         )}
 
         <div style={{fontSize:10,color:"#333",fontFamily:"'Barlow Condensed',sans-serif",textAlign:"center"}}>
-          VOICE ONLY · 3-MINUTE LIMIT
+          {isOffline?"VOICE ONLY · 3-MINUTE LIMIT":"VIDEO CALL · 5-MIN RING · AUTO-DROP IF NO ANSWER"}
         </div>
       </div>
 
@@ -979,7 +1012,7 @@ function LocationModal({lesson,user,myLoc,otherLoc,locErr,otherRole,onClose,C}){
         {/* Info */}
         <div style={{background:"#111",borderRadius:16,padding:14,border:"1px solid #1e1e1e"}}>
           <div style={{fontSize:10,color:"#444",fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.7}}>
-            🔒 Locations are shared only during the 1-hour window before your lesson starts and are updated every 10 seconds. Open the map any time within this window — no call required.
+            🔒 Locations are shared only during the 30-minute window before your lesson starts and are updated every 10 seconds. Open the map any time within this window — no call required.
           </div>
         </div>
       </div>
@@ -1048,7 +1081,7 @@ function OfflineStartButton({lesson,started,onStart,onDrop,onCancel,C}){
 function CancelModal({onCancel,onClose,C}){
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:400,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"28px 22px 40px"}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:600,padding:"28px 22px 40px"}}>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text,marginBottom:6}}>Cancel Session</div>
         <div style={{fontSize:13,color:C.sub,marginBottom:24,lineHeight:1.5}}>This will cancel the lesson booking.</div>
         <button onClick={()=>onCancel("cancel")} style={{width:"100%",padding:"15px",borderRadius:50,border:"none",background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:14,letterSpacing:1.5,cursor:"pointer",marginBottom:10}}>
@@ -1447,7 +1480,7 @@ function SignInModal({onClose,onAuth,C,connOk}){
 
   if(roleProfiles){return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",zIndex:901,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"32px 24px 56px"}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:600,padding:"32px 24px 56px"}}>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.text,letterSpacing:2,marginBottom:8}}>CHOOSE MODE</div>
         <div style={{fontSize:13,color:C.sub,marginBottom:28}}>Your account has multiple roles. Sign in as:</div>
         {roleProfiles.map(p=>(<button key={p.role} onClick={()=>pickRole(p)} style={{width:"100%",padding:"18px",borderRadius:50,border:"2px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:17,letterSpacing:2,cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:12}}>{p.role==="student"?"🎓 STUDENT":"👤 TUTOR"}</button>))}
@@ -1457,7 +1490,7 @@ function SignInModal({onClose,onAuth,C,connOk}){
   );}
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.72)",zIndex:900,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"28px 22px 48px",boxShadow:"0 -8px 40px rgba(0,0,0,.25)"}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:600,padding:"28px 22px 48px",boxShadow:"0 -8px 40px rgba(0,0,0,.25)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}>
           <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.text,letterSpacing:1.5}}>
             {tab==="signin"?"SIGN IN":"RESET PASSWORD"}
@@ -1603,7 +1636,7 @@ function StudentRegister({onBack, onAuth, onSignIn}){
         role:"student",
         grade:p.level||null,
       };
-      const [prof]=await sb.post("profiles",profileData);
+      const prof=await fbSet("profiles",anonId+"_student",profileData).catch(()=>null);
       const profile=prof||profileData;
       saveSession({profile,token:null,role:"student"});
       onAuth(profile,null);
@@ -1740,7 +1773,7 @@ function TutorRegister({onBack, onAuth, onSignIn}){
     try{
       const anonId="anon-t-"+Date.now()+"-"+Math.random().toString(36).slice(2,7);
       const profileData={id:anonId,name:p.name,age:p.age?+p.age:null,gender:p.gender||null,location:p.location||null,role:"tutor",curriculum_level:p.level||null,hourly_rate_online:p.rateOnline?+p.rateOnline:null,hourly_rate_offline:p.rateOffline?+p.rateOffline:null,subjects_taught:p.subjects.length?p.subjects:null};
-      const [prof]=await sb.post("profiles",profileData);
+      const prof=await fbSet("profiles",anonId+"_tutor",profileData).catch(()=>null);
       const profile=prof||profileData;
       saveSession({profile,token:null,role:"tutor"});
       onAuth(profile,null);
@@ -1874,6 +1907,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const [offlineStarted,setOfflineStarted]=useState({}); // lessonId -> true when student pressed START
   const [offlineDropped,setOfflineDropped]=useState(new Set()); // lessonId -> dropped
   const [callLesson,setCallLesson]=useState(null);
+  const [showLessonDetails,setShowLessonDetails]=useState(null); // lesson object
   const pfpRef=useRef();
 
   // Register back handler for open overlays/modals
@@ -1881,6 +1915,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     if(!backHandlerRef)return;
     if(openNote){backHandlerRef.current=()=>setOpenNote(null);return;}
     if(showTutorProfile){backHandlerRef.current=()=>setShowTutorProfile(null);return;}
+    if(showLessonDetails){backHandlerRef.current=()=>setShowLessonDetails(null);return;}
     if(showTutors){backHandlerRef.current=()=>setShowTutors(null);return;}
     if(showHistory){backHandlerRef.current=()=>setShowHistory(false);return;} // history first — manage stays open beneath
     if(showAdd){backHandlerRef.current=()=>setShowAdd(false);return;}
@@ -1889,7 +1924,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     if(cancelLesson){backHandlerRef.current=()=>setCancelLesson(null);return;}
     if(profEdit){backHandlerRef.current=()=>setProfEdit(false);return;}
     backHandlerRef.current=null;
-  },[backHandlerRef,openNote,showTutorProfile,showTutors,showAdd,showManage,showHistory,editLesson,cancelLesson,profEdit]);
+  },[backHandlerRef,openNote,showTutorProfile,showLessonDetails,showTutors,showAdd,showManage,showHistory,editLesson,cancelLesson,profEdit]);
 
   // ── Load all user data from Supabase ──
   useEffect(()=>{
@@ -1906,20 +1941,38 @@ function StudentApp({user,onLogout,backHandlerRef}){
         const m={};
         const declinedIds=new Set();
         const pendingMap={};
+        const tutorIds=new Set();
         reqs.forEach(r=>{
-          if(r.status==="accepted") m[r.lesson_id]=true;
+          if(r.status==="accepted"){m[r.lesson_id]=true;if(r.tutor_id)tutorIds.add(r.tutor_id);}
           if(r.status==="declined") declinedIds.add(r.lesson_id);
-          if(r.status==="pending") pendingMap[r.lesson_id]={tutorName:r.tutor_name,tutorId:r.tutor_id,reqId:r.id};
+          if(r.status==="pending"){pendingMap[r.lesson_id]={tutorName:r.tutor_name,tutorId:r.tutor_id,reqId:r.id};if(r.tutor_id)tutorIds.add(r.tutor_id);}
         });
+        // Fetch tutor profile objects for display in details modal
+        const tutorObjMap={};
+        await Promise.all([...tutorIds].map(async tid=>{
+          try{const tp=await fbGet("profiles",tid+"_tutor")||await fbGet("profiles",tid);if(tp)tutorObjMap[tid]=tp;}catch(e){}
+        }));
+        // Also fetch pfp for each tutor
+        await Promise.all([...tutorIds].map(async tid=>{
+          if(tutorObjMap[tid]&&!tutorObjMap[tid].pfp_url){
+            try{const pfp=await sbAuth.getProfilePhoto(tid,"tutor");if(pfp)tutorObjMap[tid]={...tutorObjMap[tid],pfp_url:pfp};}catch(e){}
+          }
+        }));
         setAcceptedMap(m);
-        setLessons((data||[]).map(l=>({
-          ...l,
-          _accepted:!!m[l.id],
-          _declined:declinedIds.has(l.id)&&!m[l.id],
-          _pending:!!pendingMap[l.id]&&!m[l.id],
-          _tutorName:pendingMap[l.id]?.tutorName||l._tutorName,
-          _tutorId:pendingMap[l.id]?.tutorId||l._tutorId,
-        })));
+        setLessons((data||[]).map(l=>{
+          const req=reqs.find(r=>r.lesson_id===l.id&&(r.status==="accepted"||r.status==="pending"));
+          const tutorId=req?.tutor_id||l._tutorId;
+          const tutorObj=tutorId?tutorObjMap[tutorId]||null:null;
+          return{
+            ...l,
+            _accepted:!!m[l.id],
+            _declined:declinedIds.has(l.id)&&!m[l.id],
+            _pending:!!pendingMap[l.id]&&!m[l.id],
+            _tutorName:pendingMap[l.id]?.tutorName||req?.tutor_name||l._tutorName,
+            _tutorId:tutorId,
+            _tutorObj:tutorObj||l._tutorObj||null,
+          };
+        }));
         // History: lessons that are past their end time
         const now=Date.now();
         const hist=(data||[]).filter(l=>l.start_ts&&(l.start_ts+(l.to_hour-l.from_hour)*3600000)<now);
@@ -1957,18 +2010,41 @@ function StudentApp({user,onLogout,backHandlerRef}){
     })();
   },[user.id]);
 
-  // Auto-trigger call when accepted lesson starts
+  // Auto-trigger call when accepted lesson starts (online only)
   useEffect(()=>{
     const interval=setInterval(()=>{
       const now=Date.now();
       lessons.forEach(l=>{
-        if(!acceptedMap[l.id]||!l.start_ts)return;
+        if(!acceptedMap[l.id]||!l.start_ts||!l.online)return;
         const diff=now-l.start_ts;
-        if(diff>=0&&diff<30000&&callLesson?.id!==l.id){setCallLesson(l);}
+        if(diff>=0&&diff<30000&&callLesson?.id!==l.id){setCallLesson({...l,_autoRing:true});}
       });
     },5000);
     return()=>clearInterval(interval);
   },[lessons,acceptedMap,callLesson]);
+
+  // Periodically sync start_ts from tutor_requests into student lessons (after tutor accepts)
+  useEffect(()=>{
+    if(!user.id||user.id.startsWith("anon-"))return;
+    const sync=async()=>{
+      try{
+        const reqs=await fbQuery("tutor_requests",[{field:"student_id",op:"==",value:user.id},{field:"status",op:"==",value:"accepted"}],null,100);
+        if(!reqs||!reqs.length)return;
+        setLessons(ls=>ls.map(l=>{
+          const r=reqs.find(r=>r.lesson_id===l.id);
+          if(!r)return l;
+          const updates={};
+          if(r.start_ts&&!l.start_ts)updates.start_ts=r.start_ts;
+          if(r.tutor_name&&!l._tutorName)updates._tutorName=r.tutor_name;
+          return Object.keys(updates).length?{...l,...updates}:l;
+        }));
+        setAcceptedMap(m=>{const n={...m};reqs.forEach(r=>{n[r.lesson_id]=true;});return n;});
+      }catch(e){}
+    };
+    sync(); // immediate
+    const id=setInterval(sync,20000); // every 20s
+    return()=>clearInterval(id);
+  },[user.id]);
 
     function hasOverlap(day,from,to,excludeId){
     return lessons.some(l=>{
@@ -2076,19 +2152,41 @@ function StudentApp({user,onLogout,backHandlerRef}){
     <Shell C={C}>
       {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))} onRate={r=>{setNotes(ns=>ns.map(n=>n.id===openNote.id?{...n,userRating:r}:n));setOpenNote(o=>o?{...o,userRating:r}:o);}}/>}
       {callLesson&&<CallDialog lesson={callLesson} user={user} onEnd={(reason)=>{
-        if(callLesson.online||reason==="ended"||reason==="timeout"){
+        // Only auto-drop lesson for online auto-ring with no answer
+        if(reason!=="cancelled"){
           setLessons(ls=>ls.filter(l=>l.id!==callLesson.id));
           setAcceptedMap(m=>{const n={...m};delete n[callLesson.id];return n;});
         }
         setCallLesson(null);
       }} C={C}/>}
       {cancelLesson&&<CancelModal onCancel={t=>handleCancelSession(cancelLesson,t)} onClose={()=>setCancelLesson(null)} C={C}/>}
+      {showLessonDetails&&(()=>{
+        const l=showLessonDetails;
+        const now=Date.now();
+        const lStart=l.start_ts||null;
+        const lEnd=lStart?(lStart+(l.to_hour-l.from_hour)*3600000):null;
+        const withinLoc=!l.online&&lStart&&(now>=lStart-1800000)&&(now<=(lEnd||lStart+3600000));
+        return<LessonDetailsModal lesson={l} C={C} onClose={()=>setShowLessonDetails(null)} withinLocationWindow={withinLoc}
+          onCall={lesson=>{setCallLesson(lesson);setShowLessonDetails(null);}}
+          onLocation={lesson=>{setCallLesson({...lesson,_openLocation:true});setShowLessonDetails(null);}}
+        />;
+      })()}
 
       {tab==="timetable"&&<>
         <Hdr C={C} dm={dm}><PBtn outline C={C} onClick={()=>{setShowManage(true);window.history.pushState({screen:"app",modal:"manage"},"",window.location.pathname);}}>MANAGE</PBtn><PBtn C={C} onClick={()=>setShowAdd(true)}>ADD SLOT</PBtn></Hdr>
         <Scroll>
           {loadingL?<Ldg C={C}/>:
-            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>{if(l._tutorObj&&(l._pending||l._accepted||acceptedMap[l.id])){setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);}else{setShowTutors(l);}}}
+            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>{
+              const isAccepted=l._accepted||acceptedMap[l.id];
+              const isPending=l._pending&&!isAccepted;
+              if(isAccepted||isPending){
+                setShowLessonDetails(l);
+              } else if(l._tutorObj&&(l._pending||l._accepted||acceptedMap[l.id])){
+                setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);
+              } else {
+                setShowTutors(l);
+              }
+            }}
               renderExtra={l=>{
                 const isPending=l._pending&&!l._accepted&&!acceptedMap[l.id]&&!l._declined;
                 const isAccepted=l._accepted||acceptedMap[l.id];
@@ -2213,7 +2311,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
 
       {showTutorProfile&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)setShowTutorProfile(null);}}>
-          <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"24px 22px 36px",maxHeight:"88vh",overflowY:"auto"}}>
+          <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:600,padding:"24px 22px 36px",maxHeight:"88dvh",overflowY:"auto"}}>
             <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
               <div style={{width:60,height:60,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                 <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{showTutorProfile.name?showTutorProfile.name[0].toUpperCase():"?"}</span>
@@ -2327,9 +2425,9 @@ function TutorApp({user,onLogout,backHandlerRef}){
     if(!user.id||user.id.startsWith("anon-"))return;
     (async()=>{
       try{
-        const [wrow]=await sb.get("wallets","?user_id=eq."+user.id+"&limit=1");
+        const wrow=await fbGet("wallets",user.id);
         if(wrow){setWalletBal(wrow.balance||0);}
-        const txs=await sb.get("wallet_transactions","?user_id=eq."+user.id+"&order=created_at.desc&limit=50");
+        const txs=await fbQuery("wallet_transactions",[{field:"user_id",op:"==",value:user.id}],{field:"created_at",dir:"desc"},50);
         if(txs&&txs.length){
           setWalletTx(txs.map(t=>({id:t.id,label:t.label||"Transaction",amount:t.amount,type:t.amount>=0?"credit":"debit",date:new Date(t.created_at).toLocaleDateString()})));
         }
@@ -2426,15 +2524,15 @@ function TutorApp({user,onLogout,backHandlerRef}){
     })();
   },[user.id]);
 
-  // Trigger call when accepted lesson starts
+  // Trigger call when accepted lesson starts (online only)
   useEffect(()=>{
     const booked=requests.filter(r=>r.status==="accepted");
     const interval=setInterval(()=>{
       const now=Date.now();
       booked.forEach(l=>{
-        if(!l.start_ts)return;
+        if(!l.start_ts||!l.online)return;
         const diff=now-l.start_ts;
-        if(diff>=0&&diff<30000&&callLesson?.id!==l.id){setCallLesson(l);}
+        if(diff>=0&&diff<30000&&callLesson?.id!==l.id){setCallLesson({...l,_autoRing:true});}
       });
     },5000);
     return()=>clearInterval(interval);
@@ -2463,12 +2561,37 @@ function TutorApp({user,onLogout,backHandlerRef}){
     }
     setReqSaving(true);
     try{
-      await fbUpdate("tutor_requests",reqId,{status});
+      // Compute start_ts in EAT when accepting
+      let updateData={status};
+      if(status==="accepted"&&!req.start_ts){
+        // Find next occurrence of the lesson day in EAT
+        const EAT_OFFSET=3*60*60*1000; // UTC+3
+        const nowEAT=new Date(Date.now()+EAT_OFFSET);
+        const DAY_IDX={MON:1,TUE:2,WED:3,THU:4,FRI:5,SAT:6,SUN:0};
+        const targetDay=DAY_IDX[req.day]??1;
+        const todayDay=nowEAT.getUTCDay();
+        let daysAhead=(targetDay-todayDay+7)%7;
+        // If today is the day but the hour has already passed, next week
+        const hourNow=nowEAT.getUTCHours()+(nowEAT.getUTCMinutes()/60);
+        if(daysAhead===0&&hourNow>=req.from_hour)daysAhead=7;
+        // Build the EAT date at the lesson hour
+        const fromH=Math.floor(req.from_hour);
+        const fromM=Math.round((req.from_hour-fromH)*60);
+        const eatDate=new Date(Date.UTC(
+          nowEAT.getUTCFullYear(),nowEAT.getUTCMonth(),nowEAT.getUTCDate()+daysAhead,
+          fromH-3, fromM, 0, 0 // subtract EAT offset to get UTC
+        ));
+        updateData.start_ts=eatDate.getTime();
+        // Also write start_ts back to the lesson doc
+        if(req.lesson_id){
+          fbUpdate("lessons",req.lesson_id,{start_ts:updateData.start_ts}).catch(()=>{});
+        }
+      }
+      await fbUpdate("tutor_requests",reqId,updateData);
       if(status==="declined"){
-        // Remove declined requests from the list entirely
         setRequests(r=>r.filter(x=>x.id!==reqId));
       }else{
-        setRequests(r=>r.map(x=>x.id===reqId?{...x,status}:x));
+        setRequests(r=>r.map(x=>x.id===reqId?{...x,...updateData}:x));
       }
       setShowReq(null);
     }catch(e){}finally{setReqSaving(false);}
@@ -2476,7 +2599,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
 
   async function handleCancelBooked(req,type){
     setCancelReq(null);
-    try{await sb.patch("tutor_requests","?id=eq."+req.id,{status:"cancelled"});showToast("Session cancelled","ok");}catch(e){showToast("Cancel failed","error");}
+    try{await fbUpdate("tutor_requests",req.id,{status:"cancelled"});showToast("Session cancelled","ok");}catch(e){showToast("Cancel failed","error");}
     setRequests(r=>r.map(x=>x.id===req.id?{...x,status:"cancelled"}:x));
   }
 
@@ -2578,7 +2701,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
         <CnBtn C={C} onClick={()=>setEditingNote(null)}>CANCEL</CnBtn>
       </Modal>}
       {callLesson&&<CallDialog lesson={callLesson} user={user} onEnd={(reason)=>{
-        if(callLesson.online||reason==="ended"||reason==="timeout"){
+        if(reason!=="cancelled"){
           // Credit tutor wallet: 90% of lesson fee (10% platform commission)
           if(reason==="ended"){
             const hours=(callLesson.to_hour-callLesson.from_hour)||1;
@@ -2654,7 +2777,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
         </Scroll>
       </>}
 
-      {showStudentProf&&<StudentProfileModal lesson={showStudentProf} C={C} onClose={()=>setShowStudentProf(null)} onCall={l=>{setCallLesson(l);setShowStudentProf(null);}}/>}
+      {showStudentProf&&<StudentProfileModal lesson={showStudentProf} C={C} onClose={()=>setShowStudentProf(null)} onCall={l=>{setCallLesson(l);setShowStudentProf(null);}} onLocation={l=>{setCallLesson({...l,_openLocation:true});setShowStudentProf(null);}}/>}
       {showWallet&&<WalletModal bal={walletBal} txs={walletTx} withdrawAmt={withdrawAmt} setWithdrawAmt={setWithdrawAmt} withdrawMsg={withdrawMsg} onWithdraw={doWithdraw} onClose={()=>setShowWallet(false)} C={C} tutorPhone={profile.phone||profile.mpesa_phone||""}/>}
       <BotNav tab={tab} setTab={setTab} C={C}/>
 
@@ -2784,7 +2907,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
 }
 
 /* ══ SHARED COMPONENTS ══ */
-function Shell({C,children}){return <div style={{fontFamily:"Barlow,sans-serif",background:C.bg,color:C.text,height:"100vh",maxWidth:430,margin:"0 auto",display:"flex",flexDirection:"column",overflow:"hidden",position:"relative"}}>{children}</div>;}
+function Shell({C,children}){return <div style={{fontFamily:"Barlow,sans-serif",background:C.bg,color:C.text,height:"100dvh",width:"100%",maxWidth:600,margin:"0 auto",display:"flex",flexDirection:"column",overflow:"hidden",position:"relative"}}>{children}</div>;}
 function Scroll({children}){return <div style={{flex:1,overflowY:"auto",paddingBottom:72}}>{children}</div>;}
 function Hdr({C,dm,children}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{children}</div></div>);}
 function IdentHdr({C,dm,setDm,onWallet,onEditIdentity,onLogout,onDeleteAccount}){
@@ -2810,7 +2933,7 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onDeleteAccount,onClo
   const ok=delWord.trim().toLowerCase()==="delete";
   if(showDel) return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.92)",zIndex:252,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"32px 24px 56px"}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:600,padding:"32px 24px 56px"}}>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:"#EF4444",letterSpacing:1.5,marginBottom:8}}>🗑 DELETE ACCOUNT</div>
         <div style={{fontSize:13,color:C.text,lineHeight:1.6,marginBottom:4}}>Permanently deletes your profile and all data.<br/><b>Cannot be undone.</b></div>
         <div style={{fontSize:12,color:C.sub,marginBottom:16}}>Type <b style={{color:C.text}}>delete</b> to confirm:</div>
@@ -2826,7 +2949,7 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onDeleteAccount,onClo
   );
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:250,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"28px 22px 44px"}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:600,padding:"28px 22px 44px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24}}>
           <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text,letterSpacing:1}}>⚙️ SETTINGS</div>
           <button onClick={onClose} style={{width:32,height:32,borderRadius:8,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,cursor:"pointer",fontSize:16}}>✕</button>
@@ -2870,8 +2993,23 @@ function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
             <div style={{width:52,padding:"14px 0 14px 14px",flexShrink:0}}><span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1.5,color:C.sub}}>{day}</span></div>
             <div style={{flex:1,padding:"8px 10px 8px 6px",display:"flex",flexDirection:"column",gap:5}}>
               {dl.length===0?<span style={{fontSize:10,color:C.border,letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,paddingTop:4}}>NO PLANS</span>:
-                dl.map(l=>(
-                  <div key={l.id} onClick={()=>onTap&&onTap(l)} style={{borderRadius:10,padding:"6px 10px",background:l._accepted?"#E8F5E9":l._pending?"#FFF3E0":l._declined?"#FFE4E6":"#FCE4EC",border:"1px solid "+(l._accepted?"#66BB6A":l._pending?"#FFB74D":l._declined?"#FECDD3":"#F8BBD9"),cursor:onTap?"pointer":"default",display:"flex",flexDirection:"column",gap:1}}>
+  dl.map(l=>{
+                    // Determine role context from showStudent prop
+                    // Student states: added(no tutor)=light pink, requested=light orange, accepted=light green
+                    // Tutor states: accepted=standard green
+                    const isTutorView=!!showStudent;
+                    let cardBg,cardBorder;
+                    if(isTutorView){
+                      // Tutor always sees green for their accepted bookings
+                      cardBg="#D1FAE5";cardBorder="#6EE7B7";
+                    } else {
+                      if(l._accepted){cardBg="#D1FAE5";cardBorder="#86EFAC";} // light green — accepted by tutor
+                      else if(l._pending){cardBg="#FEF3C7";cardBorder="#FCD34D";} // light orange — requested
+                      else if(l._declined){cardBg="#FFE4E6";cardBorder="#FECDD3";}
+                      else{cardBg="#FCE4EC";cardBorder="#F8BBD9";} // light pink — added, no tutor yet
+                    }
+                    return(
+                  <div key={l.id} onClick={()=>onTap&&onTap(l)} style={{borderRadius:10,padding:"6px 10px",background:cardBg,border:"1px solid "+cardBorder,cursor:onTap?"pointer":"default",display:"flex",flexDirection:"column",gap:1}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                       <div style={{display:"flex",alignItems:"center",gap:5}}>
                         <span style={{fontSize:13}}>{l.online?"🌐":"📍"}</span>
@@ -2882,7 +3020,8 @@ function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
                     {showStudent&&l.student_name&&<div style={{fontSize:10,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>👤 {l.student_name}</div>}
                     {renderExtra&&renderExtra(l)}
                   </div>
-                ))
+                  );
+                })
               }
             </div>
           </div>
@@ -2892,11 +3031,15 @@ function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
   );
 }
 
-function StudentProfileModal({lesson,C,onClose,onCall}){
+function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
   if(!lesson)return null;
+  const now=Date.now();
+  const lessonStartMs=lesson.start_ts||null;
+  const lessonEndMs=lessonStartMs?(lessonStartMs+(lesson.to_hour-lesson.from_hour)*3600000):null;
+  const withinLocationWindow=!lesson.online&&lessonStartMs&&(now>=lessonStartMs-1800000)&&(now<=(lessonEndMs||lessonStartMs+3600000));
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"24px 22px 36px",maxHeight:"88vh",overflowY:"auto"}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:600,padding:"24px 22px 36px",maxHeight:"88dvh",overflowY:"auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
           <div style={{width:60,height:60,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
             <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{lesson.student_name?lesson.student_name[0].toUpperCase():"?"}</span>
@@ -2905,9 +3048,17 @@ function StudentProfileModal({lesson,C,onClose,onCall}){
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{lesson.student_name||"Student"}</div>
             <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} {timeLbl(lesson.from_hour)}–{timeLbl(lesson.to_hour)}</div>
           </div>
-          {onCall&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}} title="Start voice call (3 min limit)">
-            <span style={{fontSize:20}}>"🎙️"</span>
-          </button>}
+          {/* Action buttons */}
+          <div style={{display:"flex",gap:8,flexShrink:0}}>
+            {withinLocationWindow&&(
+              <button onClick={()=>{onClose();onLocation&&onLocation(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#F59E0B",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title="Live location (30 min before lesson)">
+                📍
+              </button>
+            )}
+            {onCall&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title="Start voice call (3 min limit)">
+              🎙️
+            </button>}
+          </div>
         </div>
         {[
           {label:"MODE",value:lesson.online?"🌐 Online":"📍 Offline"},
@@ -2931,11 +3082,81 @@ function StudentProfileModal({lesson,C,onClose,onCall}){
             <div style={{fontSize:13,color:C.text,lineHeight:1.6,fontStyle:"italic"}}>"{lesson.description}"</div>
           </div>
         )}
+        <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.6}}>
+          🎙️ Voice call limited to 3 minutes. Hanging up does not cancel or drop the lesson.
+          {!lesson.online&&" · 📍 Location sharing available 30 min before lesson starts."}
+        </div>
         <button onClick={onClose} style={{marginTop:18,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
       </div>
     </div>
   );
 }
+/* ══ LESSON DETAILS MODAL (Student) ══ */
+function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWindow}){
+  if(!lesson)return null;
+  const isAccepted=lesson._accepted;
+  const isPending=lesson._pending&&!isAccepted;
+  const tutorName=lesson._tutorName||lesson._tutorObj?.name||null;
+  const tutorObj=lesson._tutorObj||null;
+  const statusColor=isAccepted?"#166634":isPending?"#92400E":"#9F1239";
+  const statusText=isAccepted?("✓ Accepted by "+tutorName):isPending?("⏳ Awaiting "+tutorName):"Unbooked";
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:600,padding:"24px 22px 36px",maxHeight:"88dvh",overflowY:"auto"}}>
+        {/* Header row */}
+        <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
+          <div style={{width:60,height:60,borderRadius:"50%",background:isAccepted?"#D1FAE5":isPending?"#FEF3C7":"#FCE4EC",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,border:"2px solid "+(isAccepted?"#86EFAC":isPending?"#FCD34D":"#F8BBD9")}}>
+            {tutorObj?.pfp_url?<img src={tutorObj.pfp_url} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"50%"}} alt=""/>:<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:"#111"}}>{(tutorName||lesson.subject||"?")[0].toUpperCase()}</span>}
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{lesson.subject}</div>
+            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.day} · {timeLbl(lesson.from_hour)}–{timeLbl(lesson.to_hour)} · {lesson.online?"🌐 Online":"📍 Offline"}</div>
+          </div>
+          {/* Action buttons — only for accepted lessons */}
+          {isAccepted&&(
+            <div style={{display:"flex",gap:8,flexShrink:0}}>
+              {withinLocationWindow&&!lesson.online&&(
+                <button onClick={()=>{onClose();onLocation&&onLocation(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#F59E0B",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title="Live location (30 min before lesson)">
+                  📍
+                </button>
+              )}
+              <button onClick={()=>{onClose();onCall&&onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title="Voice call · 3 min">
+                🎙️
+              </button>
+            </div>
+          )}
+        </div>
+        {/* Status badge */}
+        <div style={{fontSize:11,fontWeight:800,color:statusColor,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5,marginBottom:16,padding:"6px 12px",borderRadius:8,background:isAccepted?"rgba(22,101,52,.08)":isPending?"rgba(146,64,14,.08)":"rgba(159,18,57,.08)",display:"inline-block"}}>{statusText}</div>
+        {/* Details */}
+        {[
+          {label:"MODE",value:lesson.online?"🌐 Online":"📍 Offline"},
+          {label:"DAY",value:lesson.day},
+          {label:"TIME",value:timeLbl(lesson.from_hour)+" – "+timeLbl(lesson.to_hour)},
+          {label:"SUBJECT",value:lesson.subject},
+          tutorName&&{label:"TUTOR",value:tutorName},
+          tutorObj?.curriculum_level&&{label:"LEVEL",value:tutorObj.curriculum_level},
+          tutorObj?.hourly_rate_online&&lesson.online&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_online+"/hr"},
+          tutorObj?.hourly_rate_offline&&!lesson.online&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_offline+"/hr"},
+        ].filter(Boolean).map(row=>(
+          <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid "+C.border}}>
+            <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
+            <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
+          </div>
+        ))}
+        {/* Call/Location helper text */}
+        {isAccepted&&(
+          <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.6}}>
+            🎙️ Voice call limited to 3 minutes. Hanging up does not cancel the lesson.
+            {!lesson.online&&" · 📍 Location sharing available 30 min before lesson starts."}
+          </div>
+        )}
+        <button onClick={onClose} style={{marginTop:18,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
+      </div>
+    </div>
+  );
+}
+
 function CoverEditPage({src,pos,onSave,onChangeCover,onClose,noteTitle,noteSubject,C}){
   const [curPos,setCurPos]=React.useState(pos);
   const imgRef=React.useRef();
@@ -3057,12 +3278,12 @@ function NoteGrid({notes,C,onLike,onSave,onOpen,onEdit}){
   );
 }
 function ProfCard({profile,editP,setEditP,editing,pfpRef,C}){
-  const src=editP.pfp_local||editP.pfp_url||profile.pfp_url||null;
+  const src=editing?(editP.pfp_local||editP.pfp_url||profile.pfp_url||null):(profile.pfp_url||null);
   return(
     <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:24,margin:"14px 14px 16px",padding:"16px 14px 14px",display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
-      <div onClick={()=>editing&&pfpRef.current.click()} style={{width:96,height:96,borderRadius:"50%",background:C.surfaceAlt,border:"2px solid "+C.border,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",cursor:editing?"pointer":"default"}}>
-        {src?<img src={src} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="pfp"/>:<span style={{fontSize:40}}>👤</span>}
-        <div style={{position:"absolute",bottom:0,right:0,width:28,height:28,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>📷</div>
+      <div onClick={()=>editing&&pfpRef&&pfpRef.current&&pfpRef.current.click()} style={{width:96,height:96,borderRadius:"50%",background:C.surfaceAlt,border:"2px solid "+C.border,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",cursor:editing?"pointer":"default"}}>
+        {src?<img src={src} style={{width:"100%",height:"100%",objectFit:"cover"}} alt="pfp" onError={e=>{e.target.style.display="none";}}/>:<span style={{fontSize:40}}>👤</span>}
+        {editing&&<div style={{position:"absolute",bottom:0,right:0,width:28,height:28,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,border:"2px solid "+C.surface}}>📷</div>}
       </div>
       <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,letterSpacing:2,color:C.text,textAlign:"center"}}>{profile.name||"YOUR NAME"}</div>
       <div style={{fontSize:12,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1}}>{[profile.age&&profile.age+" YRS",profile.grade||profile.curriculum_level].filter(Boolean).join(" • ")||"—"}</div>
@@ -3181,7 +3402,7 @@ function WalletModal({bal,txs,withdrawAmt,setWithdrawAmt,withdrawMsg,onWithdraw,
 
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,maxHeight:"90vh",overflowY:"auto",paddingBottom:32}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:600,maxHeight:"90dvh",overflowY:"auto",paddingBottom:32}}>
         {/* Header */}
         <div style={{padding:"20px 20px 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
@@ -3255,7 +3476,7 @@ function HistoryModal({history,onClose,C,isStudent}){
   function fmtTime(h){const hh=Math.floor(h),mm=Math.round((h-hh)*60);const p=hh>=12?"PM":"AM";const h12=hh%12||12;return String(h12).padStart(2,"0")+":"+String(mm).padStart(2,"0")+" "+p;}
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,maxHeight:"88vh",overflowY:"auto",paddingBottom:32}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:600,maxHeight:"88dvh",overflowY:"auto",paddingBottom:32}}>
         <div style={{padding:"20px 20px 0",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
           <div>
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text,letterSpacing:1}}>📋 HISTORY</div>
@@ -3300,7 +3521,7 @@ function BotNav({tab,setTab,C}){
     </div>
   );
 }
-function Modal({children,onClose,C}){return(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}><div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:430,padding:"24px 22px 36px",maxHeight:"88vh",overflowY:"auto"}}>{children}</div></div>);}
+function Modal({children,onClose,C}){return(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}><div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:600,padding:"24px 22px 36px",maxHeight:"88dvh",overflowY:"auto"}}>{children}</div></div>);}
 function MT({children}){return <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1,marginBottom:4,display:"flex",alignItems:"center",gap:8}}>{children}</div>;}
 function MS({children,C}){return <div style={{fontSize:13,color:C.sub,marginBottom:20}}>{children}</div>;}
 function ML({children,C}){return <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,marginBottom:6,textTransform:"uppercase",fontFamily:"'Barlow Condensed',sans-serif"}}>{children}</div>;}
