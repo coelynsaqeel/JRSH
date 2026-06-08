@@ -345,6 +345,23 @@ async function fbDel(col,id){
   try{await _db.collection(col).doc(id).delete();return true;}
   catch(e){console.warn("fbDel",col,id,e.message);return false;}
 }
+// Lightweight polling-based listener — calls cb(docs) whenever docs change
+// Returns a cancel function.  Poll every `intervalMs` ms.
+function fbPoll(col,filters,cb,intervalMs=8000){
+  let active=true;
+  let lastSig="";
+  async function tick(){
+    if(!active)return;
+    try{
+      const docs=await fbQuery(col,filters,null,200);
+      const sig=JSON.stringify(docs.map(d=>d.id+"@"+(d.updatedAt||d.createdAt||"")));
+      if(sig!==lastSig){lastSig=sig;cb(docs);}
+    }catch(e){}
+    if(active)setTimeout(tick,intervalMs);
+  }
+  setTimeout(tick,intervalMs); // first tick after initial load
+  return()=>{active=false;}
+}
 
 /* ── sb shim (existing call sites) ── */
 const sb={
@@ -1987,6 +2004,8 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const [openNote,setOpenNote]=useState(null);
   const [notePages,setNotePages]=useState({});
   const [cancelLesson,setCancelLesson]=useState(null);
+  const [editErr,setEditErr]=useState("");
+  const [ratingMap,setRatingMap]=useState({}); // noteId -> {rating,id}
   const [offlineStarted,setOfflineStarted]=useState({}); // lessonId -> true when student pressed START
   const [offlineDropped,setOfflineDropped]=useState(new Set()); // lessonId -> dropped
   const [callLesson,setCallLesson]=useState(null);
@@ -2129,7 +2148,81 @@ function StudentApp({user,onLogout,backHandlerRef}){
     return()=>clearInterval(id);
   },[user.id]);
 
-    function hasOverlap(day,from,to,excludeId){
+  // ── Poll tutor_requests so student sees tutor-side cancels/changes in real-time ──
+  useEffect(()=>{
+    if(!user.id||user.id.startsWith("anon-"))return;
+    const cancel=fbPoll("tutor_requests",[{field:"student_id",op:"==",value:user.id}],docs=>{
+      setRequests && void 0; // requests not in student scope but we derive from docs
+      const m={};const declinedIds=new Set();const pendingMap={};
+      docs.forEach(r=>{
+        if(r.status==="accepted"){m[r.lesson_id]=true;}
+        if(r.status==="declined")declinedIds.add(r.lesson_id);
+        if(r.status==="pending"){pendingMap[r.lesson_id]={tutorName:r.tutor_name,tutorId:r.tutor_id,reqId:r.id};}
+      });
+      setAcceptedMap(m);
+      setLessons(ls=>ls.map(l=>({
+        ...l,
+        _accepted:!!m[l.id],
+        _declined:declinedIds.has(l.id)&&!m[l.id],
+        _pending:!!pendingMap[l.id]&&!m[l.id],
+        _tutorName:pendingMap[l.id]?.tutorName||l._tutorName,
+        _tutorId:pendingMap[l.id]?.tutorId||l._tutorId,
+      })));
+    },9000);
+    // Also poll lessons collection so student sees tutor-side edits to lesson docs
+    const cancelL=fbPoll("lessons",[{field:"student_id",op:"==",value:user.id}],docs=>{
+      setLessons(ls=>{
+        const ids=new Set(ls.map(l=>l.id));
+        const merged=docs.map(d=>{
+          const existing=ls.find(l=>l.id===d.id)||{};
+          return{...existing,...d};
+        });
+        return merged;
+      });
+    },9000);
+    return()=>{cancel();cancelL();};
+  },[user.id]);
+
+  // ── Load persisted note ratings for this student ──
+  useEffect(()=>{
+    if(!user.id||user.id.startsWith("anon-"))return;
+    (async()=>{
+      try{
+        const rows=await fbQuery("note_ratings",[{field:"user_id",op:"==",value:user.id}],null,500);
+        const map={};(rows||[]).forEach(r=>{map[r.note_id]={rating:r.rating,id:r.id};});
+        setRatingMap(map);
+        // Also merge userRating into notes state
+        setNotes(ns=>ns.map(n=>{
+          const r=map[n.id];return r?{...n,userRating:r.rating}:n;
+        }));
+      }catch(e){}
+    })();
+  },[user.id]);
+
+  async function handleRateNote(noteId,rating){
+    const prev=ratingMap[noteId];
+    setRatingMap(m=>({...m,[noteId]:{...prev,rating}}));
+    setNotes(ns=>ns.map(n=>n.id===noteId?{...n,userRating:rating}:n));
+    setOpenNote(o=>o&&o.id===noteId?{...o,userRating:rating}:o);
+    try{
+      if(prev?.id){
+        await fbUpdate("note_ratings",prev.id,{rating});
+      }else{
+        const row=await fbAdd("note_ratings",{note_id:noteId,user_id:user.id,rating});
+        if(row)setRatingMap(m=>({...m,[noteId]:{rating,id:row.id}}));
+      }
+      // Recompute average rating and store it on the note doc
+      const allRatings=await fbQuery("note_ratings",[{field:"note_id",op:"==",value:noteId}],null,500);
+      if(allRatings&&allRatings.length){
+        const avg=allRatings.reduce((s,r)=>s+r.rating,0)/allRatings.length;
+        const rounded=Math.round(avg*10)/10;
+        await fbUpdate("notes",noteId,{rating:rounded,rating_count:allRatings.length});
+        setNotes(ns=>ns.map(n=>n.id===noteId?{...n,rating:rounded,rating_count:allRatings.length}:n));
+      }
+    }catch(e){}
+  }
+
+  function hasOverlap(day,from,to,excludeId){
     return lessons.some(l=>{
       if(l.day!==day)return false;
       if(excludeId&&l.id===excludeId)return false;
@@ -2161,9 +2254,28 @@ function StudentApp({user,onLogout,backHandlerRef}){
   }
 
   async function handleSaveEdit(){
-    if(!editLesson||saving)return;setSaving(true);
+    if(!editLesson||saving)return;
+    setEditErr("");
+    if(editLesson.from_hour>=editLesson.to_hour){setEditErr("Start time must be before end time.");return;}
+    // Overlap check: against student's own other lessons
+    const ownClash=lessons.find(l=>l.id!==editLesson.id&&l.day===editLesson.day&&editLesson.from_hour<l.to_hour&&editLesson.to_hour>l.from_hour);
+    if(ownClash){setEditErr(`Overlaps your own lesson: ${ownClash.subject} ${timeLbl(ownClash.from_hour)}–${timeLbl(ownClash.to_hour)} on ${ownClash.day}.`);return;}
+    // Overlap check: if a tutor is assigned, also check their other accepted bookings
+    if(editLesson._tutorId){
+      try{
+        const tutorBooked=await fbQuery("tutor_requests",[{field:"tutor_id",op:"==",value:editLesson._tutorId},{field:"status",op:"==",value:"accepted"}],null,100);
+        const tutorClash=tutorBooked.find(r=>r.lesson_id!==editLesson.id&&r.day===editLesson.day&&editLesson.from_hour<r.to_hour&&editLesson.to_hour>r.from_hour);
+        if(tutorClash){setEditErr(`That slot overlaps the tutor's other lesson: ${tutorClash.subject} ${timeLbl(tutorClash.from_hour)}–${timeLbl(tutorClash.to_hour)} on ${tutorClash.day}.`);return;}
+      }catch(e){}
+    }
+    setSaving(true);
     try{
       await fbUpdate("lessons",editLesson.id,{subject:editLesson.subject,day:editLesson.day,from_hour:editLesson.from_hour,to_hour:editLesson.to_hour,description:editLesson.description,online:editLesson.online});
+      // Also update the tutor_request row so the tutor sees new details immediately
+      try{
+        const reqs=await fbQuery("tutor_requests",[{field:"lesson_id",op:"==",value:editLesson.id}],null,10);
+        await Promise.all(reqs.map(r=>fbUpdate("tutor_requests",r.id,{subject:editLesson.subject,day:editLesson.day,from_hour:editLesson.from_hour,to_hour:editLesson.to_hour,online:editLesson.online})));
+      }catch(e){}
       setLessons(l=>l.map(x=>x.id===editLesson.id?{...x,...editLesson}:x));setEditLesson(null);showToast("Changes saved","ok");
     }catch(e){showToast("Save failed","error");}finally{setSaving(false);}
   }
@@ -2190,9 +2302,10 @@ function StudentApp({user,onLogout,backHandlerRef}){
 
   async function handleCancelSession(lesson,type){
     setCancelLesson(null);
-    if(!1){
-      try{const _crs=await fbQuery("tutor_requests",[{field:"lesson_id",op:"==",value:lesson.id}]);await Promise.all(_crs.map(r=>fbUpdate("tutor_requests",r.id,{status:"cancelled"})));}catch(e){}
-    }
+    try{
+      const _crs=await fbQuery("tutor_requests",[{field:"lesson_id",op:"==",value:lesson.id}]);
+      await Promise.all(_crs.map(r=>fbUpdate("tutor_requests",r.id,{status:"cancelled"})));
+    }catch(e){}
     handleDeleteLesson(lesson.id);
   }
 
@@ -2229,7 +2342,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
 
   return(
     <Shell C={C}>
-      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))} onRate={r=>{setNotes(ns=>ns.map(n=>n.id===openNote.id?{...n,userRating:r}:n));setOpenNote(o=>o?{...o,userRating:r}:o);}}/>}
+      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))} onRate={r=>handleRateNote(openNote.id,r)}/>}
       {callLesson&&<CallDialog lesson={callLesson} user={user} onEnd={(reason)=>{
         // Only auto-drop lesson for online auto-ring with no answer
         if(reason!=="cancelled"){
@@ -2359,15 +2472,16 @@ function StudentApp({user,onLogout,backHandlerRef}){
         {editLesson?(
           <>
             <MT>✏️ Edit Session</MT><MS C={C}>Modify details.</MS>
-            <ML C={C}>SUBJECT</ML><Picker value={editLesson.subject} onChange={v=>setEditLesson(l=>({...l,subject:v}))} items={SUBJECTS} placeholder="Select" C={C}/>
-            <ML C={C}>DAY</ML><Picker value={editLesson.day} onChange={v=>setEditLesson(l=>({...l,day:v}))} items={DAYS.map((d,i)=>({label:d+" – "+DAY_FULL[i],value:d}))} placeholder="Day" C={C}/>
+            <ML C={C}>SUBJECT</ML><Picker value={editLesson.subject} onChange={v=>{setEditErr("");setEditLesson(l=>({...l,subject:v}));}} items={SUBJECTS} placeholder="Select" C={C}/>
+            <ML C={C}>DAY</ML><Picker value={editLesson.day} onChange={v=>{setEditErr("");setEditLesson(l=>({...l,day:v}));}} items={DAYS.map((d,i)=>({label:d+" – "+DAY_FULL[i],value:d}))} placeholder="Day" C={C}/>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-              <TimePicker label="FROM" value={editLesson.from_hour} onChange={v=>setEditLesson(l=>({...l,from_hour:v}))} C={C}/>
-              <TimePicker label="TO" value={editLesson.to_hour} onChange={v=>setEditLesson(l=>({...l,to_hour:v}))} C={C}/>
+              <TimePicker label="FROM" value={editLesson.from_hour} onChange={v=>{setEditErr("");setEditLesson(l=>({...l,from_hour:v}));}} C={C}/>
+              <TimePicker label="TO" value={editLesson.to_hour} onChange={v=>{setEditErr("");setEditLesson(l=>({...l,to_hour:v}));}} C={C}/>
             </div>
             <ML C={C}>MODE</ML><ModeRow online={editLesson.online} C={C} setOnline={v=>setEditLesson(l=>({...l,online:v}))}/>
+            {editErr&&<div style={{fontSize:11,color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginBottom:8,lineHeight:1.4}}>{editErr}</div>}
             <SvBtn C={C} onClick={handleSaveEdit} loading={saving}>✓ SAVE</SvBtn>
-            <CnBtn C={C} onClick={()=>setEditLesson(null)}>← BACK</CnBtn>
+            <CnBtn C={C} onClick={()=>{setEditLesson(null);setEditErr("");}}>← BACK</CnBtn>
           </>
         ):(
           <>
@@ -2521,6 +2635,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const [archFilter,setArchFilter]=useState("ALL");
   const [archSearch,setArchSearch]=useState("");
   const [interactions,setInteractions]=useState({});
+  const [ratingMap,setRatingMap]=useState({});
   const [showPublish,setShowPublish]=useState(false);
   const [showCoverEdit,setShowCoverEdit]=useState(false);
   const [pubForm,setPubForm]=useState({title:"",subject:"",file:null,coverPreview:null,coverFile:null});
@@ -2637,6 +2752,60 @@ function TutorApp({user,onLogout,backHandlerRef}){
       finally{setLoadingN(false);}
     })();
   },[user.id]);
+
+  // ── Poll tutor_requests so tutor sees student-side cancellations in real-time ──
+  useEffect(()=>{
+    if(!user.id||user.id.startsWith("anon-"))return;
+    const cancel=fbPoll("tutor_requests",[{field:"tutor_id",op:"==",value:user.id}],docs=>{
+      setRequests(prev=>{
+        // Merge: keep local state shape, update status/fields from Firestore
+        const byId={};docs.forEach(d=>{byId[d.id]=d;});
+        // Remove rows that are now gone from Firestore (deleted lesson)
+        const merged=prev
+          .filter(r=>byId[r.id]||r.id.startsWith("local-"))
+          .map(r=>byId[r.id]?{...r,...byId[r.id]}:r);
+        // Add newly appeared rows
+        docs.forEach(d=>{if(!merged.find(r=>r.id===d.id))merged.push(d);});
+        return merged;
+      });
+    },9000);
+    return()=>cancel();
+  },[user.id]);
+
+  // ── Load persisted note ratings for tutor (own notes rated by others aren't shown as "mine" but tutor can still rate others) ──
+  useEffect(()=>{
+    if(!user.id||user.id.startsWith("anon-"))return;
+    (async()=>{
+      try{
+        const rows=await fbQuery("note_ratings",[{field:"user_id",op:"==",value:user.id}],null,500);
+        const map={};(rows||[]).forEach(r=>{map[r.note_id]={rating:r.rating,id:r.id};});
+        setRatingMap(map);
+        setNotes(ns=>ns.map(n=>{const r=map[n.id];return r?{...n,userRating:r.rating}:n;}));
+      }catch(e){}
+    })();
+  },[user.id]);
+
+  async function handleRateNote(noteId,rating){
+    const prev=ratingMap[noteId];
+    setRatingMap(m=>({...m,[noteId]:{...prev,rating}}));
+    setNotes(ns=>ns.map(n=>n.id===noteId?{...n,userRating:rating}:n));
+    setOpenNote(o=>o&&o.id===noteId?{...o,userRating:rating}:o);
+    try{
+      if(prev?.id){
+        await fbUpdate("note_ratings",prev.id,{rating});
+      }else{
+        const row=await fbAdd("note_ratings",{note_id:noteId,user_id:user.id,rating});
+        if(row)setRatingMap(m=>({...m,[noteId]:{rating,id:row.id}}));
+      }
+      const allRatings=await fbQuery("note_ratings",[{field:"note_id",op:"==",value:noteId}],null,500);
+      if(allRatings&&allRatings.length){
+        const avg=allRatings.reduce((s,r)=>s+r.rating,0)/allRatings.length;
+        const rounded=Math.round(avg*10)/10;
+        await fbUpdate("notes",noteId,{rating:rounded,rating_count:allRatings.length});
+        setNotes(ns=>ns.map(n=>n.id===noteId?{...n,rating:rounded,rating_count:allRatings.length}:n));
+      }
+    }catch(e){}
+  }
 
   // Trigger call when accepted lesson starts (online only)
   useEffect(()=>{
@@ -2822,7 +2991,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
 
   return(
     <Shell C={C}>
-      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))}/>}
+      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))} onRate={r=>handleRateNote(openNote.id,r)}/>}
       {showNoteEditCover&&editingNote&&editingNote.cover_url&&<CoverEditPage
         src={editingNote.cover_url}
         pos={editingNote.cover_pos||{x:50,y:50}}
@@ -3437,7 +3606,7 @@ function NoteGrid({notes,C,onLike,onSave,onOpen,onEdit}){
           <div style={{height:140,position:"relative",background:note.cover_color||"#eee"}}>
             {note.cover_url?<img src={note.cover_url} alt="" style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:note.cover_pos?`${note.cover_pos.x}% ${note.cover_pos.y}%`:"center"}} onError={e=>e.target.style.display="none"}/>:
               <div style={{width:"100%",height:"100%",background:note.cover_color||"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:32,opacity:.35}}>📄</span></div>}
-            {note.rating>0&&<div style={{position:"absolute",top:10,left:10,background:"rgba(255,255,255,.92)",borderRadius:50,padding:"3px 10px",fontSize:12,fontWeight:800,fontFamily:"'Barlow Condensed',sans-serif",color:"#111"}}>{note.rating}★</div>}
+            {note.rating>0&&<div style={{position:"absolute",top:10,left:10,background:"rgba(255,255,255,.92)",borderRadius:50,padding:"3px 10px",fontSize:12,fontWeight:800,fontFamily:"'Barlow Condensed',sans-serif",color:"#111"}}>⭐ {note.rating}{note.rating_count>0?<span style={{fontSize:10,fontWeight:700,color:"#666",marginLeft:2}}>({note.rating_count})</span>:""}</div>}
             <div style={{position:"absolute",bottom:10,right:10,display:"flex",gap:6}}>
               {onEdit
                 ?<button onClick={e=>{e.stopPropagation();onEdit(note);}} style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,.92)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>✏️</button>
