@@ -8,10 +8,35 @@
     *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
     html,body{margin:0;padding:0;height:100%;background:#f0f0f0;}
     #root{height:100%;display:flex;align-items:stretch;justify-content:center;}
-    @media(min-width:600px){
-      #root{background:#e8e8e8;padding:0 0;align-items:flex-start;}
-    }
     @supports(height:100dvh){html,body{height:100dvh;}}
+    /* ── responsive shell & modals ── */
+    .jr-shell{width:100%;max-width:100%!important;}
+    .jr-sheet{width:100%!important;max-width:100%!important;}
+    /* day grid */
+    .jr-dg{margin:14px 14px 0!important;}
+    .jr-drow{min-height:64px;}
+    .jr-dlbl{width:48px;padding:12px 0 12px 12px;font-size:11px;}
+    .jr-dcol{padding:7px 8px 7px 5px;}
+    .jr-card{padding:6px 9px;border-radius:10px;}
+    .jr-csubj{font-size:11px;}
+    .jr-ctime{font-size:9px;}
+    .jr-cstud{font-size:10px;}
+    @media(min-width:600px){
+      .jr-dg{margin:14px 20px 0!important;}
+      .jr-drow{min-height:72px;}
+      .jr-dlbl{width:64px;padding:14px 0 14px 18px;font-size:13px;}
+      .jr-dcol{padding:9px 14px 9px 8px;}
+      .jr-card{padding:9px 13px;border-radius:12px;}
+      .jr-csubj{font-size:13px;}
+      .jr-ctime{font-size:11px;}
+      .jr-cstud{font-size:12px;}
+    }
+    @media(min-width:900px){
+      .jr-dg{margin:14px 32px 0!important;}
+      .jr-dlbl{width:80px;padding:16px 0 16px 24px;font-size:14px;}
+      .jr-csubj{font-size:14px;}
+      .jr-ctime{font-size:12px;}
+    }
   </style>
   
     <link rel="apple-touch-icon" href="data:image/png;base64,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"/>
@@ -59,26 +84,6 @@
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
     @keyframes ring{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.4)}50%{box-shadow:0 0 0 8px rgba(34,197,94,0)}}
     @keyframes spin{to{transform:rotate(360deg)}}
-    /* ── Responsive layout ── */
-    .jrsh-shell{max-width:100%!important;}
-    .jrsh-daygrid{margin:14px 14px 0!important;}
-    .jrsh-day-label{width:52px!important;padding:14px 0 14px 14px!important;font-size:11px!important;}
-    .jrsh-day-row{min-height:64px!important;}
-    .jrsh-card-pad{padding:6px 10px!important;}
-    .jrsh-card-subj{font-size:11px!important;}
-    .jrsh-card-time{font-size:9px!important;}
-    .jrsh-card-icon{font-size:13px!important;}
-    .jrsh-day-content{padding:8px 10px 8px 6px!important;}
-    @media(min-width:600px){
-      .jrsh-daygrid{margin:16px 24px 0!important;}
-      .jrsh-day-label{width:68px!important;padding:16px 0 16px 20px!important;font-size:13px!important;}
-      .jrsh-day-row{min-height:76px!important;}
-      .jrsh-card-pad{padding:10px 14px!important;}
-      .jrsh-card-subj{font-size:14px!important;}
-      .jrsh-card-time{font-size:11px!important;}
-      .jrsh-card-icon{font-size:16px!important;}
-      .jrsh-day-content{padding:10px 14px 10px 8px!important;}
-    }
   </style>
 </head>
 <body>
@@ -2112,7 +2117,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     // Mark lesson orange (pending) and store tutor info
     setLessons(ls=>ls.map(l=>l.id===lesson.id?{...l,_pending:true,_accepted:false,_tutorName:tutor.name,_tutorId:tutor.id,_tutorObj:tutor}:l));
     setShowTutors(null); // close modal
-    try{await fbAdd("tutor_requests",{lesson_id:lesson.id,student_id:user.id,tutor_id:tutor.id,subject:lesson.subject,day:lesson.day,from_hour:lesson.from_hour,to_hour:lesson.to_hour,online:lesson.online,description:lesson.description,student_name:user.name,status:"pending",createdAt:nowKEiso()});}catch(e){}
+    try{await fbAdd("tutor_requests",{lesson_id:lesson.id,student_id:user.id,tutor_id:tutor.id,subject:lesson.subject,day:lesson.day,from_hour:lesson.from_hour,to_hour:lesson.to_hour,online:lesson.online,description:lesson.description,student_name:user.name,student_pfp:profile.pfp_url||null,status:"pending",createdAt:nowKEiso()});}catch(e){}
   }
 
   async function handleInteraction(noteId,field){
@@ -2200,13 +2205,11 @@ function StudentApp({user,onLogout,backHandlerRef}){
               const isAccepted=l._accepted||acceptedMap[l.id];
               const isPending=l._pending&&!isAccepted;
               if(isAccepted&&l._tutorObj){
-                // Accepted → show tutor (other user) profile with call/location buttons
+                // Accepted + tutor cached → show tutor details modal
                 setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);
               } else if(isAccepted||isPending){
-                // Accepted with no tutorObj cached, or pending → show lesson details
+                // Accepted (no tutorObj) or pending → lesson details
                 setShowLessonDetails(l);
-              } else if(l._tutorObj){
-                setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);
               } else {
                 setShowTutors(l);
               }
@@ -2337,8 +2340,11 @@ function StudentApp({user,onLogout,backHandlerRef}){
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)setShowTutorProfile(null);}}>
           <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:"100%",padding:"24px 22px 36px",maxHeight:"88dvh",overflowY:"auto"}}>
             <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
-              <div style={{width:60,height:60,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{showTutorProfile.name?showTutorProfile.name[0].toUpperCase():"?"}</span>
+              <div style={{width:60,height:60,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden",border:"2px solid "+C.border}}>
+                {showTutorProfile.pfp_url
+                  ?<img src={showTutorProfile.pfp_url} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                  :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{showTutorProfile.name?showTutorProfile.name[0].toUpperCase():"?"}</span>
+                }
               </div>
               <div style={{flex:1}}>
                 <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{showTutorProfile.name}</div>
@@ -2811,8 +2817,11 @@ function TutorApp({user,onLogout,backHandlerRef}){
           <>
             {/* Student profile header with call icon */}
             <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
-              <div style={{width:60,height:60,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{showReq.student_name?showReq.student_name[0].toUpperCase():"?"}</span>
+              <div style={{width:60,height:60,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden",border:"2px solid "+C.border}}>
+                {showReq.student_pfp
+                  ?<img src={showReq.student_pfp} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                  :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{showReq.student_name?showReq.student_name[0].toUpperCase():"?"}</span>
+                }
               </div>
               <div style={{flex:1}}>
                 <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{showReq.student_name||"Student"}</div>
@@ -2931,7 +2940,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
 }
 
 /* ══ SHARED COMPONENTS ══ */
-function Shell({C,children}){return <div className="jrsh-shell" style={{fontFamily:"Barlow,sans-serif",background:C.bg,color:C.text,height:"100dvh",width:"100%",margin:"0 auto",display:"flex",flexDirection:"column",overflow:"hidden",position:"relative"}}>{children}</div>;}
+function Shell({C,children}){return <div className="jr-shell" style={{fontFamily:"Barlow,sans-serif",background:C.bg,color:C.text,height:"100dvh",width:"100%",margin:"0 auto",display:"flex",flexDirection:"column",overflow:"hidden",position:"relative"}}>{children}</div>;}
 function Scroll({children}){return <div style={{flex:1,overflowY:"auto",paddingBottom:72}}>{children}</div>;}
 function Hdr({C,dm,children}){return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",minHeight:52,background:C.surface,borderBottom:"1px solid "+C.border,flexShrink:0}}><Logo dm={dm}/><div style={{display:"flex",gap:8,alignItems:"center"}}>{children}</div></div>);}
 function IdentHdr({C,dm,setDm,onWallet,onEditIdentity,onLogout,onDeleteAccount}){
@@ -3009,13 +3018,13 @@ function Empty({C,children}){return <div style={{textAlign:"center",padding:"24p
 
 function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
   return(
-    <div className="jrsh-daygrid" style={{background:C.surface,margin:"14px 14px 0",borderRadius:20,overflow:"hidden",border:"1px solid "+C.border}}>
+    <div className="jr-dg" style={{background:C.surface,margin:"14px 14px 0",borderRadius:20,overflow:"hidden",border:"1px solid "+C.border}}>
       {days.map((day,idx)=>{
         const dl=getLessons(day);
         return(
-          <div key={day} className="jrsh-day-row" style={{display:"flex",borderBottom:idx<days.length-1?"1px solid "+C.border:"none",minHeight:64}}>
-            <div className="jrsh-day-label" style={{width:52,padding:"14px 0 14px 14px",flexShrink:0}}><span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1.5,color:C.sub}}>{day}</span></div>
-            <div className="jrsh-day-content" style={{flex:1,padding:"8px 10px 8px 6px",display:"flex",flexDirection:"column",gap:5}}>
+          <div key={day} className="jr-drow" style={{display:"flex",borderBottom:idx<days.length-1?"1px solid "+C.border:"none",minHeight:64}}>
+            <div className="jr-dlbl" style={{width:48,padding:"12px 0 12px 12px",flexShrink:0}}><span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,letterSpacing:1.5,color:C.sub}}>{day}</span></div>
+            <div className="jr-dcol" style={{flex:1,padding:"7px 8px 7px 5px",display:"flex",flexDirection:"column",gap:5}}>
               {dl.length===0?<span style={{fontSize:10,color:C.border,letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,paddingTop:4}}>NO PLANS</span>:
   dl.map(l=>{
                     // Determine role context from showStudent prop
@@ -3033,15 +3042,15 @@ function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
                       else{cardBg="#FCE4EC";cardBorder="#F8BBD9";} // light pink — added, no tutor yet
                     }
                     return(
-                  <div key={l.id} onClick={()=>onTap&&onTap(l)} className="jrsh-card-pad" style={{borderRadius:10,padding:"6px 10px",background:cardBg,border:"1px solid "+cardBorder,cursor:onTap?"pointer":"default",display:"flex",flexDirection:"column",gap:1}}>
+                  <div key={l.id} onClick={()=>onTap&&onTap(l)} className="jr-card" style={{borderRadius:10,padding:"6px 9px",background:cardBg,border:"1px solid "+cardBorder,cursor:onTap?"pointer":"default",display:"flex",flexDirection:"column",gap:1}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                       <div style={{display:"flex",alignItems:"center",gap:5}}>
-                        <span className="jrsh-card-icon" style={{fontSize:13}}>{l.online?"🌐":"📍"}</span>
-                        <div className="jrsh-card-subj" style={{fontSize:11,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",color:"#111"}}>{l.subject}</div>
+                        <span style={{fontSize:13}}>{l.online?"🌐":"📍"}</span>
+                        <div className="jr-csubj" style={{fontSize:11,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",color:"#111"}}>{l.subject}</div>
                       </div>
-                      <div className="jrsh-card-time" style={{fontSize:9,fontWeight:700,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",whiteSpace:"nowrap"}}>{timeLbl(l.from_hour)}–{timeLbl(l.to_hour)}</div>
+                      <div className="jr-ctime" style={{fontSize:9,fontWeight:700,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",whiteSpace:"nowrap"}}>{timeLbl(l.from_hour)}–{timeLbl(l.to_hour)}</div>
                     </div>
-                    {showStudent&&l.student_name&&<div className="jrsh-card-subj" style={{fontSize:11,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>👤 {l.student_name}</div>}
+                    {showStudent&&l.student_name&&<div className="jr-cstud" style={{fontSize:10,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>👤 {l.student_name}</div>}
                     {renderExtra&&renderExtra(l)}
                   </div>
                   );
@@ -3065,8 +3074,11 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:"100%",padding:"24px 22px 36px",maxHeight:"88dvh",overflowY:"auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
-          <div style={{width:60,height:60,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-            <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{lesson.student_name?lesson.student_name[0].toUpperCase():"?"}</span>
+          <div style={{width:60,height:60,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden",border:"2px solid "+C.border}}>
+            {lesson.student_pfp
+              ?<img src={lesson.student_pfp} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{lesson.student_name?lesson.student_name[0].toUpperCase():"?"}</span>
+            }
           </div>
           <div style={{flex:1}}>
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{lesson.student_name||"Student"}</div>
