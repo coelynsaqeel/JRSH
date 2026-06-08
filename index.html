@@ -535,34 +535,36 @@ const dC=()=>({bg:"#111111",surface:"#1C1C1C",surfaceAlt:"#252525",border:"#2A2A
 /* ══ Get scheduled lesson start/end as UTC ms — always in Kenya time (EAT = UTC+3) ══ */
 const DAY_NAMES=["SUN","MON","TUE","WED","THU","FRI","SAT"];
 function getScheduledMs(lesson){
-  const EAT=3*60*60*1000; // UTC+3 in ms
-  // Current time expressed as Kenya wall-clock ms-since-epoch
-  const nowUtcMs=Date.now();
-  const nowEatMs=nowUtcMs+EAT; // ms value as if UTC+0 but actually EAT
-  // Get Kenya day-of-week (0=Sun) and time-of-day
-  const nowEatDate=new Date(nowEatMs);
-  const todayIdx=nowEatDate.getUTCDay();
+  const EAT_OFFSET_MS=3*60*60*1000; // EAT = UTC+3
+  // Get the current Kenya wall-clock time using Intl (works on ANY device timezone)
+  const nowUtc=Date.now();
+  // Format current UTC time as Kenya local parts
+  const fmt=new Intl.DateTimeFormat("en-KE",{timeZone:"Africa/Nairobi",hour12:false,
+    weekday:"short",year:"numeric",month:"2-digit",day:"2-digit",
+    hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  const parts=Object.fromEntries(fmt.formatToParts(new Date(nowUtc)).map(p=>[p.type,p.value]));
+  // parts.weekday = "Mon","Tue"... parts.hour/minute/second/year/month/day
+  const keWeekdayIdx=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].indexOf(parts.weekday);
+  const keHour=parseInt(parts.hour,10);
+  const keMin=parseInt(parts.minute,10);
+  const keSec=parseInt(parts.second,10);
   const targetIdx=DAY_NAMES.indexOf((lesson.day||"").toUpperCase());
-  if(targetIdx<0)return{startMs:nowUtcMs,endMs:nowUtcMs};
+  if(targetIdx<0||keWeekdayIdx<0)return{startMs:nowUtc,endMs:nowUtc};
   const fromH=Math.floor(lesson.from_hour);
   const fromM=Math.round((lesson.from_hour%1)*60);
   const durMs=(lesson.to_hour-lesson.from_hour)*3600000;
-  // How many days until the target weekday in Kenya?
-  let daysAhead=(targetIdx-todayIdx+7)%7;
-  // If it's today but the hour has already passed, push to next week
+  // Days ahead in Kenya calendar
+  let daysAhead=(targetIdx-keWeekdayIdx+7)%7;
+  // If today, check if lesson has fully ended already
   if(daysAhead===0){
-    const nowEatHHMM=nowEatDate.getUTCHours()*60+nowEatDate.getUTCMinutes();
-    const lessonHHMM=fromH*60+fromM;
-    if(nowEatHHMM>=lessonHHMM+((lesson.to_hour-lesson.from_hour)*60)){
-      daysAhead=7; // lesson fully past today — show next occurrence
-    }
+    const nowMins=keHour*60+keMin;
+    const endMins=Math.floor(lesson.to_hour)*60+Math.round((lesson.to_hour%1)*60);
+    if(nowMins>=endMins) daysAhead=7; // fully past — show next week's occurrence
   }
-  // Build the lesson start as UTC ms:
-  // Start of today in EAT (midnight Kenya) expressed in UTC
-  const midnightEatUtcMs=nowEatMs-((nowEatDate.getUTCHours()*3600+nowEatDate.getUTCMinutes()*60+nowEatDate.getUTCSeconds())*1000+nowEatDate.getUTCMilliseconds());
-  const lessonStartEatMs=midnightEatUtcMs+daysAhead*86400000+fromH*3600000+fromM*60000;
-  // Convert back to real UTC ms
-  const startMs=lessonStartEatMs-EAT;
+  // Build Kenya midnight for today: subtract time-of-day from nowUtc, then subtract EAT offset
+  // Kenya midnight UTC = nowUtc - (keHour*3600+keMin*60+keSec)*1000 - EAT_OFFSET_MS
+  const keMidnightUtc=nowUtc-(keHour*3600+keMin*60+keSec)*1000-EAT_OFFSET_MS;
+  const startMs=keMidnightUtc+daysAhead*86400000+fromH*3600000+fromM*60000;
   return{startMs,endMs:startMs+durMs};
 }
 
@@ -2212,9 +2214,8 @@ function StudentApp({user,onLogout,backHandlerRef}){
       {showLessonDetails&&(()=>{
         const l=showLessonDetails;
         const now=Date.now();
-        const lStart=l.start_ts||null;
-        const lEnd=lStart?(lStart+(l.to_hour-l.from_hour)*3600000):null;
-        const withinLoc=!l.online&&lStart&&(now>=lStart-1800000)&&(now<=(lEnd||lStart+3600000));
+        const {startMs:lStart,endMs:lEnd}=getScheduledMs(l);
+        const withinLoc=!l.online&&(now>=lStart-1800000)&&(now<=lEnd);
         return<LessonDetailsModal lesson={l} C={C} onClose={()=>setShowLessonDetails(null)} withinLocationWindow={withinLoc}
           onCall={lesson=>{setCallLesson(lesson);setShowLessonDetails(null);}}
           onLocation={lesson=>{setCallLesson({...lesson,_openLocation:true});setShowLessonDetails(null);}}
@@ -2228,17 +2229,17 @@ function StudentApp({user,onLogout,backHandlerRef}){
             <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>{
               const isAccepted=l._accepted||acceptedMap[l.id];
               const isPending=l._pending&&!isAccepted;
-              if(isAccepted&&l._tutorObj){
-                // Accepted + tutor cached → show tutor details
-                setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);
-              } else if(isAccepted){
-                // Accepted but no tutorObj yet → lesson details
-                setShowLessonDetails(l);
+              if(isAccepted){
+                // Accepted: show tutor profile if we have the tutor object, otherwise lesson details
+                if(l._tutorObj){
+                  setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);
+                } else {
+                  setShowLessonDetails(l);
+                }
               } else if(isPending){
-                // Pending → lesson details
                 setShowLessonDetails(l);
               } else {
-                // Unbooked/declined → find a tutor
+                // Only unbooked/declined → find a tutor
                 setShowTutors(l);
               }
             }}
