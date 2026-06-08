@@ -66,6 +66,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -262,7 +263,17 @@ const FB_CONFIG={
 if(!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
 const _auth=firebase.auth();
 const _db=firebase.firestore();
+const _storage=firebase.storage();
 _auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
+
+/* ── Upload PDF to Firebase Storage, return download URL ── */
+async function uploadPdfToStorage(file, noteId){
+  if(!file) return null;
+  const path=`notes/${noteId}/note.pdf`;
+  const ref=_storage.ref().child(path);
+  await ref.put(file,{contentType:"application/pdf"});
+  return await ref.getDownloadURL();
+}
 
 /* ── Connection health ── */
 let _sbOnline=null;
@@ -2489,6 +2500,8 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const [showNoteEditCover,setShowNoteEditCover]=useState(false);
   const editCoverRef=React.useRef();
   const editPdfRef=React.useRef();
+  const editPdfFileRef=React.useRef(null); // tracks the actual File object when tutor picks a new PDF
+  const [noteSaving,setNoteSaving]=useState(false);
   const [callLesson,setCallLesson]=useState(null);
   const [cancelReq,setCancelReq]=useState(null);
   const [offlineStartedIds,setOfflineStartedIds]=useState(new Set()); // lessons student has started
@@ -2642,9 +2655,20 @@ function TutorApp({user,onLogout,backHandlerRef}){
     setPublishing(true);
     try{
       const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
-      const localNote={id:"local-"+Date.now(),title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,createdAt:nowKEiso(),created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:pubForm.pdfDataUrl||null,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso()})||{};
-      setNotes(ns=>[{...localNote,...saved,pdf_url:pubForm.pdfDataUrl||null,cover_pos:pubForm.coverPos||{x:50,y:50}},...ns]);
+      const tempId="note-"+Date.now()+"-"+Math.random().toString(36).slice(2,8);
+      // Upload PDF to Firebase Storage (not base64 in Firestore)
+      let pdfDownloadUrl=null;
+      if(pubForm.file){
+        try{pdfDownloadUrl=await uploadPdfToStorage(pubForm.file,tempId);}
+        catch(uploadErr){showToast("PDF upload failed: "+uploadErr.message,"error");setPublishing(false);return;}
+      }
+      const localNote={id:tempId,title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,createdAt:nowKEiso(),created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pdfDownloadUrl,cover_pos:pubForm.coverPos||{x:50,y:50}};
+      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:pdfDownloadUrl,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso()})||{};
+      // If Firestore gave us a real ID, re-upload PDF under that ID for clean paths
+      if(saved.id&&saved.id!==tempId&&pubForm.file){
+        try{const finalUrl=await uploadPdfToStorage(pubForm.file,saved.id);if(finalUrl){await fbUpdate("notes",saved.id,{pdf_url:finalUrl});saved.pdf_url=finalUrl;localNote.pdf_url=finalUrl;}}catch(_){}
+      }
+      setNotes(ns=>[{...localNote,...saved,pdf_url:saved.pdf_url||pdfDownloadUrl,cover_pos:pubForm.coverPos||{x:50,y:50}},...ns]);
       setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});setShowPublish(false);
       showToast("Note published!","ok");
     }catch(e){showToast("Publish failed: "+e.message,"error");}
@@ -2659,6 +2683,36 @@ function TutorApp({user,onLogout,backHandlerRef}){
       if(cur.id){await fbUpdate("note_interactions",cur.id,{[field]:next[field]});}
       else{const _ixRow=await fbAdd("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=_ixRow||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
     }catch(e){setInteractions(i=>({...i,[noteId]:cur}));}
+  }
+
+  async function handleSaveEditNote(){
+    if(!editingNote||noteSaving)return;
+    setNoteSaving(true);
+    try{
+      let pdfUrl=editingNote.pdf_url;
+      if(editPdfFileRef.current){
+        try{pdfUrl=await uploadPdfToStorage(editPdfFileRef.current,editingNote.id);}
+        catch(uploadErr){showToast("PDF upload failed: "+uploadErr.message,"error");setNoteSaving(false);return;}
+        editPdfFileRef.current=null;
+      }
+      const updates={title:editingNote.title,subject:editingNote.subject,cover_color:editingNote.cover_color,cover_url:editingNote.cover_url||null,cover_pos:editingNote.cover_pos||{x:50,y:50},pdf_url:pdfUrl||null};
+      await fbUpdate("notes",editingNote.id,updates);
+      setNotes(ns=>ns.map(n=>n.id===editingNote.id?{...n,...updates}:n));
+      setEditingNote(null);
+      showToast("Note saved!","ok");
+    }catch(e){showToast("Save failed: "+e.message,"error");}
+    finally{setNoteSaving(false);}
+  }
+
+  async function handleDeleteNote(){
+    if(!editingNote)return;
+    try{
+      await fbDel("notes",editingNote.id);
+      try{await _storage.ref().child(`notes/${editingNote.id}/note.pdf`).delete();}catch(_){}
+      setNotes(ns=>ns.filter(n=>n.id!==editingNote.id));
+      setEditingNote(null);
+      showToast("Note deleted","ok");
+    }catch(e){showToast("Delete failed: "+e.message,"error");}
   }
 
   async function handleSaveProfile(){
@@ -2727,10 +2781,10 @@ function TutorApp({user,onLogout,backHandlerRef}){
           </button>
           {editingNote.pdf_url&&<span style={{fontSize:10,color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>✓ PDF attached</span>}
         </div>
-        <input type="file" accept=".pdf" ref={editPdfRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditingNote(n=>({...n,pdf_url:ev.target.result}));r.readAsDataURL(f);}}/>
+        <input type="file" accept=".pdf" ref={editPdfRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;editPdfFileRef.current=f;const r=new FileReader();r.onload=ev=>setEditingNote(n=>({...n,pdf_url:ev.target.result}));r.readAsDataURL(f);}}/>
         <div style={{display:"flex",gap:10,marginTop:16}}>
-          <button onClick={()=>{setNotes(ns=>ns.map(n=>n.id===editingNote.id?{...n,...editingNote}:n));setEditingNote(null);}} style={{flex:1,padding:"13px",borderRadius:50,border:"none",background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:"pointer"}}>SAVE</button>
-          <button onClick={()=>{setNotes(ns=>ns.filter(n=>n.id!==editingNote.id));setEditingNote(null);}} style={{flex:1,padding:"13px",borderRadius:50,border:"1.5px solid #EF4444",background:"transparent",color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:"pointer"}}>DELETE</button>
+          <button onClick={handleSaveEditNote} disabled={noteSaving} style={{flex:1,padding:"13px",borderRadius:50,border:"none",background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:noteSaving?"not-allowed":"pointer",opacity:noteSaving?0.6:1}}>{noteSaving?"SAVING…":"SAVE"}</button>
+          <button onClick={handleDeleteNote} style={{flex:1,padding:"13px",borderRadius:50,border:"1.5px solid #EF4444",background:"transparent",color:"#EF4444",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,cursor:"pointer"}}>DELETE</button>
         </div>
         <CnBtn C={C} onClick={()=>setEditingNote(null)}>CANCEL</CnBtn>
       </Modal>}
