@@ -66,7 +66,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -263,17 +262,43 @@ const FB_CONFIG={
 if(!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
 const _auth=firebase.auth();
 const _db=firebase.firestore();
-const _storage=firebase.storage();
 _auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
 
-/* ── Upload PDF to Firebase Storage, return download URL ── */
-async function uploadPdfToStorage(file, noteId){
-  if(!file) return null;
-  const path=`notes/${noteId}/note.pdf`;
-  const ref=_storage.ref().child(path);
-  await ref.put(file,{contentType:"application/pdf"});
-  return await ref.getDownloadURL();
+/* ── PDF local storage via IndexedDB (no Firebase Storage plan needed) ── */
+const PDF_DB_NAME="jrsh_pdfs";
+const PDF_STORE="pdfs";
+function openPdfDb(){
+  return new Promise((res,rej)=>{
+    const req=indexedDB.open(PDF_DB_NAME,1);
+    req.onupgradeneeded=e=>e.target.result.createObjectStore(PDF_STORE,{keyPath:"id"});
+    req.onsuccess=e=>res(e.target.result);
+    req.onerror=e=>rej(e.target.error);
+  });
 }
+async function savePdfLocally(noteId,dataUrl){
+  const db=await openPdfDb();
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(PDF_STORE,"readwrite");
+    tx.objectStore(PDF_STORE).put({id:noteId,data:dataUrl,ts:Date.now()});
+    tx.oncomplete=()=>res(true);
+    tx.onerror=e=>rej(e.target.error);
+  });
+}
+async function loadPdfLocally(noteId){
+  const db=await openPdfDb();
+  return new Promise((res)=>{
+    const req=db.transaction(PDF_STORE,"readonly").objectStore(PDF_STORE).get(noteId);
+    req.onsuccess=e=>res(e.target.result?e.target.result.data:null);
+    req.onerror=()=>res(null);
+  });
+}
+async function deletePdfLocally(noteId){
+  try{const db=await openPdfDb();const tx=db.transaction(PDF_STORE,"readwrite");tx.objectStore(PDF_STORE).delete(noteId);}catch(_){}
+}
+// Returns "local:<noteId>" as the stored marker in Firestore
+function localPdfUrl(noteId){return "local:"+noteId;}
+function isLocalPdfUrl(url){return url&&url.startsWith("local:");}
+function noteIdFromLocalUrl(url){return url?url.slice(6):null;}
 
 /* ── Connection health ── */
 let _sbOnline=null;
@@ -1174,7 +1199,14 @@ function PdfViewer({note,onClose,C,initialPage,onPageChange,onRate}){
           });
           window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         }
-        const pdfDoc=await window.pdfjsLib.getDocument(note.pdf_url).promise;
+        // Resolve local:noteId → actual base64 data URL from IndexedDB
+        let pdfSrc=note.pdf_url;
+        if(isLocalPdfUrl(pdfSrc)){
+          const localData=await loadPdfLocally(noteIdFromLocalUrl(pdfSrc));
+          if(!localData){setErr("PDF not found on this device. It was saved on the tutor's device.");setLoading(false);return;}
+          pdfSrc=localData;
+        }
+        const pdfDoc=await window.pdfjsLib.getDocument(pdfSrc).promise;
         setPdf(pdfDoc);setTotal(pdfDoc.numPages);setPage(1);setLoading(false);
       }catch(e){setErr("Could not load PDF.");setLoading(false);}
     };
@@ -2180,16 +2212,12 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const studentLevel=gradeToLevel(user.grade||profile.grade);
   const getLessonsForDay=d=>lessons.filter(l=>l.day===d).sort((a,b)=>a.from_hour-b.from_hour);
   const getMatchingTutors=lesson=>{
-    const exact=tutors.filter(t=>{
-      const levelMatch=t.curriculum_level===studentLevel;
-      const subjectMatch=t.subjects_taught&&t.subjects_taught.includes(lesson.subject);
-      return levelMatch&&subjectMatch;
-    });
-    // In sample/demo mode or when no exact match, show all tutors who teach the subject,
-    // then fall back to all tutors so the UI is never empty
-    if(exact.length>0)return exact;
-    const subjectOnly=tutors.filter(t=>t.subjects_taught&&t.subjects_taught.includes(lesson.subject));
-    return subjectOnly.length>0?subjectOnly:tutors;
+    // Only show tutors who teach THIS exact subject — never fall back to unrelated tutors
+    const subjectMatches=tutors.filter(t=>t.subjects_taught&&t.subjects_taught.includes(lesson.subject));
+    if(subjectMatches.length===0)return [];
+    // Among subject matches, prefer those whose curriculum level also matches
+    const levelAndSubject=subjectMatches.filter(t=>!t.curriculum_level||t.curriculum_level===studentLevel);
+    return levelAndSubject.length>0?levelAndSubject:subjectMatches;
   };
   const filteredNotes=()=>{
     let n=notes.map(note=>({...note,...(interactions[note.id]||{liked:false,saved:false})}));
@@ -2694,20 +2722,31 @@ function TutorApp({user,onLogout,backHandlerRef}){
     setPublishing(true);
     try{
       const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
+      // Save PDF to IndexedDB first, use a temp ID, re-key after Firestore returns real ID
       const tempId="note-"+Date.now()+"-"+Math.random().toString(36).slice(2,8);
-      // Upload PDF to Firebase Storage (not base64 in Firestore)
-      let pdfDownloadUrl=null;
-      if(pubForm.file){
-        try{pdfDownloadUrl=await uploadPdfToStorage(pubForm.file,tempId);}
-        catch(uploadErr){showToast("PDF upload failed: "+uploadErr.message,"error");setPublishing(false);return;}
+      let pdfMarker=null;
+      if(pubForm.file&&pubForm.pdfDataUrl){
+        try{
+          await savePdfLocally(tempId,pubForm.pdfDataUrl);
+          pdfMarker=localPdfUrl(tempId);
+        }catch(e){showToast("PDF save failed: "+e.message,"error");setPublishing(false);return;}
       }
-      const localNote={id:tempId,title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,createdAt:nowKEiso(),created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pdfDownloadUrl,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:pdfDownloadUrl,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso()})||{};
-      // If Firestore gave us a real ID, re-upload PDF under that ID for clean paths
-      if(saved.id&&saved.id!==tempId&&pubForm.file){
-        try{const finalUrl=await uploadPdfToStorage(pubForm.file,saved.id);if(finalUrl){await fbUpdate("notes",saved.id,{pdf_url:finalUrl});saved.pdf_url=finalUrl;localNote.pdf_url=finalUrl;}}catch(_){}
+      const localNote={id:tempId,title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,createdAt:nowKEiso(),created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pdfMarker,cover_pos:pubForm.coverPos||{x:50,y:50}};
+      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:pdfMarker,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso()})||{};
+      // Re-key the PDF under the real Firestore ID
+      if(saved.id&&saved.id!==tempId&&pdfMarker){
+        try{
+          const pdfData=await loadPdfLocally(tempId);
+          if(pdfData){
+            await savePdfLocally(saved.id,pdfData);
+            await deletePdfLocally(tempId);
+            const newMarker=localPdfUrl(saved.id);
+            await fbUpdate("notes",saved.id,{pdf_url:newMarker});
+            saved.pdf_url=newMarker;localNote.pdf_url=newMarker;
+          }
+        }catch(_){}
       }
-      setNotes(ns=>[{...localNote,...saved,pdf_url:saved.pdf_url||pdfDownloadUrl,cover_pos:pubForm.coverPos||{x:50,y:50}},...ns]);
+      setNotes(ns=>[{...localNote,...saved,pdf_url:saved.pdf_url||pdfMarker,cover_pos:pubForm.coverPos||{x:50,y:50}},...ns]);
       setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});setShowPublish(false);
       showToast("Note published!","ok");
     }catch(e){showToast("Publish failed: "+e.message,"error");}
@@ -2728,13 +2767,18 @@ function TutorApp({user,onLogout,backHandlerRef}){
     if(!editingNote||noteSaving)return;
     setNoteSaving(true);
     try{
-      let pdfUrl=editingNote.pdf_url;
+      let pdfMarker=editingNote.pdf_url;
+      // If a new PDF file was picked, save it to IndexedDB
       if(editPdfFileRef.current){
-        try{pdfUrl=await uploadPdfToStorage(editPdfFileRef.current,editingNote.id);}
-        catch(uploadErr){showToast("PDF upload failed: "+uploadErr.message,"error");setNoteSaving(false);return;}
-        editPdfFileRef.current=null;
+        try{
+          const reader=new FileReader();
+          const dataUrl=await new Promise((res,rej)=>{reader.onload=e=>res(e.target.result);reader.onerror=rej;reader.readAsDataURL(editPdfFileRef.current);});
+          await savePdfLocally(editingNote.id,dataUrl);
+          pdfMarker=localPdfUrl(editingNote.id);
+          editPdfFileRef.current=null;
+        }catch(e){showToast("PDF save failed: "+e.message,"error");setNoteSaving(false);return;}
       }
-      const updates={title:editingNote.title,subject:editingNote.subject,cover_color:editingNote.cover_color,cover_url:editingNote.cover_url||null,cover_pos:editingNote.cover_pos||{x:50,y:50},pdf_url:pdfUrl||null};
+      const updates={title:editingNote.title,subject:editingNote.subject,cover_color:editingNote.cover_color,cover_url:editingNote.cover_url||null,cover_pos:editingNote.cover_pos||{x:50,y:50},pdf_url:pdfMarker||null};
       await fbUpdate("notes",editingNote.id,updates);
       setNotes(ns=>ns.map(n=>n.id===editingNote.id?{...n,...updates}:n));
       setEditingNote(null);
@@ -2747,7 +2791,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
     if(!editingNote)return;
     try{
       await fbDel("notes",editingNote.id);
-      try{await _storage.ref().child(`notes/${editingNote.id}/note.pdf`).delete();}catch(_){}
+      await deletePdfLocally(editingNote.id);
       setNotes(ns=>ns.filter(n=>n.id!==editingNote.id));
       setEditingNote(null);
       showToast("Note deleted","ok");
