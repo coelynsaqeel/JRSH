@@ -532,23 +532,61 @@ function agoLabel(ts){const diff=Date.now()-new Date(ts).getTime();const m=Math.
 const lC=()=>({bg:"#F5F5F5",surface:"#FFFFFF",surfaceAlt:"#F2F2F2",border:"#EBEBEB",text:"#111111",sub:"#888888",accentBg:"#111111",accentText:"#FFFFFF"});
 const dC=()=>({bg:"#111111",surface:"#1C1C1C",surfaceAlt:"#252525",border:"#2A2A2A",text:"#F0F0F0",sub:"#888888",accentBg:"#FFFFFF",accentText:"#111111"});
 
+/* ══ Get scheduled lesson start/end as UTC ms from day+from_hour+to_hour (Kenya time) ══ */
+const DAY_NAMES=["SUN","MON","TUE","WED","THU","FRI","SAT"];
+function getScheduledMs(lesson){
+  // Get current Kenya time
+  const keNow=new Date(new Date().toLocaleString("en-US",{timeZone:"Africa/Nairobi"}));
+  const todayIdx=keNow.getDay(); // 0=Sun
+  const targetIdx=DAY_NAMES.indexOf((lesson.day||"").toUpperCase());
+  if(targetIdx<0) return {startMs:Date.now(),endMs:Date.now()};
+  // Days ahead (0 = today, 1 = tomorrow, etc.)
+  let daysAhead=(targetIdx-todayIdx+7)%7;
+  // Build the Kenya date for the lesson day at from_hour
+  const keDate=new Date(keNow);
+  keDate.setDate(keDate.getDate()+daysAhead);
+  keDate.setHours(Math.floor(lesson.from_hour),Math.round((lesson.from_hour%1)*60),0,0);
+  // If that moment has already passed today and daysAhead===0, push to next week
+  if(daysAhead===0&&keDate<keNow){
+    keDate.setDate(keDate.getDate()+7);
+  }
+  // Convert Kenya local time → UTC ms (EAT = UTC+3)
+  const keOffset=3*60*60*1000;
+  const startMs=keDate.getTime()-keDate.getTimezoneOffset()*60000-keOffset;
+  // Simpler: just use the KE date as if it's UTC+3
+  const startUTC=keDate.getTime()-(keDate.getTimezoneOffset()+(-180))*60000;
+  // Most robust: compute UTC from the KE time string
+  const fromH=Math.floor(lesson.from_hour),fromM=Math.round((lesson.from_hour%1)*60);
+  const toH=Math.floor(lesson.to_hour),toM=Math.round((lesson.to_hour%1)*60);
+  const durMs=(lesson.to_hour-lesson.from_hour)*3600000;
+  // Build ISO string in KE timezone: YYYY-MM-DDTHH:MM:00+03:00
+  const pad=n=>String(n).padStart(2,"0");
+  const y=keDate.getFullYear(),mo=keDate.getMonth()+1,d=keDate.getDate();
+  const startISO=`${y}-${pad(mo)}-${pad(d)}T${pad(fromH)}:${pad(fromM)}:00+03:00`;
+  const startMsFinal=new Date(startISO).getTime();
+  return{startMs:startMsFinal,endMs:startMsFinal+durMs};
+}
+
 /* ══ LESSON TIMER ══ */
 function LessonTimer({lesson,C}){
   const [secs,setSecs]=useState(null);
   const [phase,setPhase]=useState("countdown");
   useEffect(()=>{
-    const startMs=lesson.start_ts||Date.now();
-    const endMs=startMs+(lesson.to_hour-lesson.from_hour)*3600000;
+    // Use actual call start_ts only if a live call is active (start_ts set and within lesson window)
+    // Otherwise derive from scheduled day+from_hour in Kenya time
+    const {startMs,endMs}=getScheduledMs(lesson);
+    const activeStartMs=(lesson.start_ts&&lesson.start_ts>=startMs-30*60000&&lesson.start_ts<=endMs)?lesson.start_ts:startMs;
+    const activeEndMs=activeStartMs+(lesson.to_hour-lesson.from_hour)*3600000;
     function tick(){
       const n=Date.now();
-      if(n<startMs){setSecs(Math.ceil((startMs-n)/1000));setPhase("countdown");}
-      else if(n<endMs){setSecs(Math.ceil((endMs-n)/1000));setPhase("active");}
+      if(n<activeStartMs){setSecs(Math.ceil((activeStartMs-n)/1000));setPhase("countdown");}
+      else if(n<activeEndMs){setSecs(Math.ceil((activeEndMs-n)/1000));setPhase("active");}
       else{setSecs(0);setPhase("ended");}
     }
     tick();
     const id=setInterval(tick,1000);
     return()=>clearInterval(id);
-  },[lesson.start_ts,lesson.from_hour,lesson.to_hour]);
+  },[lesson.start_ts,lesson.from_hour,lesson.to_hour,lesson.day]);
   if(secs===null)return null;
   const fmt=s=>{const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return h>0?h+":"+String(m).padStart(2,"0")+":"+String(sc).padStart(2,"0"):String(m).padStart(2,"0")+":"+String(sc).padStart(2,"0");};
   const color=phase==="active"?"#22C55E":phase==="ended"?"#EF4444":"#F59E0B";
@@ -656,12 +694,13 @@ function CallDialog({lesson, user, onEnd, C}){
   // Location: active when showLocMap is open
   const {loc: myLoc, err: locErr} = useLiveLocation(showLocMap);
 
-  // Is it within 1 hr before lesson starts? (offline only)
-  const lessonStartMs = lesson.start_ts || null;
-  const lessonEndMs   = lessonStartMs ? lessonStartMs+(lesson.to_hour-lesson.from_hour)*3600000 : null;
+  // Is it within 30 min before lesson starts? (offline only) — use scheduled KE time
+  const {startMs:scheduledStartMs,endMs:scheduledEndMs}=getScheduledMs(lesson);
+  const lessonStartMs = lesson.start_ts || scheduledStartMs;
+  const lessonEndMs   = lessonStartMs+(lesson.to_hour-lesson.from_hour)*3600000;
   const now = Date.now();
-  const withinLocationWindow = isOffline && lessonStartMs &&
-    (now >= lessonStartMs - 1800000) && (now <= (lessonEndMs||lessonStartMs+3600000));
+  const withinLocationWindow = isOffline &&
+    (now >= scheduledStartMs - 1800000) && (now <= scheduledEndMs);
 
   // ── Push my GPS to Supabase while map is open ──
   React.useEffect(()=>{
@@ -1037,7 +1076,7 @@ function OfflineStartButton({lesson,started,onStart,onDrop,onCancel,C}){
   const GRACE=5*60; // 5 minutes in seconds
   const [secs,setSecs]=React.useState(GRACE);
   const [phase,setPhase]=React.useState("waiting"); // waiting | live
-  const startMs=lesson.start_ts||Date.now();
+  const {startMs}=getScheduledMs(lesson);
 
   React.useEffect(()=>{
     // Only show/countdown once lesson start time is reached
