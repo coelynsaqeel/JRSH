@@ -532,39 +532,38 @@ function agoLabel(ts){const diff=Date.now()-new Date(ts).getTime();const m=Math.
 const lC=()=>({bg:"#F5F5F5",surface:"#FFFFFF",surfaceAlt:"#F2F2F2",border:"#EBEBEB",text:"#111111",sub:"#888888",accentBg:"#111111",accentText:"#FFFFFF"});
 const dC=()=>({bg:"#111111",surface:"#1C1C1C",surfaceAlt:"#252525",border:"#2A2A2A",text:"#F0F0F0",sub:"#888888",accentBg:"#FFFFFF",accentText:"#111111"});
 
-/* ══ Get scheduled lesson start/end as UTC ms from day+from_hour+to_hour (Kenya time) ══ */
+/* ══ Get scheduled lesson start/end as UTC ms — always in Kenya time (EAT = UTC+3) ══ */
 const DAY_NAMES=["SUN","MON","TUE","WED","THU","FRI","SAT"];
 function getScheduledMs(lesson){
-  // Get current Kenya time
-  const keNow=new Date(new Date().toLocaleString("en-US",{timeZone:"Africa/Nairobi"}));
-  const todayIdx=keNow.getDay(); // 0=Sun
+  const EAT=3*60*60*1000; // UTC+3 in ms
+  // Current time expressed as Kenya wall-clock ms-since-epoch
+  const nowUtcMs=Date.now();
+  const nowEatMs=nowUtcMs+EAT; // ms value as if UTC+0 but actually EAT
+  // Get Kenya day-of-week (0=Sun) and time-of-day
+  const nowEatDate=new Date(nowEatMs);
+  const todayIdx=nowEatDate.getUTCDay();
   const targetIdx=DAY_NAMES.indexOf((lesson.day||"").toUpperCase());
-  if(targetIdx<0) return {startMs:Date.now(),endMs:Date.now()};
-  // Days ahead (0 = today, 1 = tomorrow, etc.)
-  let daysAhead=(targetIdx-todayIdx+7)%7;
-  // Build the Kenya date for the lesson day at from_hour
-  const keDate=new Date(keNow);
-  keDate.setDate(keDate.getDate()+daysAhead);
-  keDate.setHours(Math.floor(lesson.from_hour),Math.round((lesson.from_hour%1)*60),0,0);
-  // If that moment has already passed today and daysAhead===0, push to next week
-  if(daysAhead===0&&keDate<keNow){
-    keDate.setDate(keDate.getDate()+7);
-  }
-  // Convert Kenya local time → UTC ms (EAT = UTC+3)
-  const keOffset=3*60*60*1000;
-  const startMs=keDate.getTime()-keDate.getTimezoneOffset()*60000-keOffset;
-  // Simpler: just use the KE date as if it's UTC+3
-  const startUTC=keDate.getTime()-(keDate.getTimezoneOffset()+(-180))*60000;
-  // Most robust: compute UTC from the KE time string
-  const fromH=Math.floor(lesson.from_hour),fromM=Math.round((lesson.from_hour%1)*60);
-  const toH=Math.floor(lesson.to_hour),toM=Math.round((lesson.to_hour%1)*60);
+  if(targetIdx<0)return{startMs:nowUtcMs,endMs:nowUtcMs};
+  const fromH=Math.floor(lesson.from_hour);
+  const fromM=Math.round((lesson.from_hour%1)*60);
   const durMs=(lesson.to_hour-lesson.from_hour)*3600000;
-  // Build ISO string in KE timezone: YYYY-MM-DDTHH:MM:00+03:00
-  const pad=n=>String(n).padStart(2,"0");
-  const y=keDate.getFullYear(),mo=keDate.getMonth()+1,d=keDate.getDate();
-  const startISO=`${y}-${pad(mo)}-${pad(d)}T${pad(fromH)}:${pad(fromM)}:00+03:00`;
-  const startMsFinal=new Date(startISO).getTime();
-  return{startMs:startMsFinal,endMs:startMsFinal+durMs};
+  // How many days until the target weekday in Kenya?
+  let daysAhead=(targetIdx-todayIdx+7)%7;
+  // If it's today but the hour has already passed, push to next week
+  if(daysAhead===0){
+    const nowEatHHMM=nowEatDate.getUTCHours()*60+nowEatDate.getUTCMinutes();
+    const lessonHHMM=fromH*60+fromM;
+    if(nowEatHHMM>=lessonHHMM+((lesson.to_hour-lesson.from_hour)*60)){
+      daysAhead=7; // lesson fully past today — show next occurrence
+    }
+  }
+  // Build the lesson start as UTC ms:
+  // Start of today in EAT (midnight Kenya) expressed in UTC
+  const midnightEatUtcMs=nowEatMs-((nowEatDate.getUTCHours()*3600+nowEatDate.getUTCMinutes()*60+nowEatDate.getUTCSeconds())*1000+nowEatDate.getUTCMilliseconds());
+  const lessonStartEatMs=midnightEatUtcMs+daysAhead*86400000+fromH*3600000+fromM*60000;
+  // Convert back to real UTC ms
+  const startMs=lessonStartEatMs-EAT;
+  return{startMs,endMs:startMs+durMs};
 }
 
 /* ══ LESSON TIMER ══ */
