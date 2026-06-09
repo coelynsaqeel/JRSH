@@ -2394,16 +2394,23 @@ function StudentApp({user,onLogout,backHandlerRef}){
   }
 
   async function handleInteraction(noteId,field){
+    if(!user.id||user.id.startsWith("anon-"))return; // anon users can't persist
     const cur=interactions[noteId]||{liked:false,saved:false};
-    const next={...cur,[field]:!cur[field]};
-    setInteractions(i=>({...i,[noteId]:next}));
+    const toggled=!cur[field];
+    const next={...cur,[field]:toggled};
+    setInteractions(i=>({...i,[noteId]:next})); // optimistic update
     try{
-      if(cur.id){await fbUpdate("note_interactions",cur.id,{[field]:next[field]});}
-      else{const _ixRow=await fbAdd("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=_ixRow||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
-    }catch(e){setInteractions(i=>({...i,[noteId]:cur}));}
-  }
-
-  async function handleCancelSession(lesson,type){
+      if(cur.id){
+        await fbUpdate("note_interactions",cur.id,{[field]:toggled});
+      }else{
+        const _ixRow=await fbAdd("note_interactions",{note_id:noteId,user_id:user.id,liked:next.liked,saved:next.saved});
+        const newId=(_ixRow&&_ixRow.id)||("local-"+Date.now());
+        setInteractions(i=>({...i,[noteId]:{...next,id:newId}}));
+      }
+    }catch(e){
+      setInteractions(i=>({...i,[noteId]:cur})); // revert on error
+    }
+  }(lesson,type){
     setCancelLesson(null);
     try{
       const _crs=await fbQuery("tutor_requests",[{field:"lesson_id",op:"==",value:lesson.id}]);
@@ -3032,13 +3039,22 @@ function TutorApp({user,onLogout,backHandlerRef}){
   }
 
   async function handleInteraction(noteId,field){
+    if(!user.id||user.id.startsWith("anon-"))return;
     const cur=interactions[noteId]||{liked:false,saved:false};
-    const next={...cur,[field]:!cur[field]};
+    const toggled=!cur[field];
+    const next={...cur,[field]:toggled};
     setInteractions(i=>({...i,[noteId]:next}));
     try{
-      if(cur.id){await fbUpdate("note_interactions",cur.id,{[field]:next[field]});}
-      else{const _ixRow=await fbAdd("note_interactions",{note_id:noteId,user_id:user.id,...next});const row=_ixRow||{id:"local-"+Date.now()};setInteractions(i=>({...i,[noteId]:{...next,id:row.id}}));}
-    }catch(e){setInteractions(i=>({...i,[noteId]:cur}));}
+      if(cur.id){
+        await fbUpdate("note_interactions",cur.id,{[field]:toggled});
+      }else{
+        const _ixRow=await fbAdd("note_interactions",{note_id:noteId,user_id:user.id,liked:next.liked,saved:next.saved});
+        const newId=(_ixRow&&_ixRow.id)||("local-"+Date.now());
+        setInteractions(i=>({...i,[noteId]:{...next,id:newId}}));
+      }
+    }catch(e){
+      setInteractions(i=>({...i,[noteId]:cur}));
+    }
   }
 
   async function handleSaveEditNote(){
@@ -3743,28 +3759,45 @@ function NoteGrid({notes,C,onLike,onSave,onOpen,onEdit}){
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,padding:"0 14px"}}>
       {notes.length===0&&<div style={{gridColumn:"1/-1",textAlign:"center",padding:"32px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif"}}>NO MATERIALS YET</div>}
       {notes.map(note=>(
-        <div key={note.id} style={{background:C.surface,borderRadius:18,overflow:"hidden",border:"1px solid "+C.border,cursor:"pointer",display:"flex",flexDirection:"column"}} onClick={()=>onOpen&&onOpen(note)}>
-          <div style={{height:140,position:"relative",background:note.cover_color||"#eee",flexShrink:0}}>
-            {note.cover_url?<img src={note.cover_url} alt="" style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:note.cover_pos?`${note.cover_pos.x}% ${note.cover_pos.y}%`:"center"}} onError={e=>e.target.style.display="none"}/>:
-              <div style={{width:"100%",height:"100%",background:note.cover_color||"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:32,opacity:.35}}>📄</span></div>}
-            <div style={{position:"absolute",bottom:10,right:10,display:"flex",gap:6}}>
+        <div key={note.id} style={{background:C.surface,borderRadius:16,overflow:"hidden",border:"1px solid "+C.border,cursor:"pointer",display:"flex",flexDirection:"column"}} onClick={()=>onOpen&&onOpen(note)}>
+          {/* ── Cover ── */}
+          <div style={{height:148,position:"relative",background:note.cover_color||"#eee",flexShrink:0}}>
+            {note.cover_url
+              ?<img src={note.cover_url} alt="" style={{width:"100%",height:"100%",objectFit:"cover",objectPosition:note.cover_pos?`${note.cover_pos.x}% ${note.cover_pos.y}%`:"center"}} onError={e=>e.target.style.display="none"}/>
+              :<div style={{width:"100%",height:"100%",background:note.cover_color||"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:32,opacity:.35}}>📄</span></div>
+            }
+            {/* Rating badge — top left */}
+            {note.rating>0&&(
+              <div style={{position:"absolute",top:7,left:7,background:"rgba(0,0,0,.62)",backdropFilter:"blur(4px)",borderRadius:8,padding:"3px 7px",display:"flex",alignItems:"center",gap:3}}>
+                <span style={{fontSize:10,color:"#F59E0B"}}>★</span>
+                <span style={{fontSize:10,fontWeight:900,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>{note.rating.toFixed(1)}{note.rating_count>1?` (${note.rating_count})`:""}</span>
+              </div>
+            )}
+            {/* Action buttons — bottom right on cover */}
+            <div style={{position:"absolute",bottom:7,right:7,display:"flex",gap:5}}>
               {onEdit
-                ?<button onClick={e=>{e.stopPropagation();onEdit(note);}} style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,.92)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>✏️</button>
-                :[{act:()=>onLike(note.id),on:note.liked,a:"❤️",b:"🤍"},{act:()=>onSave(note.id),on:note.saved,a:"🔖",b:"🏷️"}].map((btn,i)=>(
-                  <button key={i} onClick={e=>{e.stopPropagation();btn.act();}} style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,.92)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>{btn.on?btn.a:btn.b}</button>
-                ))
+                ?<button onClick={e=>{e.stopPropagation();onEdit(note);}} style={{width:32,height:32,borderRadius:"50%",background:"rgba(0,0,0,.62)",backdropFilter:"blur(4px)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>✏️</button>
+                :<>
+                  <button onClick={e=>{e.stopPropagation();onLike&&onLike(note.id);}} style={{width:32,height:32,borderRadius:"50%",background:note.liked?"rgba(239,68,68,.85)":"rgba(0,0,0,.62)",backdropFilter:"blur(4px)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,transition:"background .15s"}}>
+                    {note.liked?"❤️":"🤍"}
+                  </button>
+                  <button onClick={e=>{e.stopPropagation();onSave&&onSave(note.id);}} style={{width:32,height:32,borderRadius:"50%",background:note.saved?"rgba(245,158,11,.85)":"rgba(0,0,0,.62)",backdropFilter:"blur(4px)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,transition:"background .15s"}}>
+                    {note.saved?"🔖":"🏷️"}
+                  </button>
+                </>
               }
             </div>
           </div>
-          <div style={{padding:"10px 12px 12px",flex:1}}>
-            <div style={{fontSize:9,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:4,display:"inline-block",border:"1px solid "+C.border,borderRadius:4,padding:"1px 6px"}}>{note.subject?.toUpperCase()}</div>
-            <div style={{fontSize:12,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",color:C.text,marginBottom:2,lineHeight:1.2}}>{note.title}</div>
-            <div style={{fontSize:10,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>TUTOR: {note.tutor_name?.toUpperCase()}</div>
-            {note.rating>0&&<div style={{display:"flex",alignItems:"center",gap:3,marginTop:4}}>
-              {[1,2,3,4,5].map(s=><span key={s} style={{fontSize:10,color:s<=Math.round(note.rating)?"#F59E0B":"#ccc"}}>★</span>)}
-              <span style={{fontSize:9,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginLeft:2}}>{note.rating.toFixed(1)}{note.rating_count>0?` (${note.rating_count})`:""}</span>
-            </div>}
-            <div style={{fontSize:9,color:"#4f46e5",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,marginTop:4}}>TAP TO OPEN PDF →</div>
+          {/* ── Info bar ── */}
+          <div style={{padding:"8px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:11,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",color:C.text,lineHeight:1.15,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{note.title}</div>
+              <div style={{fontSize:9,fontWeight:700,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{note.tutor_name?.toUpperCase()}</div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0}}>
+              <div style={{fontSize:8,fontWeight:800,letterSpacing:1,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",border:"1px solid "+C.border,borderRadius:4,padding:"1px 5px",whiteSpace:"nowrap"}}>{note.subject?.toUpperCase()}</div>
+              <div style={{fontSize:8,fontWeight:800,color:"#4f46e5",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>OPEN PDF →</div>
+            </div>
           </div>
         </div>
       ))}
