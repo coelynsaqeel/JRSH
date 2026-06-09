@@ -817,23 +817,28 @@ function CallDialog({lesson, user, onEnd, C}){
       });}catch(e){}
     };
     push();
-    const id=setInterval(push,10000);
+    const id=setInterval(push,5000);
     return()=>clearInterval(id);
   },[showLocMap,myLoc,reqDocId,user.role]);
 
   // ── Poll for other party's GPS while map is open ──
   React.useEffect(()=>{
     if(!showLocMap||!reqDocId) return;
+    let lastCoord="";
     const poll=async()=>{
       try{
         const row=await fbGet("tutor_requests",reqDocId);
-        if(row&&row[otherRole+"_lat"]){
-          setOtherLoc({lat:row[otherRole+"_lat"],lng:row[otherRole+"_lng"],ts:row.location_updated_at});
+        if(row&&row[otherRole+"_lat"]!=null){
+          const coord=row[otherRole+"_lat"]+","+row[otherRole+"_lng"];
+          if(coord!==lastCoord){
+            lastCoord=coord;
+            setOtherLoc({lat:row[otherRole+"_lat"],lng:row[otherRole+"_lng"],ts:row.location_updated_at||row[otherRole+"_location_ts"]||new Date().toISOString()});
+          }
         }
       }catch(e){}
     };
     poll();
-    const id=setInterval(poll,5000);
+    const id=setInterval(poll,2000);
     return()=>clearInterval(id);
   },[showLocMap,reqDocId,otherRole]);
 
@@ -1103,7 +1108,10 @@ function LocationModal({lesson,user,myLoc,otherLoc,locErr,otherRole,onClose,C}){
   const otherRoleCap=otherRole.charAt(0).toUpperCase()+otherRole.slice(1);
   const mapsUrl=myLoc?`https://www.google.com/maps?q=${myLoc.lat},${myLoc.lng}`:"";
   const otherMapsUrl=otherLoc?`https://www.google.com/maps?q=${otherLoc.lat},${otherLoc.lng}`:"";
-  const fmtTs=ts=>{if(!ts)return"";try{return new Date(ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});}catch(e){return "";}};
+  const [now,setNow]=React.useState(Date.now());
+  React.useEffect(()=>{const id=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(id);},[]);
+  const secAgo=ts=>{if(!ts)return null;const d=Math.floor((now-new Date(ts).getTime())/1000);if(d<5)return"just now";if(d<60)return d+"s ago";return Math.floor(d/60)+"m ago";};
+  const isStale=ts=>{if(!ts)return true;return(now-new Date(ts).getTime())>20000;};
 
   return(
     <div style={{position:"fixed",inset:0,zIndex:600,background:"#0d0d0d",display:"flex",flexDirection:"column"}}>
@@ -1144,9 +1152,11 @@ function LocationModal({lesson,user,myLoc,otherLoc,locErr,otherRole,onClose,C}){
           {otherLoc?(
             <>
               <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
-                <div style={{width:40,height:40,borderRadius:"50%",background:"rgba(59,130,246,.15)",border:"2px solid #3b82f6",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🔵</div>
+                <div style={{width:40,height:40,borderRadius:"50%",background:isStale(otherLoc.ts)?"rgba(245,158,11,.15)":"rgba(59,130,246,.15)",border:"2px solid "+(isStale(otherLoc.ts)?"#F59E0B":"#3b82f6"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🔵</div>
                 <div>
-                  <div style={{color:"#3b82f6",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:13}}>LIVE {fmtTs(otherLoc.ts)&&"· last "+fmtTs(otherLoc.ts)}</div>
+                  <div style={{color:isStale(otherLoc.ts)?"#F59E0B":"#3b82f6",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:13}}>
+                    {isStale(otherLoc.ts)?"STALE":"LIVE"}{secAgo(otherLoc.ts)?" · "+secAgo(otherLoc.ts):""}
+                  </div>
                   <div style={{color:"#666",fontSize:11,marginTop:2}}>{otherLoc.lat.toFixed(5)}°, {otherLoc.lng.toFixed(5)}°</div>
                 </div>
               </div>
@@ -1165,7 +1175,7 @@ function LocationModal({lesson,user,myLoc,otherLoc,locErr,otherRole,onClose,C}){
         {/* Info */}
         <div style={{background:"#111",borderRadius:16,padding:14,border:"1px solid #1e1e1e"}}>
           <div style={{fontSize:10,color:"#444",fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.7}}>
-            🔒 Locations are shared only during the 30-minute window before your lesson starts and are updated every 10 seconds. Open the map any time within this window — no call required.
+            🔒 Locations are shared only during the 30-minute window before your lesson starts and are updated every 5 seconds. Both parties must have the location screen open to share.
           </div>
         </div>
       </div>
@@ -1372,10 +1382,16 @@ function PdfViewer({note,onClose,C,initialPage,onPageChange,onRate,existingRatin
           <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{note.title}</div>
           <div style={{color:"#666",fontSize:10,marginTop:1,fontFamily:"'Barlow Condensed',sans-serif"}}>{note.subject} · {note.tutor_name}{total>0?" · "+total+" pages":""}</div>
         </div>
-        {/* Bookmark button — only show when there's a saved page to return to */}
-        {bookmarkPage>1&&total>0&&(
-          <button onClick={()=>{setPage(bookmarkPage);setZoom(1);setPan({x:0,y:0});}} title={"Go to bookmark (page "+bookmarkPage+")"} style={{background:page===bookmarkPage?"#F59E0B":"#222",border:"1px solid "+(page===bookmarkPage?"#F59E0B":"#444"),borderRadius:8,padding:"7px 10px",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",gap:4,color:page===bookmarkPage?"#000":"#ccc",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10}}>
-            🔖<span style={{letterSpacing:.5}}>P{bookmarkPage}</span>
+        {/* Bookmark button — always visible; tap to set bookmark at current page, amber when on bookmarked page */}
+        {total>0&&(
+          <button onClick={()=>{if(onPageChange)onPageChange(page);}} title={"Bookmark page "+page} style={{background:page===bookmarkPage&&bookmarkPage>1?"#F59E0B":"#222",border:"1px solid "+(page===bookmarkPage&&bookmarkPage>1?"#F59E0B":"#444"),borderRadius:8,padding:"7px 10px",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",gap:4,color:page===bookmarkPage&&bookmarkPage>1?"#000":"#ccc",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10}} title={(bookmarkPage>1&&page!==bookmarkPage)?"Set bookmark (currently P"+bookmarkPage+")":"Bookmark P"+page}>
+            🔖<span style={{letterSpacing:.5}}>{page===bookmarkPage&&bookmarkPage>1?"P"+bookmarkPage:"SET"}</span>
+          </button>
+        )}
+        {/* Jump-to-bookmark button — only when bookmark is set and we're not already there */}
+        {bookmarkPage>1&&page!==bookmarkPage&&total>0&&(
+          <button onClick={()=>{setPage(bookmarkPage);setZoom(1);setPan({x:0,y:0});}} title={"Jump to bookmark (page "+bookmarkPage+")"} style={{background:"#2a2000",border:"1px solid #F59E0B",borderRadius:8,padding:"7px 10px",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",gap:4,color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10}}>
+            ↩<span style={{letterSpacing:.5}}>P{bookmarkPage}</span>
           </button>
         )}
         {/* Rating */}
@@ -2087,7 +2103,8 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const [toast,setToast]=React.useState(null);
   function showToast(msg,type='info'){setToast({msg,type});setTimeout(()=>setToast(null),3200);}
   const [openNote,setOpenNote]=useState(null);
-  const [notePages,setNotePages]=useState({});
+  const [notePages,setNotePages]=useState(()=>{try{const s=localStorage.getItem("jrsh_npages");return s?JSON.parse(s):{}}catch(e){return{};}});
+  const setNotePagesPersist=(fn)=>setNotePages(prev=>{const next=typeof fn==="function"?fn(prev):fn;try{localStorage.setItem("jrsh_npages",JSON.stringify(next));}catch(e){}return next;});
   const [cancelLesson,setCancelLesson]=useState(null);
   const [editErr,setEditErr]=useState("");
   const [ratingMap,setRatingMap]=useState({}); // noteId -> {rating,id}
@@ -2373,7 +2390,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     // Mark lesson orange (pending) and store tutor info
     setLessons(ls=>ls.map(l=>l.id===lesson.id?{...l,_pending:true,_accepted:false,_tutorName:tutor.name,_tutorId:tutor.id,_tutorObj:tutor}:l));
     setShowTutors(null); // close modal
-    try{await fbAdd("tutor_requests",{lesson_id:lesson.id,student_id:user.id,tutor_id:tutor.id,subject:lesson.subject,day:lesson.day,from_hour:lesson.from_hour,to_hour:lesson.to_hour,online:lesson.online,description:lesson.description,student_name:user.name,student_pfp:profile.pfp_url||null,status:"pending",createdAt:nowKEiso()});}catch(e){}
+    try{await fbAdd("tutor_requests",{lesson_id:lesson.id,student_id:user.id,tutor_id:tutor.id,subject:lesson.subject,day:lesson.day,from_hour:lesson.from_hour,to_hour:lesson.to_hour,online:lesson.online,description:lesson.description,student_name:user.name,student_pfp:profile.pfp_url||null,student_age:profile.age||user.age||null,student_gender:profile.gender||user.gender||null,student_location:profile.location||user.location||null,student_grade:profile.grade||user.grade||profile.curriculum_level||user.curriculum_level||null,status:"pending",createdAt:nowKEiso()});}catch(e){}
   }
 
   async function handleInteraction(noteId,field){
@@ -2430,7 +2447,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
   return(
     <Shell C={C}>
       {toast&&<div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:9999,background:toast.type==="error"?"#DC2626":toast.type==="ok"?"#16a34a":"#111",color:"#fff",padding:"10px 20px",borderRadius:50,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1,boxShadow:"0 4px 20px rgba(0,0,0,.3)",maxWidth:"90vw",textAlign:"center",pointerEvents:"none"}}>{toast.msg}</div>}
-      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))} onRate={r=>handleRateNote(openNote.id,r)} existingRating={ratingMap[openNote.id]?.rating||0}/>}
+      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePagesPersist(pp=>({...pp,[openNote.id]:p}))} onRate={r=>handleRateNote(openNote.id,r)} existingRating={ratingMap[openNote.id]?.rating||0}/>}
       {callLesson&&<CallDialog lesson={callLesson} user={user} onEnd={(reason)=>{
         // Only auto-drop lesson for online auto-ring with no answer
         if(reason!=="cancelled"){
@@ -2767,7 +2784,8 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const [toast,setToast]=React.useState(null); // {msg,type}
   function showToast(msg,type='info'){setToast({msg,type});setTimeout(()=>setToast(null),3200);}
   const [openNote,setOpenNote]=useState(null);
-  const [notePages,setNotePages]=useState({});
+  const [notePages,setNotePages]=useState(()=>{try{const s=localStorage.getItem("jrsh_npages");return s?JSON.parse(s):{}}catch(e){return{};}});
+  const setNotePagesPersist=(fn)=>setNotePages(prev=>{const next=typeof fn==="function"?fn(prev):fn;try{localStorage.setItem("jrsh_npages",JSON.stringify(next));}catch(e){}return next;});
   const [editingNote,setEditingNote]=useState(null);
   const [showNoteEditCover,setShowNoteEditCover]=useState(false);
   const editCoverRef=React.useRef();
@@ -3084,7 +3102,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
   return(
     <Shell C={C}>
       {toast&&<div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:9999,background:toast.type==="error"?"#DC2626":toast.type==="ok"?"#16a34a":"#111",color:"#fff",padding:"10px 20px",borderRadius:50,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1,boxShadow:"0 4px 20px rgba(0,0,0,.3)",maxWidth:"90vw",textAlign:"center",pointerEvents:"none"}}>{toast.msg}</div>}
-      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePages(pp=>({...pp,[openNote.id]:p}))} onRate={r=>handleRateNote(openNote.id,r)} existingRating={ratingMap[openNote.id]?.rating||0}/>}
+      {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePagesPersist(pp=>({...pp,[openNote.id]:p}))} onRate={r=>handleRateNote(openNote.id,r)} existingRating={ratingMap[openNote.id]?.rating||0}/>}
       {showNoteEditCover&&editingNote&&editingNote.cover_url&&<CoverEditPage
         src={editingNote.cover_url}
         pos={editingNote.cover_pos||{x:50,y:50}}
