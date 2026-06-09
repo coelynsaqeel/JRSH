@@ -767,7 +767,6 @@ function CallDialog({lesson, user, onEnd, C}){
   const [ringTimer, setRingTimer] = React.useState(30);
   const [callSecs, setCallSecs]   = React.useState(0);
   const [muted, setMuted]   = React.useState(false);
-  const [cameraOn, setCameraOn]   = React.useState(true); // for online video calls
   const [agoraErr, setAgoraErr] = React.useState("");
   const [showLocMap, setShowLocMap] = React.useState(lesson._openLocation||false);
   const [otherLoc, setOtherLoc]   = React.useState(null);
@@ -800,11 +799,15 @@ function CallDialog({lesson, user, onEnd, C}){
   const withinLocationWindow = isOffline &&
     (now >= scheduledStartMs - 1800000) && (now <= scheduledEndMs);
 
-  // ── Push my GPS to Supabase while map is open ──
+  // reqDocId: student-side lessons have lesson.id = lessons table ID, but location
+  // is stored on the tutor_request row. Use _reqId (stored at load time) when available.
+  const reqDocId = lesson._reqId || lesson.id;
+
+  // ── Push my GPS to Firebase while map is open ──
   React.useEffect(()=>{
-    if(!showLocMap||!myLoc||!lesson.id) return;
+    if(!showLocMap||!myLoc||!reqDocId) return;
     const push=()=>{
-      try{fbUpdate("tutor_requests",lesson.id,{
+      try{fbUpdate("tutor_requests",reqDocId,{
         [user.role+"_lat"]: myLoc.lat,
         [user.role+"_lng"]: myLoc.lng,
         location_updated_at: nowKEiso()
@@ -813,23 +816,23 @@ function CallDialog({lesson, user, onEnd, C}){
     push();
     const id=setInterval(push,10000);
     return()=>clearInterval(id);
-  },[showLocMap,myLoc,lesson.id,user.role]);
+  },[showLocMap,myLoc,reqDocId,user.role]);
 
   // ── Poll for other party's GPS while map is open ──
   React.useEffect(()=>{
-    if(!showLocMap||!lesson.id) return;
+    if(!showLocMap||!reqDocId) return;
     const poll=async()=>{
       try{
-        const row=await fbGet("tutor_requests",lesson.id);
+        const row=await fbGet("tutor_requests",reqDocId);
         if(row&&row[otherRole+"_lat"]){
           setOtherLoc({lat:row[otherRole+"_lat"],lng:row[otherRole+"_lng"],ts:row.location_updated_at});
         }
       }catch(e){}
     };
     poll();
-    const id=setInterval(poll,10000);
+    const id=setInterval(poll,5000);
     return()=>clearInterval(id);
-  },[showLocMap,lesson.id,otherRole]);
+  },[showLocMap,reqDocId,otherRole]);
 
   // ── Signal polling (ring / accept / decline / end) ──
   React.useEffect(()=>{
@@ -999,9 +1002,9 @@ function CallDialog({lesson, user, onEnd, C}){
 
         <div style={{textAlign:"center"}}>
           <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1}}>
-            {phase==="outgoing"&&(isOffline?"CALLING…":"📹 VIDEO CALLING…")}
-            {phase==="incoming"&&(isOffline?"INCOMING VOICE CALL":"📹 INCOMING VIDEO CALL")}
-            {phase==="live"&&(isOffline?"VOICE CALL LIVE":"📹 VIDEO CALL LIVE")}
+            {phase==="outgoing"&&"CALLING…"}
+            {phase==="incoming"&&"INCOMING VOICE CALL"}
+            {phase==="live"&&"VOICE CALL LIVE"}
           </div>
           <div style={{color:"#888",fontSize:13,marginTop:4}}>{lesson.subject} · {isOffline?"Offline":"Online"}</div>
 
@@ -1060,14 +1063,7 @@ function CallDialog({lesson, user, onEnd, C}){
                 <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{muted?"UNMUTE":"MUTE"}</div>
               </div>
             )}
-            {phase==="live"&&!isOffline&&(
-              <div style={{textAlign:"center"}}>
-                <button onClick={()=>setCameraOn(c=>!c)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:cameraOn?"rgba(255,255,255,.12)":"#EF4444",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                  {cameraOn?"📹":"🚫"}
-                </button>
-                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{cameraOn?"CAMERA":"NO CAM"}</div>
-              </div>
-            )}
+
             {phase==="live"&&withinLocationWindow&&(
               <div style={{textAlign:"center"}}>
                 <button onClick={()=>setShowLocMap(true)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
@@ -1084,7 +1080,7 @@ function CallDialog({lesson, user, onEnd, C}){
         )}
 
         <div style={{fontSize:10,color:"#333",fontFamily:"'Barlow Condensed',sans-serif",textAlign:"center"}}>
-          {isOffline?"VOICE ONLY · 3-MINUTE LIMIT":"VIDEO CALL · 5-MIN RING · AUTO-DROP IF NO ANSWER"}
+          "VOICE ONLY · 3-MINUTE LIMIT"
         </div>
       </div>
 
@@ -2152,6 +2148,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
             _tutorName:pendingMap[l.id]?.tutorName||req?.tutor_name||l._tutorName,
             _tutorId:tutorId,
             _tutorObj:tutorObj||l._tutorObj||null,
+            _reqId:req?.id||null,
           };
         }));
         // History: lessons that are past their end time
@@ -3480,7 +3477,6 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:"100%",padding:"24px 22px 36px",maxHeight:"88dvh",overflowY:"auto"}}>
-        {/* Header */}
         <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
           <div style={{width:60,height:60,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden",border:"2px solid "+C.border}}>
             {lesson.student_pfp
@@ -3492,25 +3488,23 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{lesson.student_name||"Student"}</div>
             <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} {timeLbl(lesson.from_hour)}–{timeLbl(lesson.to_hour)} · {lesson.online?"🌐 Online":"📍 Offline"}</div>
           </div>
-          {/* Action buttons */}
           <div style={{display:"flex",gap:8,flexShrink:0}}>
             {withinLocationWindow&&(
               <button onClick={()=>{onClose();onLocation&&onLocation(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#F59E0B",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title="View live locations">
                 📍
               </button>
             )}
-            {onCall&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title={lesson.online?"Start video/voice call":"Start voice call (3 min limit)"}>
-              {lesson.online?"📹":"🎙️"}
+            {onCall&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title="Voice call (3 min limit)">
+              🎙️
             </button>}
           </div>
         </div>
 
-        {/* Session details */}
         {[
           {label:"SUBJECT",value:lesson.subject},
           {label:"DAY",value:lesson.day},
           {label:"TIME",value:timeLbl(lesson.from_hour)+" – "+timeLbl(lesson.to_hour)},
-          {label:"MODE",value:lesson.online?"🌐 Online (video/voice call)":"📍 Offline (in person)"},
+          {label:"MODE",value:lesson.online?"🌐 Online":"📍 Offline (in person)"},
           {label:"STATUS",value:(lesson.status||"").toUpperCase()||"ACCEPTED"},
         ].filter(Boolean).map(row=>(
           <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid "+C.border}}>
@@ -3519,7 +3513,6 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
           </div>
         ))}
 
-        {/* Student profile details */}
         {(lesson.student_age||lesson.student_gender||(!lesson.online&&lesson.student_location)||(lesson.student_grade||lesson.student_level))&&(
           <div style={{marginTop:14,padding:14,borderRadius:14,background:C.surfaceAlt,border:"1px solid "+C.border}}>
             <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:10}}>STUDENT PROFILE</div>
@@ -3537,7 +3530,6 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
           </div>
         )}
 
-        {/* Student's note */}
         {lesson.description&&(
           <div style={{marginTop:12,padding:14,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border}}>
             <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:6}}>STUDENT'S NOTE</div>
@@ -3545,15 +3537,14 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
           </div>
         )}
 
-        {/* Contextual info footer */}
         <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.7}}>
           {lesson.online?(
-            <>📹 This is an online session — use the call button above to start a video or voice call with the student. The session begins automatically at the scheduled time.</>
+            <>🌐 Online session — tap 🎙️ above for a voice call (3-min limit). Hanging up does not cancel the lesson.</>
           ):(
             <>{withinLocationWindow
-              ?"📍 Location window is open — tap 📍 above to view live GPS positions for both you and the student. Updated every 10 seconds."
-              :"🔒 "+locationWindowOpenStr+". Both parties share live GPS until the session ends."}
-              {" 🎙️ Voice call (3-min limit) available any time."}
+              ?"📍 Location window open — tap 📍 above to see live GPS for both you and the student."
+              :"🔒 "+locationWindowOpenStr}
+              {" 🎙️ Voice call (3-min limit) available any time. Hanging up does not cancel the lesson."}
             </>
           )}
         </div>
@@ -3562,6 +3553,7 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
     </div>
   );
 }
+/* ══ LESSON DETAILS MODAL (Student) ══ */
 function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWindow}){
   if(!lesson)return null;
   const isAccepted=lesson._accepted;
