@@ -2410,7 +2410,9 @@ function StudentApp({user,onLogout,backHandlerRef}){
     }catch(e){
       setInteractions(i=>({...i,[noteId]:cur})); // revert on error
     }
-  }(lesson,type){
+  }
+
+  async function handleCancelSession(lesson,type){
     setCancelLesson(null);
     try{
       const _crs=await fbQuery("tutor_requests",[{field:"lesson_id",op:"==",value:lesson.id}]);
