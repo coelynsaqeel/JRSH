@@ -655,10 +655,13 @@ function getScheduledMs(lesson){
     const endSecs=Math.floor(lesson.to_hour)*3600+Math.round((lesson.to_hour%1)*60)*60;
     if(nowSecs>=endSecs+30) daysAhead=7; // allow 30s grace period before marking fully past
   }
-  // Build Kenya midnight for today: subtract time-of-day from nowUtc, then subtract EAT offset
-  // Kenya midnight UTC = nowUtc - (keHour*3600+keMin*60+keSec)*1000 - EAT_OFFSET_MS
-  const keMidnightUtc=nowUtc-(keHour*3600+keMin*60+keSec)*1000-EAT_OFFSET_MS;
-  const startMs=keMidnightUtc+daysAhead*86400000+fromH*3600000+fromM*60000;
+  // startMs in UTC: nowUTC - keTimeOfDay + daysAhead + fromH_EAT
+  // Proof: startTime_UTC = startTime_EAT - EAT_OFFSET
+  //      = (nowEAT - keTimeOfDay + daysAhead + fromH) - EAT_OFFSET
+  //      = (nowUTC + EAT_OFFSET - keTimeOfDay + daysAhead + fromH) - EAT_OFFSET
+  //      = nowUTC - keTimeOfDay + daysAhead + fromH  ✓
+  const keTimeOfDayMs=(keHour*3600+keMin*60+keSec)*1000;
+  const startMs=nowUtc-keTimeOfDayMs+daysAhead*86400000+(fromH*3600000+fromM*60000);
   return{startMs,endMs:startMs+durMs};
 }
 
@@ -1250,6 +1253,7 @@ function PdfViewer({note,onClose,C,initialPage,onPageChange,onRate}){
   const [zoom,setZoom]=React.useState(1);
   const [pan,setPan]=React.useState({x:0,y:0});
   const [hoverRating,setHoverRating]=React.useState(0);
+  const [ratedStar,setRatedStar]=React.useState(0); // shows confirmation after rating
   const renderTask=React.useRef(null);
   const lastTouch=React.useRef(null);
   const lastPinchDist=React.useRef(null);
@@ -1363,9 +1367,11 @@ function PdfViewer({note,onClose,C,initialPage,onPageChange,onRate}){
           <div style={{color:"#666",fontSize:10,marginTop:1,fontFamily:"'Barlow Condensed',sans-serif"}}>{note.subject} · {note.tutor_name}{total>0?" · "+total+" pages":""}</div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:4,marginLeft:8,flexShrink:0}}>
-          <span style={{fontSize:9,color:"#888",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,marginRight:2}}>RATE:</span>
-          {[1,2,3,4,5].map(star=>(
-            <button key={star} onClick={()=>onRate&&onRate(star)} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,padding:2,color:hoverRating>=star||(!hoverRating&&(note.userRating||0)>=star)?"#F59E0B":"#444",transition:"color .15s"}} onMouseEnter={()=>setHoverRating(star)} onMouseLeave={()=>setHoverRating(0)}>★</button>
+          <span style={{fontSize:9,color:"#888",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,letterSpacing:1,marginRight:2}}>{ratedStar>0?"RATED:":"RATE:"}</span>
+          {ratedStar>0
+            ?<span style={{fontSize:11,color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,letterSpacing:1}}>{"★".repeat(ratedStar)} ✓</span>
+            :[1,2,3,4,5].map(star=>(
+            <button key={star} onClick={()=>{if(onRate){onRate(star);setRatedStar(star);}}} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,padding:2,color:hoverRating>=star?"#F59E0B":"#444",transition:"color .15s"}} onMouseEnter={()=>setHoverRating(star)} onMouseLeave={()=>setHoverRating(0)}>★</button>
           ))}
         </div>
         <button onClick={onClose} style={{marginLeft:8,background:"#222",border:"1px solid #444",borderRadius:8,padding:"8px 14px",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,cursor:"pointer",flexShrink:0}}>✕ CLOSE</button>
