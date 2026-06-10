@@ -12,20 +12,6 @@
       #root{background:#e8e8e8;}
     }
   </style>
-  <script>
-    /* Apply dark background immediately before React mounts — prevents white flash */
-    (function(){
-      try{
-        var dm=localStorage.getItem('jrsh_dm')==='1';
-        if(dm){
-          document.documentElement.style.background='#111111';
-          document.body && (document.body.style.background='#111111');
-          /* Also set via a class so CSS can pick it up */
-          document.documentElement.classList.add('jrsh-dark');
-        }
-      }catch(e){}
-    })();
-  </script>
   
     <link rel="apple-touch-icon" href="data:image/png;base64,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"/>
   <meta name="theme-color" content="#000000"/>
@@ -69,9 +55,6 @@
     @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800;900&display=swap');
     *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
     body{background:#F5F5F5} ::-webkit-scrollbar{width:0}
-    html.jrsh-dark body{background:#111111!important}
-    html.jrsh-dark #root{background:#111111!important}
-    @media(min-width:600px){html.jrsh-dark #root{background:#0a0a0a!important}}
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
     @keyframes ring{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.4)}50%{box-shadow:0 0 0 8px rgba(34,197,94,0)}}
     @keyframes spin{to{transform:rotate(360deg)}}
@@ -238,8 +221,8 @@ function Logo({large,dm}){
       xmlns="http://www.w3.org/2000/svg"
       preserveAspectRatio="xMidYMid meet"
       aria-label="JRSH" role="img"
-      style={{display:"block",flexShrink:0,shapeRendering:"geometricPrecision",textRendering:"geometricPrecision",imageRendering:"optimizeQuality"}}>
-      <g transform="translate(0,474) scale(0.1,-0.1)" fill={fill} stroke="none" fillRule="evenodd">
+      style={{display:"block",flexShrink:0,imageRendering:"crisp-edges"}}>
+      <g transform="translate(0,474) scale(0.1,-0.1)" fill={fill} stroke="none">
         <path d="M2170 3298 c-11 -40 -22 -77 -24 -83 -1 -5 -30 -11 -63 -11 -110 -2 -221 -40 -291 -99 -40 -33 -81 -118 -88 -181 -5 -41 -2 -54 16 -76 31 -40 64 -36 167 18 48 26 121 64 161 85 53 28 86 39 118 39 95 0 138 -92 99 -211 -25 -75 -118 -167 -198 -197 -112 -42 -152 -27 -234 91 -80 114 -142 174 -188 183 l-38 7 6 67 c3 38 3 78 0 89 -7 26 -27 22 -31 -5 -16 -119 -48 -174 -103 -174 -58 0 -62 54 -18 215 17 61 33 124 35 140 l5 30 -19 -24 c-11 -14 -32 -64 -47 -112 l-26 -87 -62 -12 c-166 -34 -330 -164 -415 -327 -44 -85 -55 -126 -27 -103 8 7 15 18 15 25 0 21 58 93 80 100 34 11 43 -7 46 -95 4 -101 9 -120 37 -120 31 0 106 64 156 133 58 78 121 128 171 134 53 7 70 -8 70 -63 0 -47 -4 -59 -62 -181 -92 -196 -315 -427 -491 -508 -76 -36 -112 -33 -176 15 -57 43 -76 48 -107 26 -19 -14 -19 -15 2 -38 42 -45 47 -66 34 -130 -10 -53 -61 -189 -80 -213 -4 -5 -57 -107 -118 -225 -108 -212 -153 -322 -138 -337 12 -12 48 31 182 222 81 115 157 219 177 245 7 8 23 31 37 50 132 188 329 391 515 529 114 85 148 118 191 181 63 92 134 309 150 457 6 59 7 61 29 51 30 -13 75 -86 75 -121 0 -44 -28 -145 -58 -207 -15 -30 -69 -120 -121 -200 -150 -230 -208 -350 -170 -350 5 0 84 72 174 159 234 228 289 258 251 134 -33 -105 -90 -177 -223 -277 -58 -43 -76 -66 -54 -66 24 0 524 396 559 444 31 42 26 80 -10 84 -15 2 -40 -4 -57 -13 -39 -20 -41 -5 -6 41 47 62 191 128 222 102 22 -18 9 -73 -26 -114 -48 -54 -38 -78 37 -90 97 -15 116 -77 65 -217 -28 -78 -20 -109 16 -59 11 17 21 32 21 35 0 3 13 34 29 69 38 84 58 149 71 232 17 109 -1 136 -92 136 -34 0 -38 3 -38 25 0 33 30 51 113 69 38 7 71 17 74 20 4 3 8 53 11 111 l5 104 41 -33 c76 -62 116 -76 214 -76 79 0 91 -2 110 -23 12 -13 26 -45 31 -73 15 -75 27 -100 63 -125 36 -26 71 -28 185 -14 56 7 68 5 118 -19 62 -31 108 -83 103 -118 -5 -40 -45 -34 -123 18 -158 106 -221 111 -266 21 -45 -90 -69 -101 -275 -127 -152 -20 -184 -26 -184 -39 0 -4 93 -5 208 -3 152 3 242 0 339 -12 72 -9 185 -16 251 -17 l120 0 38 -74 c62 -121 134 -216 134 -177 0 6 -23 48 -50 93 -87 144 -108 259 -48 259 34 0 86 -36 109 -75 22 -38 35 -42 62 -22 62 45 4 219 -94 284 -39 26 -50 28 -127 26 -76 -2 -90 1 -143 27 -75 39 -188 144 -219 206 -13 27 -26 71 -28 99 -4 44 0 55 23 83 39 47 90 59 157 37 101 -33 159 -98 305 -342 47 -79 92 -143 99 -143 17 0 13 10 -63 165 -33 66 -72 152 -87 190 -16 39 -35 87 -44 109 -9 21 -16 62 -16 92 -1 60 14 79 74 90 40 8 62 22 54 35 -19 31 -409 -18 -600 -76 -118 -36 -140 -75 -44 -75 40 0 52 -4 69 -26 11 -14 23 -42 27 -61 14 -73 -69 -122 -122 -72 -22 21 -30 41 -48 121 -9 41 -43 45 -112 13 -125 -58 -218 -79 -250 -57 -6 4 -21 41 -33 82 -24 78 -68 170 -83 170 -4 0 -11 0 -15 0 -4 0 -6 -20 -4 -44 2 -38 -2 -46 -29 -70 -20 -16 -43 -26 -64 -26 -67 0 -88 65 -62 190 18 86 20 110 7 110 -5 0 -19 -33 -31 -72z"/>
         <path d="M3697 3114 c-3 -3 21 -56 53 -118 62 -118 93 -208 88 -253 -2 -22 -9 -29 -29 -31 -32 -4 -84 37 -93 73 -9 33 -39 32 -66 -2 -19 -24 -21 -37 -17 -90 4 -51 17 -85 82 -215 91 -180 115 -244 115 -309 0 -60 -23 -79 -93 -79 -33 0 -47 -4 -45 -12 7 -20 96 -39 213 -45 172 -9 224 15 196 89 -17 44 -71 97 -111 109 -32 10 -39 17 -45 46 -14 78 21 121 89 110 88 -14 165 -77 211 -171 34 -70 44 -146 22 -164 -14 -12 -13 -20 3 -75 48 -163 101 -263 219 -412 121 -152 295 -279 392 -287 51 -5 47 19 -8 45 -70 32 -137 81 -171 124 -104 132 -282 625 -317 875 -8 63 -39 105 -112 155 -90 60 -163 85 -263 91 -108 5 -118 -3 -99 -77 11 -43 10 -53 -5 -75 -20 -31 -30 -32 -56 -6 -16 16 -20 33 -20 88 0 112 70 222 131 207 14 -3 61 -35 104 -71 66 -53 86 -64 117 -64 20 0 40 5 44 12 4 7 11 56 15 110 4 66 12 106 24 124 19 29 99 68 162 79 50 8 59 17 37 36 -13 11 -48 11 -192 1 -188 -12 -292 -30 -365 -61 l-45 -19 -57 107 c-61 114 -97 166 -108 155z"/>
       </g>
@@ -778,9 +761,380 @@ async function sendCallSignal(lessonId, signal){
 }
 
 /* ══ CALL DIALOG — Agora Voice, On-Demand, 3-min Limit ══ */
-function CallDialog({lesson, user, onEnd, C}){
+function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   const CALL_LIMIT = 3*60;
+  const remaining180 = Math.max(0, CALL_LIMIT - callTimeUsed); // remaining seconds this session
   const isOffline = !lesson.online;
+
+  // Phase: idle | outgoing | incoming | live | ended
+  const [phase, setPhase]  = React.useState("idle");
+  const [ringTimer, setRingTimer] = React.useState(30);
+  const [callSecs, setCallSecs]   = React.useState(0);
+  const [muted, setMuted]   = React.useState(false);
+  const [agoraErr, setAgoraErr] = React.useState("");
+  const [showLocMap, setShowLocMap] = React.useState(lesson._openLocation||false);
+  const [otherLoc, setOtherLoc]   = React.useState(null);
+
+  const initiateCallRef = React.useRef(null);
+  React.useEffect(()=>{
+    if(lesson._autoRing&&lesson.online){
+      const t=setTimeout(()=>{ if(initiateCallRef.current) initiateCallRef.current(); },200);
+      return()=>clearTimeout(t);
+    }
+  },[]);
+
+  const engineRef  = React.useRef(null);
+  const pollRef    = React.useRef(null);
+  const lastSigTs  = React.useRef(0);
+  const callSecsRef= React.useRef(0); // tracks live seconds for hangUp closure
+  const ringAudioRef=React.useRef(null);
+
+  const otherRole = user.role==="tutor" ? "student" : "tutor";
+
+  // ── Ringtone helpers (Web Audio API) ──
+  function startRingtone(){
+    try{
+      const ctx=new (window.AudioContext||window.webkitAudioContext)();
+      let stopped=false;
+      function beep(){
+        if(stopped)return;
+        const o=ctx.createOscillator(),g=ctx.createGain();
+        o.connect(g);g.connect(ctx.destination);
+        o.type="sine";o.frequency.value=880;
+        g.gain.setValueAtTime(0,ctx.currentTime);
+        g.gain.linearRampToValueAtTime(0.4,ctx.currentTime+0.05);
+        g.gain.linearRampToValueAtTime(0,ctx.currentTime+0.4);
+        o.start(ctx.currentTime);o.stop(ctx.currentTime+0.45);
+        setTimeout(()=>{
+          if(stopped)return;
+          const o2=ctx.createOscillator(),g2=ctx.createGain();
+          o2.connect(g2);g2.connect(ctx.destination);
+          o2.type="sine";o2.frequency.value=1108;
+          g2.gain.setValueAtTime(0,ctx.currentTime);
+          g2.gain.linearRampToValueAtTime(0.4,ctx.currentTime+0.05);
+          g2.gain.linearRampToValueAtTime(0,ctx.currentTime+0.4);
+          o2.start(ctx.currentTime);o2.stop(ctx.currentTime+0.45);
+          setTimeout(()=>{if(!stopped)setTimeout(beep,800);},450);
+        },500);
+      }
+      beep();
+      ringAudioRef.current={stop:()=>{stopped=true;try{ctx.close();}catch(e){}}};
+    }catch(e){}
+  }
+  function stopRingtone(){try{ringAudioRef.current?.stop();}catch(e){}ringAudioRef.current=null;}
+
+  const {loc: myLoc, err: locErr} = useLiveLocation(showLocMap);
+  const {startMs:scheduledStartMs,endMs:scheduledEndMs}=getScheduledMs(lesson);
+  const lessonStartMs = lesson.start_ts || scheduledStartMs;
+  const lessonEndMs   = lessonStartMs+(lesson.to_hour-lesson.from_hour)*3600000;
+  const now = Date.now();
+  const withinLocationWindow = isOffline &&
+    (now >= scheduledStartMs - 1800000) && (now <= scheduledEndMs);
+  const reqDocId = lesson._reqId || lesson.id;
+
+  React.useEffect(()=>{
+    if(!showLocMap||!myLoc||!reqDocId) return;
+    const push=()=>{try{fbUpdate("tutor_requests",reqDocId,{[user.role+"_lat"]:myLoc.lat,[user.role+"_lng"]:myLoc.lng,location_updated_at:nowKEiso()});}catch(e){}};
+    push();const id=setInterval(push,5000);return()=>clearInterval(id);
+  },[showLocMap,myLoc,reqDocId,user.role]);
+
+  React.useEffect(()=>{
+    if(!showLocMap||!reqDocId) return;
+    let lastCoord="";
+    const poll=async()=>{
+      try{const row=await fbGet("tutor_requests",reqDocId);if(row&&row[otherRole+"_lat"]!=null){const coord=row[otherRole+"_lat"]+","+row[otherRole+"_lng"];if(coord!==lastCoord){lastCoord=coord;setOtherLoc({lat:row[otherRole+"_lat"],lng:row[otherRole+"_lng"],ts:row.location_updated_at||new Date().toISOString()});}}}catch(e){}
+    };
+    poll();const id=setInterval(poll,2000);return()=>clearInterval(id);
+  },[showLocMap,reqDocId,otherRole]);
+
+  // ── Real-time signal listener via Firestore onSnapshot ──
+  React.useEffect(()=>{
+    if(!lesson.id||phase==="ended") return;
+    let unsub=null;
+    const handleSig=async(sig)=>{
+      if(!sig||sig.ts<=lastSigTs.current||sig.from===user.id) return;
+      lastSigTs.current=sig.ts;
+      if(sig.type==="ring"&&phase==="idle"){setPhase("incoming");setRingTimer(30);}
+      if(sig.type==="accept"&&phase==="outgoing"){await connectVoice();}
+      if(sig.type==="decline"&&phase==="outgoing"){hangUp("declined");}
+      if(sig.type==="end"&&(phase==="live"||phase==="outgoing"||phase==="incoming")){hangUp("ended");}
+    };
+    try{
+      const docRef=_db.collection("tutor_requests").doc(String(lesson.id));
+      unsub=docRef.onSnapshot(snap=>{
+        try{const row=snap.data();if(!row?.call_signal)return;handleSig(JSON.parse(row.call_signal));}catch(e){}
+      },()=>{
+        // Fallback to polling if onSnapshot fails
+        pollRef.current=setInterval(async()=>{
+          try{const row=await fbGet("tutor_requests",lesson.id);if(!row?.call_signal)return;handleSig(JSON.parse(row.call_signal));}catch(e){}
+        },2000);
+      });
+    }catch(e){
+      pollRef.current=setInterval(async()=>{
+        try{const row=await fbGet("tutor_requests",lesson.id);if(!row?.call_signal)return;handleSig(JSON.parse(row.call_signal));}catch(e){}
+      },2000);
+    }
+    return()=>{if(unsub)unsub();clearInterval(pollRef.current);};
+  },[lesson.id,phase,user.id]);
+
+  // ── Ring countdown + ringtone for incoming ──
+  React.useEffect(()=>{
+    if(phase!=="incoming") return;
+    startRingtone();
+    if(ringTimer<=0){declineCall();return;}
+    const id=setTimeout(()=>setRingTimer(t=>t-1),1000);
+    return()=>{clearTimeout(id);stopRingtone();};
+  },[phase,ringTimer]);
+
+  React.useEffect(()=>{
+    if(phase!=="outgoing") return;
+    const timeout=lesson._autoRing?5*60*1000:30000;
+    const id=setTimeout(()=>hangUp("no_answer"),timeout);
+    return()=>clearTimeout(id);
+  },[phase]);
+
+  // ── Call duration timer — uses remaining seconds ──
+  React.useEffect(()=>{
+    if(phase!=="live") return;
+    if(remaining180<=0){hangUp("timeout");return;}
+    const id=setInterval(()=>{
+      setCallSecs(s=>{
+        const next=s+1;
+        callSecsRef.current=next;
+        if(next>=remaining180){clearInterval(id);hangUp("timeout");return remaining180;}
+        return next;
+      });
+    },1000);
+    return()=>clearInterval(id);
+  },[phase]);
+
+  async function connectVoice(){
+    setPhase("live");
+    try{
+      const channel="jrsh-"+(lesson.id||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,20);
+      const eng=await startAgoraVoiceCall(AGORA_APP_ID, channel, user?.id||null);
+      engineRef.current=eng;
+      eng.client.on("user-published",async(remote,mediaType)=>{
+        await eng.client.subscribe(remote,mediaType);
+        if(mediaType==="audio") remote.audioTrack.play();
+      });
+    }catch(e){
+      const msg=e?.message||"";
+      let errMsg="Call failed";
+      if(msg.includes("Permission denied")||msg.includes("NotAllowed")||msg.includes("not allowed")){errMsg="Microphone access denied — allow mic in browser settings";}
+      else if(msg.includes("Failed to load")){errMsg="Could not load voice engine — check internet";}
+      else if(msg.includes("INVALID_VENDOR_KEY")||msg.includes("invalid")||msg.toLowerCase().includes("app id")){errMsg="Voice service config error";}
+      else if(msg){errMsg=msg;}
+      setAgoraErr(errMsg);
+    }
+  }
+
+  async function initiateCall(){
+    setPhase("outgoing");
+    await sendCallSignal(lesson.id,{from:user.id,type:"ring"});
+  }
+  initiateCallRef.current = initiateCall;
+
+  async function acceptCall(){
+    stopRingtone();
+    await sendCallSignal(lesson.id,{from:user.id,type:"accept"});
+    await connectVoice();
+  }
+
+  async function declineCall(){
+    stopRingtone();
+    await sendCallSignal(lesson.id,{from:user.id,type:"decline"});
+    hangUp("declined");
+  }
+
+  async function hangUp(reason){
+    clearInterval(pollRef.current);
+    stopRingtone();
+    const secsUsed=callSecsRef.current;
+    callSecsRef.current=0;
+    if(phase==="live"||phase==="outgoing"){
+      await sendCallSignal(lesson.id,{from:user.id,type:"end"});
+    }
+    if(engineRef.current){
+      try{engineRef.current.audioTrack.stop();engineRef.current.audioTrack.close();}catch(e){}
+      try{await engineRef.current.client.leave();}catch(e){}
+      engineRef.current=null;
+    }
+    setPhase("ended");
+    const isAutoRingDrop=lesson._autoRing&&lesson.online&&(reason==="no_answer"||reason==="timeout"||reason==="ended");
+    onEnd(isAutoRingDrop?reason:"cancelled", secsUsed);
+  }
+
+  async function toggleMute(){
+    if(engineRef.current?.audioTrack){try{await engineRef.current.audioTrack.setEnabled(muted);}catch(e){}}
+    setMuted(m=>!m);
+  }
+
+  const fmtTime=s=>{const m=Math.floor(s/60),sec=s%60;return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0");};
+  const remaining=remaining180-callSecs;
+
+  // ── Callee avatar ──
+  const calleeName=lesson.student_name||lesson._tutorName||"?";
+  const calleePfp=(user.role==="student"?lesson._tutorObj?.pfp_url:null)||lesson._pfpUrl||null;
+  const CalleeAvatar=({size=96,border="3px solid #3b82f6",glow="rgba(59,130,246,.08)"})=>(
+    <div style={{width:size,height:size,borderRadius:"50%",background:"#1a1a1a",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",border,boxShadow:"0 0 0 16px "+glow,flexShrink:0}}>
+      {calleePfp
+        ?<img src={calleePfp} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
+        :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:Math.round(size*.4),color:"#fff"}}>{calleeName[0].toUpperCase()}</span>
+      }
+    </div>
+  );
+
+  // Phone SVG icon
+  const PhoneSVG=({size=22,color="#fff"})=>(
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/>
+    </svg>
+  );
+
+  // ── Idle state ──
+  if(phase==="idle"){
+    return(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onEnd("cancelled",0);}}>
+        <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:"100%",padding:"28px 22px 44px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
+            <div style={{width:56,height:56,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden"}}>
+              {calleePfp
+                ?<img src={calleePfp} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
+                :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.accentText}}>{calleeName[0].toUpperCase()}</span>
+              }
+            </div>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:18,color:C.text}}>{calleeName}</div>
+              <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} · {isOffline?"📍 Offline":"🌐 Online"}</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:12}}>
+            {remaining180<=0?(
+              <div style={{flex:1,padding:"15px",borderRadius:50,background:C.surfaceAlt,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1.5,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                <PhoneSVG size={18} color={C.sub}/> CALL LIMIT REACHED
+              </div>
+            ):(
+              <button onClick={initiateCall} style={{flex:1,padding:"15px",borderRadius:50,border:"none",background:"#22C55E",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1.5,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                <PhoneSVG size={18}/> VOICE CALL <span style={{fontSize:11,opacity:.8}}>· {fmtTime(remaining180)} left</span>
+              </button>
+            )}
+            {withinLocationWindow&&(
+              <button onClick={()=>setShowLocMap(true)} style={{width:52,height:52,borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}} title="View live locations">
+                📍
+              </button>
+            )}
+          </div>
+          {withinLocationWindow&&(
+            <div style={{marginTop:8,fontSize:10,color:C.sub,textAlign:"center",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
+              📍 LIVE LOCATION AVAILABLE — within 30 min of lesson
+            </div>
+          )}
+          <button onClick={()=>onEnd("cancelled",0)} style={{marginTop:14,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
+        </div>
+        {showLocMap&&<LocationModal lesson={lesson} user={user} myLoc={myLoc} otherLoc={otherLoc} locErr={locErr} otherRole={otherRole} onClose={()=>setShowLocMap(false)} C={C}/>}
+      </div>
+    );
+  }
+
+  // ── Full-screen call states ──
+  const avatarBorder=phase==="live"?"3px solid #22C55E":phase==="incoming"?"3px solid #F59E0B":"3px solid #3b82f6";
+  const avatarGlow=phase==="live"?"rgba(34,197,94,.08)":phase==="incoming"?"rgba(245,158,11,.1)":"rgba(59,130,246,.08)";
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"#0a0a0a",zIndex:500,display:"flex",flexDirection:"column",fontFamily:"Barlow,sans-serif"}}>
+      {showLocMap&&<LocationModal lesson={lesson} user={user} myLoc={myLoc} otherLoc={otherLoc} locErr={locErr} otherRole={otherRole} onClose={()=>setShowLocMap(false)} C={C}/>}
+
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24}}>
+        <CalleeAvatar size={96} border={avatarBorder} glow={avatarGlow}/>
+
+        <div style={{textAlign:"center"}}>
+          <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1}}>
+            {phase==="outgoing"&&"CALLING…"}
+            {phase==="incoming"&&"INCOMING VOICE CALL"}
+            {phase==="live"&&"VOICE CALL LIVE"}
+          </div>
+          <div style={{color:"#aaa",fontSize:14,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{calleeName}</div>
+          <div style={{color:"#666",fontSize:12,marginTop:2}}>{lesson.subject} · {isOffline?"Offline":"Online"}</div>
+
+          {phase==="outgoing"&&(
+            <div style={{marginTop:12}}>
+              <div style={{color:"#666",fontSize:12,fontFamily:"'Barlow Condensed',sans-serif"}}>Ringing — waiting for answer</div>
+              <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:10}}>
+                {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:"50%",background:"#3b82f6",animation:"pulse 1.4s ease-in-out "+i*0.3+"s infinite"}}/>)}
+              </div>
+            </div>
+          )}
+
+          {phase==="incoming"&&(
+            <div style={{color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:32,marginTop:12}}>
+              {String(ringTimer).padStart(2,"0")}s
+            </div>
+          )}
+
+          {phase==="live"&&(
+            <div style={{marginTop:12}}>
+              <div style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:24}}>{fmtTime(callSecs)}</div>
+              <div style={{color:remaining<=30?"#EF4444":"#555",fontSize:11,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
+                {remaining<=30?"⚠ "+fmtTime(remaining)+" REMAINING":"LIMIT · "+fmtTime(remaining180)}
+              </div>
+              <div style={{width:220,height:4,background:"#222",borderRadius:2,marginTop:10,overflow:"hidden",margin:"10px auto 0"}}>
+                <div style={{width:(callSecs/remaining180*100)+"%",height:"100%",background:remaining<=30?"#EF4444":"#22C55E",transition:"width 1s linear"}}/>
+              </div>
+              {agoraErr&&<div style={{color:"#EF4444",fontSize:11,marginTop:8,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,maxWidth:260,textAlign:"center",margin:"8px auto 0"}}>{agoraErr}</div>}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{padding:"20px 0 48px",background:"rgba(0,0,0,.9)",display:"flex",flexDirection:"column",alignItems:"center",gap:18}}>
+        {phase==="incoming"&&(
+          <div style={{display:"flex",gap:44,alignItems:"center"}}>
+            <div style={{textAlign:"center"}}>
+              <button onClick={declineCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
+                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M23.36 14.46c-1.01-.98-2.23-1.5-3.5-1.5s-2.48.52-3.49 1.5l-2.2 2.2c-4.01-2.04-7.29-5.32-9.34-9.33l2.2-2.21C8.06 4.13 8.58 2.91 8.58 1.64S8.06-.85 7.08-1.86L4.88-4.06C3.87-5.07 2.65-5.59 1.38-5.59s-2.49.52-3.5 1.53L-3.9-2.27C-5.15-.98-5.56.8-5.03 2.43 1.26 21.77 20.26 40.04 39.6 46.31c1.63.53 3.41.12 4.7-1.13l1.79-1.78c1.01-1.01 1.53-2.23 1.53-3.5s-.52-2.49-1.53-3.5l-2.2-2.2z" transform="scale(.5) translate(1,2)"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+              </button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>DECLINE</div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <button onClick={acceptCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#22C55E",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
+                <PhoneSVG size={28}/>
+              </button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>ANSWER</div>
+            </div>
+          </div>
+        )}
+
+        {(phase==="outgoing"||phase==="live")&&(
+          <div style={{display:"flex",gap:20,alignItems:"center"}}>
+            {phase==="live"&&(
+              <div style={{textAlign:"center"}}>
+                <button onClick={toggleMute} style={{width:56,height:56,borderRadius:"50%",border:"none",background:muted?"#EF4444":"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
+                  {muted?"🔇":"🎙️"}
+                </button>
+                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{muted?"UNMUTE":"MUTE"}</div>
+              </div>
+            )}
+            {phase==="live"&&withinLocationWindow&&(
+              <div style={{textAlign:"center"}}>
+                <button onClick={()=>setShowLocMap(true)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>📍</button>
+                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>LOCATION</div>
+              </div>
+            )}
+            <div style={{textAlign:"center"}}>
+              <button onClick={()=>hangUp("ended")} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
+                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09v3a2 2 0 0 1-2.18 2A19.79 19.79 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91"/><line x1="23" y1="1" x2="1" y2="23"/></svg>
+              </button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>END</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <style>{`@keyframes pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}`}</style>
+    </div>
+  );
+}
 
   // Phase: idle | outgoing | incoming | live | ended
   const [phase, setPhase]  = React.useState("idle");
@@ -964,161 +1318,6 @@ function CallDialog({lesson, user, onEnd, C}){
     setPhase("ended");
     // Only pass "ended"/"no_answer"/"timeout" to parent for auto-ring online lessons
     // Manual 3-min voice calls: close dialog without dropping the lesson
-    const isAutoRingDrop=lesson._autoRing&&lesson.online&&(reason==="no_answer"||reason==="timeout"||reason==="ended");
-    onEnd(isAutoRingDrop?reason:"cancelled");
-  }
-
-  async function toggleMute(){
-    if(engineRef.current?.audioTrack){
-      try{await engineRef.current.audioTrack.setEnabled(muted);}catch(e){}
-    }
-    setMuted(m=>!m);
-  }
-
-  const fmtTime=s=>{const m=Math.floor(s/60),sec=s%60;return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0");};
-  const remaining=CALL_LIMIT-callSecs;
-
-  // ── Idle state — just show call button ──
-  if(phase==="idle"){
-    return(
-      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onEnd("cancelled");}}>
-        <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:"100%",padding:"28px 22px 44px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
-            <div style={{width:56,height:56,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.accentText}}>{(lesson.student_name||lesson._tutorName||"?")[0].toUpperCase()}</span>
-            </div>
-            <div style={{flex:1}}>
-              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:18,color:C.text}}>{lesson.student_name||lesson._tutorName||"Contact"}</div>
-              <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} · {isOffline?"📍 Offline":"🌐 Online"}</div>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:12}}>
-            <button onClick={initiateCall} style={{flex:1,padding:"15px",borderRadius:50,border:"none",background:"#22C55E",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1.5,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              🎙️ VOICE CALL <span style={{fontSize:11,opacity:.8}}>· 3 min</span>
-            </button>
-            {withinLocationWindow&&(
-              <button onClick={()=>setShowLocMap(true)} style={{width:52,height:52,borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}} title="View live locations">
-                📍
-              </button>
-            )}
-          </div>
-          {withinLocationWindow&&(
-            <div style={{marginTop:8,fontSize:10,color:C.sub,textAlign:"center",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
-              📍 LIVE LOCATION AVAILABLE — within 30 min of lesson
-            </div>
-          )}
-          <button onClick={()=>onEnd("cancelled")} style={{marginTop:14,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
-        </div>
-        {showLocMap&&<LocationModal lesson={lesson} user={user} myLoc={myLoc} otherLoc={otherLoc} locErr={locErr} otherRole={otherRole} onClose={()=>setShowLocMap(false)} C={C}/>}
-      </div>
-    );
-  }
-
-  // ── Full-screen call states ──
-  return(
-    <div style={{position:"fixed",inset:0,background:"#0a0a0a",zIndex:500,display:"flex",flexDirection:"column",fontFamily:"Barlow,sans-serif"}}>
-      {/* Location overlay */}
-      {showLocMap&&<LocationModal lesson={lesson} user={user} myLoc={myLoc} otherLoc={otherLoc} locErr={locErr} otherRole={otherRole} onClose={()=>setShowLocMap(false)} C={C}/>}
-
-      {/* Call body */}
-      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24}}>
-        <div style={{
-          width:96,height:96,borderRadius:"50%",
-          background:"#1a1a1a",
-          display:"flex",alignItems:"center",justifyContent:"center",
-          fontSize:36,
-          border:"3px solid "+(phase==="live"?"#22C55E":phase==="incoming"?"#F59E0B":"#3b82f6"),
-          boxShadow:"0 0 0 16px "+(phase==="live"?"rgba(34,197,94,.08)":phase==="incoming"?"rgba(245,158,11,.1)":"rgba(59,130,246,.08)"),
-        }}>🎙️</div>
-
-        <div style={{textAlign:"center"}}>
-          <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1}}>
-            {phase==="outgoing"&&"CALLING…"}
-            {phase==="incoming"&&"INCOMING VOICE CALL"}
-            {phase==="live"&&"VOICE CALL LIVE"}
-          </div>
-          <div style={{color:"#888",fontSize:13,marginTop:4}}>{lesson.subject} · {isOffline?"Offline":"Online"}</div>
-
-          {phase==="outgoing"&&(
-            <div style={{marginTop:12}}>
-              <div style={{color:"#666",fontSize:12,fontFamily:"'Barlow Condensed',sans-serif"}}>Ringing — waiting for answer</div>
-              <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:10}}>
-                {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:"50%",background:"#3b82f6",animation:"pulse 1.4s ease-in-out "+i*0.3+"s infinite"}}/>)}
-              </div>
-            </div>
-          )}
-
-          {phase==="incoming"&&(
-            <div style={{color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:32,marginTop:12}}>
-              {String(ringTimer).padStart(2,"0")}s
-            </div>
-          )}
-
-          {phase==="live"&&(
-            <div style={{marginTop:12}}>
-              <div style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:24}}>{fmtTime(callSecs)}</div>
-              <div style={{color:remaining<=30?"#EF4444":"#555",fontSize:11,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
-                {remaining<=30?"⚠ "+fmtTime(remaining)+" REMAINING":"LIMIT · "+fmtTime(CALL_LIMIT)}
-              </div>
-              <div style={{width:220,height:4,background:"#222",borderRadius:2,marginTop:10,overflow:"hidden",margin:"10px auto 0"}}>
-                <div style={{width:(callSecs/CALL_LIMIT*100)+"%",height:"100%",background:remaining<=30?"#EF4444":"#22C55E",transition:"width 1s linear"}}/>
-              </div>
-              {agoraErr&&<div style={{color:"#EF4444",fontSize:11,marginTop:8,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,maxWidth:260,textAlign:"center",margin:"8px auto 0"}}>{agoraErr}</div>}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Controls */}
-      <div style={{padding:"20px 0 48px",background:"rgba(0,0,0,.9)",display:"flex",flexDirection:"column",alignItems:"center",gap:18}}>
-        {phase==="incoming"&&(
-          <div style={{display:"flex",gap:44,alignItems:"center"}}>
-            <div style={{textAlign:"center"}}>
-              <button onClick={declineCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>📵</button>
-              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>DECLINE</div>
-            </div>
-            <div style={{textAlign:"center"}}>
-              <button onClick={acceptCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#22C55E",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>🎙️</button>
-              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>ANSWER</div>
-            </div>
-          </div>
-        )}
-
-        {(phase==="outgoing"||phase==="live")&&(
-          <div style={{display:"flex",gap:20,alignItems:"center"}}>
-            {phase==="live"&&(
-              <div style={{textAlign:"center"}}>
-                <button onClick={toggleMute} style={{width:56,height:56,borderRadius:"50%",border:"none",background:muted?"#EF4444":"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                  {muted?"🔇":"🎙️"}
-                </button>
-                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{muted?"UNMUTE":"MUTE"}</div>
-              </div>
-            )}
-
-            {phase==="live"&&withinLocationWindow&&(
-              <div style={{textAlign:"center"}}>
-                <button onClick={()=>setShowLocMap(true)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                  📍
-                </button>
-                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>LOCATION</div>
-              </div>
-            )}
-            <div style={{textAlign:"center"}}>
-              <button onClick={()=>hangUp("ended")} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>📵</button>
-              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>END</div>
-            </div>
-          </div>
-        )}
-
-        <div style={{fontSize:10,color:"#333",fontFamily:"'Barlow Condensed',sans-serif",textAlign:"center"}}>
-          "VOICE ONLY · 3-MINUTE LIMIT"
-        </div>
-      </div>
-
-      <style>{`@keyframes pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}`}</style>
-    </div>
-  );
-}
 
 /* ══ LOCATION MAP MODAL ══ */
 function LocationModal({lesson,user,myLoc,otherLoc,locErr,otherRole,onClose,C}){
@@ -1533,7 +1732,6 @@ function AppRoot(){
   const [showSignIn,setShowSignIn]=useState(false);
   const [restoring,setRestoring]=useState(true);
   const [connStatus,setConnStatus]=useState("checking"); // checking|ok|error
-  const [dm]=useState(()=>{try{return localStorage.getItem("jrsh_dm")==="1";}catch(e){return false;}});
   const backHandlerRef=React.useRef(null);
   const C=lC();
 
@@ -1611,16 +1809,13 @@ function AppRoot(){
   },[screen]);
 
   if(restoring){
-    const splashBg=dm?"#111111":"#fff";
-    const barBg=dm?"#2a2a2a":"#eee";
-    const shimmerBg=dm?"#f0f0f0":"#111";
     return(
-      <div style={{position:"fixed",inset:0,background:splashBg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:24}}>
-        <Logo dm={dm} large/>
-        <div style={{width:64,height:3,borderRadius:2,background:barBg,overflow:"hidden"}}>
-          <div style={{height:"100%",width:"55%",background:shimmerBg,borderRadius:2,animation:"shimmer 1s ease-in-out infinite alternate"}}/>
+      <div style={{position:"fixed",inset:0,background:"#fff",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
+        <Logo/>
+        <div style={{width:48,height:4,borderRadius:2,background:"#eee",overflow:"hidden"}}>
+          <div style={{height:"100%",width:"60%",background:"#111",borderRadius:2,animation:"shimmer 1s ease-in-out infinite alternate"}}/>
         </div>
-        <style>{`@keyframes shimmer{from{margin-left:0}to{margin-left:45%}}`}</style>
+        <style>{`@keyframes shimmer{from{margin-left:0}to{margin-left:40%}}`}</style>
       </div>
     );
   }
@@ -2093,7 +2288,7 @@ function TutorRegister({onBack, onAuth, onSignIn}){
 function StudentApp({user,onLogout,backHandlerRef}){
   const isSample=false; // All users load from Supabase (anon users get empty arrays)
   const [dm,setDmRaw]=useState(()=>{try{return localStorage.getItem("jrsh_dm")==="1";}catch(e){return false;}});
-  const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");}catch(e){}try{document.documentElement.classList.toggle("jrsh-dark",next);}catch(e){}return next;});
+  const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");}catch(e){}return next;});
   const C=dm?dC():lC();
   const [tab,setTab]=useState("timetable");
   const [lessons,setLessons]=useState([]);
@@ -2132,6 +2327,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const [offlineStarted,setOfflineStarted]=useState({}); // lessonId -> true when student pressed START
   const [offlineDropped,setOfflineDropped]=useState(new Set()); // lessonId -> dropped
   const [callLesson,setCallLesson]=useState(null);
+  const [callTimeUsedMap,setCallTimeUsedMap]=useState({}); // lessonId -> total seconds used
   const [showLessonDetails,setShowLessonDetails]=useState(null); // lesson object
   const pfpRef=useRef();
 
@@ -2478,7 +2674,8 @@ function StudentApp({user,onLogout,backHandlerRef}){
     <Shell C={C}>
       {toast&&<div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:9999,background:toast.type==="error"?"#DC2626":toast.type==="ok"?"#16a34a":"#111",color:"#fff",padding:"10px 20px",borderRadius:50,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1,boxShadow:"0 4px 20px rgba(0,0,0,.3)",maxWidth:"90vw",textAlign:"center",pointerEvents:"none"}}>{toast.msg}</div>}
       {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePagesPersist(pp=>({...pp,[openNote.id]:p}))} onRate={r=>handleRateNote(openNote.id,r)} existingRating={ratingMap[openNote.id]?.rating||0}/>}
-      {callLesson&&<CallDialog lesson={callLesson} user={user} onEnd={(reason)=>{
+      {callLesson&&<CallDialog lesson={callLesson} user={user} callTimeUsed={callTimeUsedMap[callLesson.id]||0} onEnd={(reason,secsUsed)=>{
+        if(secsUsed>0) setCallTimeUsedMap(m=>({...m,[callLesson.id]:(m[callLesson.id]||0)+secsUsed}));
         // Only auto-drop lesson for online auto-ring with no answer
         if(reason!=="cancelled"){
           setLessons(ls=>ls.filter(l=>l.id!==callLesson.id));
@@ -2674,7 +2871,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
                 )}
                 {_isAcceptedLesson&&(
                   <button onClick={()=>{setCallLesson({..._tLesson,online:_tLesson.online});setShowTutorProfile(null);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}} title="Voice call · 3 min limit">
-                    <span style={{fontSize:20}}>🎙️</span>
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
                   </button>
                 )}
               </div>
@@ -2702,7 +2899,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
               </div>
             )}
             {_isAcceptedLesson&&<div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.6}}>
-              🎙️ Voice call limited to 3 minutes.{!_tLesson?.online&&" · 📍 Location sharing available 30 min before lesson starts."}
+              Voice call limited to 3 minutes.{!_tLesson?.online&&" · 📍 Location sharing available 30 min before lesson starts."}
             </div>}
             <button onClick={()=>setShowTutorProfile(null)} style={{marginTop:18,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
           </div>
@@ -2755,7 +2952,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
 function TutorApp({user,onLogout,backHandlerRef}){
   const isSample=false;
   const [dm,setDmRaw]=useState(()=>{try{return localStorage.getItem("jrsh_dm")==="1";}catch(e){return false;}});
-  const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");}catch(e){}try{document.documentElement.classList.toggle("jrsh-dark",next);}catch(e){}return next;});
+  const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");}catch(e){}return next;});
   const C=dm?dC():lC();
   const [tab,setTab]=useState("timetable");
   const [requests,setRequests]=useState([]);
@@ -2823,6 +3020,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const editPdfFileRef=React.useRef(null); // tracks the actual File object when tutor picks a new PDF
   const [noteSaving,setNoteSaving]=useState(false);
   const [callLesson,setCallLesson]=useState(null);
+  const [callTimeUsedMap,setCallTimeUsedMap]=useState({}); // lessonId -> total seconds used
   const [cancelReq,setCancelReq]=useState(null);
   const [offlineStartedIds,setOfflineStartedIds]=useState(new Set()); // lessons student has started
   React.useEffect(()=>{
@@ -3190,7 +3388,8 @@ function TutorApp({user,onLogout,backHandlerRef}){
         </div>
         <CnBtn C={C} onClick={()=>setEditingNote(null)}>CANCEL</CnBtn>
       </Modal>}
-      {callLesson&&<CallDialog lesson={callLesson} user={user} onEnd={(reason)=>{
+      {callLesson&&<CallDialog lesson={callLesson} user={user} callTimeUsed={callTimeUsedMap[callLesson.id]||0} onEnd={(reason,secsUsed)=>{
+        if(secsUsed>0) setCallTimeUsedMap(m=>({...m,[callLesson.id]:(m[callLesson.id]||0)+secsUsed}));
         if(reason!=="cancelled"){
           // Credit tutor wallet: 90% of lesson fee (10% platform commission)
           if(reason==="ended"){
@@ -3562,8 +3761,8 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
                 📍
               </button>
             )}
-            {onCall&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title="Voice call (3 min limit)">
-              🎙️
+            {onCall&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} title="Voice call (3 min limit)">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
             </button>}
           </div>
         </div>
@@ -3607,12 +3806,12 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
 
         <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.7}}>
           {lesson.online?(
-            <>🌐 Online session — tap 🎙️ above for a voice call (3-min limit). Hanging up does not cancel the lesson.</>
+            <>🌐 Online session — use the call button above for a voice call (3-min limit).</>
           ):(
             <>{withinLocationWindow
               ?"📍 Location window open — tap 📍 above to see live GPS for both you and the student."
               :"🔒 "+locationWindowOpenStr}
-              {" 🎙️ Voice call (3-min limit) available any time. Hanging up does not cancel the lesson."}
+              {" Voice call (3-min limit) available any time."}
             </>
           )}
         </div>
@@ -3650,8 +3849,8 @@ function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWi
                   📍
                 </button>
               )}
-              <button onClick={()=>{onClose();onCall&&onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title="Voice call · 3 min">
-                🎙️
+              <button onClick={()=>{onClose();onCall&&onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} title="Voice call · 3 min">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
               </button>
             </div>
           )}
@@ -3677,7 +3876,7 @@ function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWi
         {/* Call/Location helper text */}
         {isAccepted&&(
           <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.6}}>
-            🎙️ Voice call limited to 3 minutes. Hanging up does not cancel the lesson.
+            Voice call limited to 3 minutes.
             {!lesson.online&&" · 📍 Location sharing available 30 min before lesson starts."}
           </div>
         )}
