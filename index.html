@@ -763,378 +763,8 @@ async function sendCallSignal(lessonId, signal){
 /* ══ CALL DIALOG — Agora Voice, On-Demand, 3-min Limit ══ */
 function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   const CALL_LIMIT = 3*60;
-  const remaining180 = Math.max(0, CALL_LIMIT - callTimeUsed); // remaining seconds this session
+  const remaining180=Math.max(0,CALL_LIMIT-callTimeUsed);
   const isOffline = !lesson.online;
-
-  // Phase: idle | outgoing | incoming | live | ended
-  const [phase, setPhase]  = React.useState("idle");
-  const [ringTimer, setRingTimer] = React.useState(30);
-  const [callSecs, setCallSecs]   = React.useState(0);
-  const [muted, setMuted]   = React.useState(false);
-  const [agoraErr, setAgoraErr] = React.useState("");
-  const [showLocMap, setShowLocMap] = React.useState(lesson._openLocation||false);
-  const [otherLoc, setOtherLoc]   = React.useState(null);
-
-  const initiateCallRef = React.useRef(null);
-  React.useEffect(()=>{
-    if(lesson._autoRing&&lesson.online){
-      const t=setTimeout(()=>{ if(initiateCallRef.current) initiateCallRef.current(); },200);
-      return()=>clearTimeout(t);
-    }
-  },[]);
-
-  const engineRef  = React.useRef(null);
-  const pollRef    = React.useRef(null);
-  const lastSigTs  = React.useRef(0);
-  const callSecsRef= React.useRef(0); // tracks live seconds for hangUp closure
-  const ringAudioRef=React.useRef(null);
-
-  const otherRole = user.role==="tutor" ? "student" : "tutor";
-
-  // ── Ringtone helpers (Web Audio API) ──
-  function startRingtone(){
-    try{
-      const ctx=new (window.AudioContext||window.webkitAudioContext)();
-      let stopped=false;
-      function beep(){
-        if(stopped)return;
-        const o=ctx.createOscillator(),g=ctx.createGain();
-        o.connect(g);g.connect(ctx.destination);
-        o.type="sine";o.frequency.value=880;
-        g.gain.setValueAtTime(0,ctx.currentTime);
-        g.gain.linearRampToValueAtTime(0.4,ctx.currentTime+0.05);
-        g.gain.linearRampToValueAtTime(0,ctx.currentTime+0.4);
-        o.start(ctx.currentTime);o.stop(ctx.currentTime+0.45);
-        setTimeout(()=>{
-          if(stopped)return;
-          const o2=ctx.createOscillator(),g2=ctx.createGain();
-          o2.connect(g2);g2.connect(ctx.destination);
-          o2.type="sine";o2.frequency.value=1108;
-          g2.gain.setValueAtTime(0,ctx.currentTime);
-          g2.gain.linearRampToValueAtTime(0.4,ctx.currentTime+0.05);
-          g2.gain.linearRampToValueAtTime(0,ctx.currentTime+0.4);
-          o2.start(ctx.currentTime);o2.stop(ctx.currentTime+0.45);
-          setTimeout(()=>{if(!stopped)setTimeout(beep,800);},450);
-        },500);
-      }
-      beep();
-      ringAudioRef.current={stop:()=>{stopped=true;try{ctx.close();}catch(e){}}};
-    }catch(e){}
-  }
-  function stopRingtone(){try{ringAudioRef.current?.stop();}catch(e){}ringAudioRef.current=null;}
-
-  const {loc: myLoc, err: locErr} = useLiveLocation(showLocMap);
-  const {startMs:scheduledStartMs,endMs:scheduledEndMs}=getScheduledMs(lesson);
-  const lessonStartMs = lesson.start_ts || scheduledStartMs;
-  const lessonEndMs   = lessonStartMs+(lesson.to_hour-lesson.from_hour)*3600000;
-  const now = Date.now();
-  const withinLocationWindow = isOffline &&
-    (now >= scheduledStartMs - 1800000) && (now <= scheduledEndMs);
-  const reqDocId = lesson._reqId || lesson.id;
-
-  React.useEffect(()=>{
-    if(!showLocMap||!myLoc||!reqDocId) return;
-    const push=()=>{try{fbUpdate("tutor_requests",reqDocId,{[user.role+"_lat"]:myLoc.lat,[user.role+"_lng"]:myLoc.lng,location_updated_at:nowKEiso()});}catch(e){}};
-    push();const id=setInterval(push,5000);return()=>clearInterval(id);
-  },[showLocMap,myLoc,reqDocId,user.role]);
-
-  React.useEffect(()=>{
-    if(!showLocMap||!reqDocId) return;
-    let lastCoord="";
-    const poll=async()=>{
-      try{const row=await fbGet("tutor_requests",reqDocId);if(row&&row[otherRole+"_lat"]!=null){const coord=row[otherRole+"_lat"]+","+row[otherRole+"_lng"];if(coord!==lastCoord){lastCoord=coord;setOtherLoc({lat:row[otherRole+"_lat"],lng:row[otherRole+"_lng"],ts:row.location_updated_at||new Date().toISOString()});}}}catch(e){}
-    };
-    poll();const id=setInterval(poll,2000);return()=>clearInterval(id);
-  },[showLocMap,reqDocId,otherRole]);
-
-  // ── Real-time signal listener via Firestore onSnapshot ──
-  React.useEffect(()=>{
-    if(!lesson.id||phase==="ended") return;
-    let unsub=null;
-    const handleSig=async(sig)=>{
-      if(!sig||sig.ts<=lastSigTs.current||sig.from===user.id) return;
-      lastSigTs.current=sig.ts;
-      if(sig.type==="ring"&&phase==="idle"){setPhase("incoming");setRingTimer(30);}
-      if(sig.type==="accept"&&phase==="outgoing"){await connectVoice();}
-      if(sig.type==="decline"&&phase==="outgoing"){hangUp("declined");}
-      if(sig.type==="end"&&(phase==="live"||phase==="outgoing"||phase==="incoming")){hangUp("ended");}
-    };
-    try{
-      const docRef=_db.collection("tutor_requests").doc(String(lesson.id));
-      unsub=docRef.onSnapshot(snap=>{
-        try{const row=snap.data();if(!row?.call_signal)return;handleSig(JSON.parse(row.call_signal));}catch(e){}
-      },()=>{
-        // Fallback to polling if onSnapshot fails
-        pollRef.current=setInterval(async()=>{
-          try{const row=await fbGet("tutor_requests",lesson.id);if(!row?.call_signal)return;handleSig(JSON.parse(row.call_signal));}catch(e){}
-        },2000);
-      });
-    }catch(e){
-      pollRef.current=setInterval(async()=>{
-        try{const row=await fbGet("tutor_requests",lesson.id);if(!row?.call_signal)return;handleSig(JSON.parse(row.call_signal));}catch(e){}
-      },2000);
-    }
-    return()=>{if(unsub)unsub();clearInterval(pollRef.current);};
-  },[lesson.id,phase,user.id]);
-
-  // ── Ring countdown + ringtone for incoming ──
-  React.useEffect(()=>{
-    if(phase!=="incoming") return;
-    startRingtone();
-    if(ringTimer<=0){declineCall();return;}
-    const id=setTimeout(()=>setRingTimer(t=>t-1),1000);
-    return()=>{clearTimeout(id);stopRingtone();};
-  },[phase,ringTimer]);
-
-  React.useEffect(()=>{
-    if(phase!=="outgoing") return;
-    const timeout=lesson._autoRing?5*60*1000:30000;
-    const id=setTimeout(()=>hangUp("no_answer"),timeout);
-    return()=>clearTimeout(id);
-  },[phase]);
-
-  // ── Call duration timer — uses remaining seconds ──
-  React.useEffect(()=>{
-    if(phase!=="live") return;
-    if(remaining180<=0){hangUp("timeout");return;}
-    const id=setInterval(()=>{
-      setCallSecs(s=>{
-        const next=s+1;
-        callSecsRef.current=next;
-        if(next>=remaining180){clearInterval(id);hangUp("timeout");return remaining180;}
-        return next;
-      });
-    },1000);
-    return()=>clearInterval(id);
-  },[phase]);
-
-  async function connectVoice(){
-    setPhase("live");
-    try{
-      const channel="jrsh-"+(lesson.id||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,20);
-      const eng=await startAgoraVoiceCall(AGORA_APP_ID, channel, user?.id||null);
-      engineRef.current=eng;
-      eng.client.on("user-published",async(remote,mediaType)=>{
-        await eng.client.subscribe(remote,mediaType);
-        if(mediaType==="audio") remote.audioTrack.play();
-      });
-    }catch(e){
-      const msg=e?.message||"";
-      let errMsg="Call failed";
-      if(msg.includes("Permission denied")||msg.includes("NotAllowed")||msg.includes("not allowed")){errMsg="Microphone access denied — allow mic in browser settings";}
-      else if(msg.includes("Failed to load")){errMsg="Could not load voice engine — check internet";}
-      else if(msg.includes("INVALID_VENDOR_KEY")||msg.includes("invalid")||msg.toLowerCase().includes("app id")){errMsg="Voice service config error";}
-      else if(msg){errMsg=msg;}
-      setAgoraErr(errMsg);
-    }
-  }
-
-  async function initiateCall(){
-    setPhase("outgoing");
-    await sendCallSignal(lesson.id,{from:user.id,type:"ring"});
-  }
-  initiateCallRef.current = initiateCall;
-
-  async function acceptCall(){
-    stopRingtone();
-    await sendCallSignal(lesson.id,{from:user.id,type:"accept"});
-    await connectVoice();
-  }
-
-  async function declineCall(){
-    stopRingtone();
-    await sendCallSignal(lesson.id,{from:user.id,type:"decline"});
-    hangUp("declined");
-  }
-
-  async function hangUp(reason){
-    clearInterval(pollRef.current);
-    stopRingtone();
-    const secsUsed=callSecsRef.current;
-    callSecsRef.current=0;
-    if(phase==="live"||phase==="outgoing"){
-      await sendCallSignal(lesson.id,{from:user.id,type:"end"});
-    }
-    if(engineRef.current){
-      try{engineRef.current.audioTrack.stop();engineRef.current.audioTrack.close();}catch(e){}
-      try{await engineRef.current.client.leave();}catch(e){}
-      engineRef.current=null;
-    }
-    setPhase("ended");
-    const isAutoRingDrop=lesson._autoRing&&lesson.online&&(reason==="no_answer"||reason==="timeout"||reason==="ended");
-    onEnd(isAutoRingDrop?reason:"cancelled", secsUsed);
-  }
-
-  async function toggleMute(){
-    if(engineRef.current?.audioTrack){try{await engineRef.current.audioTrack.setEnabled(muted);}catch(e){}}
-    setMuted(m=>!m);
-  }
-
-  const fmtTime=s=>{const m=Math.floor(s/60),sec=s%60;return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0");};
-  const remaining=remaining180-callSecs;
-
-  // ── Callee avatar ──
-  const calleeName=lesson.student_name||lesson._tutorName||"?";
-  const calleePfp=(user.role==="student"?lesson._tutorObj?.pfp_url:null)||lesson._pfpUrl||null;
-  const CalleeAvatar=({size=96,border="3px solid #3b82f6",glow="rgba(59,130,246,.08)"})=>(
-    <div style={{width:size,height:size,borderRadius:"50%",background:"#1a1a1a",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",border,boxShadow:"0 0 0 16px "+glow,flexShrink:0}}>
-      {calleePfp
-        ?<img src={calleePfp} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
-        :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:Math.round(size*.4),color:"#fff"}}>{calleeName[0].toUpperCase()}</span>
-      }
-    </div>
-  );
-
-  // Phone SVG icon
-  const PhoneSVG=({size=22,color="#fff"})=>(
-    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/>
-    </svg>
-  );
-
-  // ── Idle state ──
-  if(phase==="idle"){
-    return(
-      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onEnd("cancelled",0);}}>
-        <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:"100%",padding:"28px 22px 44px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
-            <div style={{width:56,height:56,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden"}}>
-              {calleePfp
-                ?<img src={calleePfp} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
-                :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.accentText}}>{calleeName[0].toUpperCase()}</span>
-              }
-            </div>
-            <div style={{flex:1}}>
-              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:18,color:C.text}}>{calleeName}</div>
-              <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} · {isOffline?"📍 Offline":"🌐 Online"}</div>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:12}}>
-            {remaining180<=0?(
-              <div style={{flex:1,padding:"15px",borderRadius:50,background:C.surfaceAlt,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1.5,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                <PhoneSVG size={18} color={C.sub}/> CALL LIMIT REACHED
-              </div>
-            ):(
-              <button onClick={initiateCall} style={{flex:1,padding:"15px",borderRadius:50,border:"none",background:"#22C55E",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1.5,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                <PhoneSVG size={18}/> VOICE CALL <span style={{fontSize:11,opacity:.8}}>· {fmtTime(remaining180)} left</span>
-              </button>
-            )}
-            {withinLocationWindow&&(
-              <button onClick={()=>setShowLocMap(true)} style={{width:52,height:52,borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}} title="View live locations">
-                📍
-              </button>
-            )}
-          </div>
-          {withinLocationWindow&&(
-            <div style={{marginTop:8,fontSize:10,color:C.sub,textAlign:"center",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
-              📍 LIVE LOCATION AVAILABLE — within 30 min of lesson
-            </div>
-          )}
-          <button onClick={()=>onEnd("cancelled",0)} style={{marginTop:14,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
-        </div>
-        {showLocMap&&<LocationModal lesson={lesson} user={user} myLoc={myLoc} otherLoc={otherLoc} locErr={locErr} otherRole={otherRole} onClose={()=>setShowLocMap(false)} C={C}/>}
-      </div>
-    );
-  }
-
-  // ── Full-screen call states ──
-  const avatarBorder=phase==="live"?"3px solid #22C55E":phase==="incoming"?"3px solid #F59E0B":"3px solid #3b82f6";
-  const avatarGlow=phase==="live"?"rgba(34,197,94,.08)":phase==="incoming"?"rgba(245,158,11,.1)":"rgba(59,130,246,.08)";
-
-  return(
-    <div style={{position:"fixed",inset:0,background:"#0a0a0a",zIndex:500,display:"flex",flexDirection:"column",fontFamily:"Barlow,sans-serif"}}>
-      {showLocMap&&<LocationModal lesson={lesson} user={user} myLoc={myLoc} otherLoc={otherLoc} locErr={locErr} otherRole={otherRole} onClose={()=>setShowLocMap(false)} C={C}/>}
-
-      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24}}>
-        <CalleeAvatar size={96} border={avatarBorder} glow={avatarGlow}/>
-
-        <div style={{textAlign:"center"}}>
-          <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1}}>
-            {phase==="outgoing"&&"CALLING…"}
-            {phase==="incoming"&&"INCOMING VOICE CALL"}
-            {phase==="live"&&"VOICE CALL LIVE"}
-          </div>
-          <div style={{color:"#aaa",fontSize:14,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{calleeName}</div>
-          <div style={{color:"#666",fontSize:12,marginTop:2}}>{lesson.subject} · {isOffline?"Offline":"Online"}</div>
-
-          {phase==="outgoing"&&(
-            <div style={{marginTop:12}}>
-              <div style={{color:"#666",fontSize:12,fontFamily:"'Barlow Condensed',sans-serif"}}>Ringing — waiting for answer</div>
-              <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:10}}>
-                {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:"50%",background:"#3b82f6",animation:"pulse 1.4s ease-in-out "+i*0.3+"s infinite"}}/>)}
-              </div>
-            </div>
-          )}
-
-          {phase==="incoming"&&(
-            <div style={{color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:32,marginTop:12}}>
-              {String(ringTimer).padStart(2,"0")}s
-            </div>
-          )}
-
-          {phase==="live"&&(
-            <div style={{marginTop:12}}>
-              <div style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:24}}>{fmtTime(callSecs)}</div>
-              <div style={{color:remaining<=30?"#EF4444":"#555",fontSize:11,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
-                {remaining<=30?"⚠ "+fmtTime(remaining)+" REMAINING":"LIMIT · "+fmtTime(remaining180)}
-              </div>
-              <div style={{width:220,height:4,background:"#222",borderRadius:2,marginTop:10,overflow:"hidden",margin:"10px auto 0"}}>
-                <div style={{width:(callSecs/remaining180*100)+"%",height:"100%",background:remaining<=30?"#EF4444":"#22C55E",transition:"width 1s linear"}}/>
-              </div>
-              {agoraErr&&<div style={{color:"#EF4444",fontSize:11,marginTop:8,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,maxWidth:260,textAlign:"center",margin:"8px auto 0"}}>{agoraErr}</div>}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div style={{padding:"20px 0 48px",background:"rgba(0,0,0,.9)",display:"flex",flexDirection:"column",alignItems:"center",gap:18}}>
-        {phase==="incoming"&&(
-          <div style={{display:"flex",gap:44,alignItems:"center"}}>
-            <div style={{textAlign:"center"}}>
-              <button onClick={declineCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M23.36 14.46c-1.01-.98-2.23-1.5-3.5-1.5s-2.48.52-3.49 1.5l-2.2 2.2c-4.01-2.04-7.29-5.32-9.34-9.33l2.2-2.21C8.06 4.13 8.58 2.91 8.58 1.64S8.06-.85 7.08-1.86L4.88-4.06C3.87-5.07 2.65-5.59 1.38-5.59s-2.49.52-3.5 1.53L-3.9-2.27C-5.15-.98-5.56.8-5.03 2.43 1.26 21.77 20.26 40.04 39.6 46.31c1.63.53 3.41.12 4.7-1.13l1.79-1.78c1.01-1.01 1.53-2.23 1.53-3.5s-.52-2.49-1.53-3.5l-2.2-2.2z" transform="scale(.5) translate(1,2)"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-              </button>
-              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>DECLINE</div>
-            </div>
-            <div style={{textAlign:"center"}}>
-              <button onClick={acceptCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#22C55E",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                <PhoneSVG size={28}/>
-              </button>
-              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>ANSWER</div>
-            </div>
-          </div>
-        )}
-
-        {(phase==="outgoing"||phase==="live")&&(
-          <div style={{display:"flex",gap:20,alignItems:"center"}}>
-            {phase==="live"&&(
-              <div style={{textAlign:"center"}}>
-                <button onClick={toggleMute} style={{width:56,height:56,borderRadius:"50%",border:"none",background:muted?"#EF4444":"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                  {muted?"🔇":"🎙️"}
-                </button>
-                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{muted?"UNMUTE":"MUTE"}</div>
-              </div>
-            )}
-            {phase==="live"&&withinLocationWindow&&(
-              <div style={{textAlign:"center"}}>
-                <button onClick={()=>setShowLocMap(true)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>📍</button>
-                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>LOCATION</div>
-              </div>
-            )}
-            <div style={{textAlign:"center"}}>
-              <button onClick={()=>hangUp("ended")} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09v3a2 2 0 0 1-2.18 2A19.79 19.79 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91"/><line x1="23" y1="1" x2="1" y2="23"/></svg>
-              </button>
-              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>END</div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <style>{`@keyframes pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}`}</style>
-    </div>
-  );
-}
 
   // Phase: idle | outgoing | incoming | live | ended
   const [phase, setPhase]  = React.useState("idle");
@@ -1159,6 +789,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   const engineRef  = React.useRef(null); // {client, audioTrack}
   const pollRef    = React.useRef(null);
   const lastSigTs  = React.useRef(0);
+  const callSecsRef= React.useRef(0);
 
   const otherRole = user.role==="tutor" ? "student" : "tutor";
 
@@ -1213,33 +844,66 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
     return()=>clearInterval(id);
   },[showLocMap,reqDocId,otherRole]);
 
-  // ── Signal polling (ring / accept / decline / end) ──
+  // ── Real-time signal via Firestore onSnapshot (falls back to polling) ──
   React.useEffect(()=>{
     if(!lesson.id||phase==="ended") return;
-    const poll=async()=>{
-      try{
-        const row=await fbGet("tutor_requests",lesson.id);
-        if(!row?.call_signal) return;
-        const sig=JSON.parse(row.call_signal);
-        if(!sig||sig.ts<=lastSigTs.current) return;
-        if(sig.from===user.id) return; // own signal
-        lastSigTs.current=sig.ts;
-        if(sig.type==="ring"&&phase==="idle"){setPhase("incoming");setRingTimer(30);}
-        if(sig.type==="accept"&&phase==="outgoing"){await connectVoice();}
-        if(sig.type==="decline"&&phase==="outgoing"){hangUp("declined");}
-        if(sig.type==="end"&&(phase==="live"||phase==="outgoing"||phase==="incoming")){hangUp("ended");}
-      }catch(e){}
+    let unsub=null;
+    const handleSig=async(sig)=>{
+      if(!sig||sig.ts<=lastSigTs.current||sig.from===user.id) return;
+      lastSigTs.current=sig.ts;
+      if(sig.type==="ring"&&phase==="idle"){setPhase("incoming");setRingTimer(30);}
+      if(sig.type==="accept"&&phase==="outgoing"){await connectVoice();}
+      if(sig.type==="decline"&&phase==="outgoing"){hangUp("declined");}
+      if(sig.type==="end"&&(phase==="live"||phase==="outgoing"||phase==="incoming")){hangUp("ended");}
     };
-    pollRef.current=setInterval(poll,2500);
-    return()=>clearInterval(pollRef.current);
+    const fallbackPoll=()=>{
+      pollRef.current=setInterval(async()=>{
+        try{const row=await fbGet("tutor_requests",lesson.id);if(!row?.call_signal)return;handleSig(JSON.parse(row.call_signal));}catch(e){}
+      },2000);
+    };
+    try{
+      unsub=_db.collection("tutor_requests").doc(String(lesson.id)).onSnapshot(
+        snap=>{try{const row=snap.data();if(row?.call_signal)handleSig(JSON.parse(row.call_signal));}catch(e){}},
+        ()=>fallbackPoll()
+      );
+    }catch(e){fallbackPoll();}
+    return()=>{if(unsub)unsub();clearInterval(pollRef.current);};
   },[lesson.id,phase,user.id]);
 
-  // ── Ring countdown (incoming) ──
+  // ── Ring countdown (incoming) + audio ring ──
+  const ringAudioRef=React.useRef(null);
+  function startRingtone(){
+    try{
+      const ctx=new(window.AudioContext||window.webkitAudioContext)();
+      let stopped=false;
+      function beep(){
+        if(stopped)return;
+        [880,1108].forEach((freq,i)=>{
+          setTimeout(()=>{
+            if(stopped)return;
+            const o=ctx.createOscillator(),g=ctx.createGain();
+            o.connect(g);g.connect(ctx.destination);
+            o.type="sine";o.frequency.value=freq;
+            g.gain.setValueAtTime(0,ctx.currentTime);
+            g.gain.linearRampToValueAtTime(0.35,ctx.currentTime+0.05);
+            g.gain.linearRampToValueAtTime(0,ctx.currentTime+0.38);
+            o.start(ctx.currentTime);o.stop(ctx.currentTime+0.4);
+          },i*480);
+        });
+        if(!stopped)setTimeout(beep,1400);
+      }
+      beep();
+      ringAudioRef.current={stop:()=>{stopped=true;try{ctx.close();}catch(e){}}};
+    }catch(e){}
+  }
+  function stopRingtone(){try{ringAudioRef.current&&ringAudioRef.current.stop();}catch(e){}ringAudioRef.current=null;}
+
   React.useEffect(()=>{
     if(phase!=="incoming") return;
+    startRingtone();
     if(ringTimer<=0){declineCall();return;}
     const id=setTimeout(()=>setRingTimer(t=>t-1),1000);
-    return()=>clearTimeout(id);
+    return()=>{clearTimeout(id);stopRingtone();};
   },[phase,ringTimer]);
 
   // ── Outgoing ring timeout (5 min for online auto-trigger, 30s for manual) ──
@@ -1250,13 +914,16 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
     return()=>clearTimeout(id);
   },[phase]);
 
-  // ── Call duration + auto-end at 3 min ──
+  // ── Call duration + auto-end at remaining180 secs ──
   React.useEffect(()=>{
     if(phase!=="live") return;
+    if(remaining180<=0){hangUp("timeout");return;}
     const id=setInterval(()=>{
       setCallSecs(s=>{
-        if(s+1>=CALL_LIMIT){clearInterval(id);hangUp("timeout");return CALL_LIMIT;}
-        return s+1;
+        const next=s+1;
+        callSecsRef.current=next;
+        if(next>=remaining180){clearInterval(id);hangUp("timeout");return remaining180;}
+        return next;
       });
     },1000);
     return()=>clearInterval(id);
@@ -1294,6 +961,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
 
   // ── Accept incoming ──
   async function acceptCall(){
+    try{if(ringAudioRef.current)ringAudioRef.current.stop();}catch(e){}
     await sendCallSignal(lesson.id,{from:user.id,type:"accept"});
     await connectVoice();
   }
@@ -1307,6 +975,9 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   // ── Hang up ──
   async function hangUp(reason){
     clearInterval(pollRef.current);
+    try{if(ringAudioRef.current)ringAudioRef.current.stop();}catch(e){}
+    const secsUsed=callSecsRef.current;
+    callSecsRef.current=0;
     if(phase==="live"||phase==="outgoing"){
       await sendCallSignal(lesson.id,{from:user.id,type:"end"});
     }
@@ -1316,8 +987,164 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
       engineRef.current=null;
     }
     setPhase("ended");
-    // Only pass "ended"/"no_answer"/"timeout" to parent for auto-ring online lessons
-    // Manual 3-min voice calls: close dialog without dropping the lesson
+    const isAutoRingDrop=lesson._autoRing&&lesson.online&&(reason==="no_answer"||reason==="timeout"||reason==="ended");
+    onEnd(isAutoRingDrop?reason:"cancelled", secsUsed);
+  }
+
+  async function toggleMute(){
+    if(engineRef.current?.audioTrack){
+      try{await engineRef.current.audioTrack.setEnabled(muted);}catch(e){}
+    }
+    setMuted(m=>!m);
+  }
+
+  const fmtTime=s=>{const m=Math.floor(s/60),sec=s%60;return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0");};
+  const remaining=remaining180-callSecs;
+
+  // ── Idle state — just show call button ──
+  if(phase==="idle"){
+    return(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onEnd("cancelled");}}>
+        <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:"100%",padding:"28px 22px 44px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
+            <div style={{width:56,height:56,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.accentText}}>{(lesson.student_name||lesson._tutorName||"?")[0].toUpperCase()}</span>
+            </div>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:18,color:C.text}}>{lesson.student_name||lesson._tutorName||"Contact"}</div>
+              <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} · {isOffline?"📍 Offline":"🌐 Online"}</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:12}}>
+            <button onClick={initiateCall} style={{flex:1,padding:"15px",borderRadius:50,border:"none",background:"#22C55E",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1.5,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg> VOICE CALL <span style={{fontSize:11,opacity:.8}}>· {fmtTime(remaining180)} left</span>
+            </button>
+            {withinLocationWindow&&(
+              <button onClick={()=>setShowLocMap(true)} style={{width:52,height:52,borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}} title="View live locations">
+                📍
+              </button>
+            )}
+          </div>
+          {withinLocationWindow&&(
+            <div style={{marginTop:8,fontSize:10,color:C.sub,textAlign:"center",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
+              📍 LIVE LOCATION AVAILABLE — within 30 min of lesson
+            </div>
+          )}
+          <button onClick={()=>onEnd("cancelled")} style={{marginTop:14,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
+        </div>
+        {showLocMap&&<LocationModal lesson={lesson} user={user} myLoc={myLoc} otherLoc={otherLoc} locErr={locErr} otherRole={otherRole} onClose={()=>setShowLocMap(false)} C={C}/>}
+      </div>
+    );
+  }
+
+  // ── Full-screen call states ──
+  return(
+    <div style={{position:"fixed",inset:0,background:"#0a0a0a",zIndex:500,display:"flex",flexDirection:"column",fontFamily:"Barlow,sans-serif"}}>
+      {/* Location overlay */}
+      {showLocMap&&<LocationModal lesson={lesson} user={user} myLoc={myLoc} otherLoc={otherLoc} locErr={locErr} otherRole={otherRole} onClose={()=>setShowLocMap(false)} C={C}/>}
+
+      {/* Call body */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24}}>
+        {(()=>{
+          const cName=lesson.student_name||lesson._tutorName||"?";
+          const cPfp=(user.role==="student"?lesson._tutorObj?.pfp_url:null)||lesson._pfpUrl||null;
+          const bdr="3px solid "+(phase==="live"?"#22C55E":phase==="incoming"?"#F59E0B":"#3b82f6");
+          const glow="0 0 0 16px "+(phase==="live"?"rgba(34,197,94,.08)":phase==="incoming"?"rgba(245,158,11,.1)":"rgba(59,130,246,.08)");
+          return(
+            <div style={{width:96,height:96,borderRadius:"50%",background:"#1a1a1a",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",border:bdr,boxShadow:glow,flexShrink:0}}>
+              {cPfp?<img src={cPfp} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
+                :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:38,color:"#fff"}}>{cName[0].toUpperCase()}</span>}
+            </div>
+          );
+        })()}
+
+        <div style={{textAlign:"center"}}>
+          <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1}}>
+            {phase==="outgoing"&&"CALLING…"}
+            {phase==="incoming"&&"INCOMING VOICE CALL"}
+            {phase==="live"&&"VOICE CALL LIVE"}
+          </div>
+          <div style={{color:"#ddd",fontSize:15,marginTop:2,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{lesson.student_name||lesson._tutorName||""}</div>
+          <div style={{color:"#888",fontSize:12,marginTop:2}}>{lesson.subject} · {isOffline?"Offline":"Online"}</div>
+
+          {phase==="outgoing"&&(
+            <div style={{marginTop:12}}>
+              <div style={{color:"#666",fontSize:12,fontFamily:"'Barlow Condensed',sans-serif"}}>Ringing — waiting for answer</div>
+              <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:10}}>
+                {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:"50%",background:"#3b82f6",animation:"pulse 1.4s ease-in-out "+i*0.3+"s infinite"}}/>)}
+              </div>
+            </div>
+          )}
+
+          {phase==="incoming"&&(
+            <div style={{color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:32,marginTop:12}}>
+              {String(ringTimer).padStart(2,"0")}s
+            </div>
+          )}
+
+          {phase==="live"&&(
+            <div style={{marginTop:12}}>
+              <div style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:24}}>{fmtTime(callSecs)}</div>
+              <div style={{color:remaining<=30?"#EF4444":"#555",fontSize:11,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
+                {remaining<=30?"⚠ "+fmtTime(remaining)+" REMAINING":"LIMIT · "+fmtTime(remaining180)}
+              </div>
+              <div style={{width:220,height:4,background:"#222",borderRadius:2,marginTop:10,overflow:"hidden",margin:"10px auto 0"}}>
+                <div style={{width:(remaining180>0?callSecs/remaining180*100:100)+"%",height:"100%",background:remaining<=30?"#EF4444":"#22C55E",transition:"width 1s linear"}}/>
+              </div>
+              {agoraErr&&<div style={{color:"#EF4444",fontSize:11,marginTop:8,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,maxWidth:260,textAlign:"center",margin:"8px auto 0"}}>{agoraErr}</div>}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div style={{padding:"20px 0 48px",background:"rgba(0,0,0,.9)",display:"flex",flexDirection:"column",alignItems:"center",gap:18}}>
+        {phase==="incoming"&&(
+          <div style={{display:"flex",gap:44,alignItems:"center"}}>
+            <div style={{textAlign:"center"}}>
+              <button onClick={declineCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>📵</button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>DECLINE</div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <button onClick={acceptCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#22C55E",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg></button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>ANSWER</div>
+            </div>
+          </div>
+        )}
+
+        {(phase==="outgoing"||phase==="live")&&(
+          <div style={{display:"flex",gap:20,alignItems:"center"}}>
+            {phase==="live"&&(
+              <div style={{textAlign:"center"}}>
+                <button onClick={toggleMute} style={{width:56,height:56,borderRadius:"50%",border:"none",background:muted?"#EF4444":"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
+                  {muted?"🔇":"🎙️"}
+                </button>
+                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{muted?"UNMUTE":"MUTE"}</div>
+              </div>
+            )}
+
+            {phase==="live"&&withinLocationWindow&&(
+              <div style={{textAlign:"center"}}>
+                <button onClick={()=>setShowLocMap(true)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
+                  📍
+                </button>
+                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>LOCATION</div>
+              </div>
+            )}
+            <div style={{textAlign:"center"}}>
+              <button onClick={()=>hangUp("ended")} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>📵</button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>END</div>
+            </div>
+          </div>
+        )}
+
+
+      </div>
+
+      <style>{`@keyframes pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}`}</style>
+    </div>
+  );
+}
 
 /* ══ LOCATION MAP MODAL ══ */
 function LocationModal({lesson,user,myLoc,otherLoc,locErr,otherRole,onClose,C}){
@@ -2327,7 +2154,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const [offlineStarted,setOfflineStarted]=useState({}); // lessonId -> true when student pressed START
   const [offlineDropped,setOfflineDropped]=useState(new Set()); // lessonId -> dropped
   const [callLesson,setCallLesson]=useState(null);
-  const [callTimeUsedMap,setCallTimeUsedMap]=useState({}); // lessonId -> total seconds used
+  const [callTimeUsedMap,setCallTimeUsedMap]=useState({});
   const [showLessonDetails,setShowLessonDetails]=useState(null); // lesson object
   const pfpRef=useRef();
 
@@ -2676,7 +2503,6 @@ function StudentApp({user,onLogout,backHandlerRef}){
       {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePagesPersist(pp=>({...pp,[openNote.id]:p}))} onRate={r=>handleRateNote(openNote.id,r)} existingRating={ratingMap[openNote.id]?.rating||0}/>}
       {callLesson&&<CallDialog lesson={callLesson} user={user} callTimeUsed={callTimeUsedMap[callLesson.id]||0} onEnd={(reason,secsUsed)=>{
         if(secsUsed>0) setCallTimeUsedMap(m=>({...m,[callLesson.id]:(m[callLesson.id]||0)+secsUsed}));
-        // Only auto-drop lesson for online auto-ring with no answer
         if(reason!=="cancelled"){
           setLessons(ls=>ls.filter(l=>l.id!==callLesson.id));
           setAcceptedMap(m=>{const n={...m};delete n[callLesson.id];return n;});
@@ -2899,7 +2725,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
               </div>
             )}
             {_isAcceptedLesson&&<div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.6}}>
-              Voice call limited to 3 minutes.{!_tLesson?.online&&" · 📍 Location sharing available 30 min before lesson starts."}
+              🎙️ Voice call limited to 3 minutes.{!_tLesson?.online&&" · 📍 Location sharing available 30 min before lesson starts."}
             </div>}
             <button onClick={()=>setShowTutorProfile(null)} style={{marginTop:18,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
           </div>
@@ -3020,7 +2846,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const editPdfFileRef=React.useRef(null); // tracks the actual File object when tutor picks a new PDF
   const [noteSaving,setNoteSaving]=useState(false);
   const [callLesson,setCallLesson]=useState(null);
-  const [callTimeUsedMap,setCallTimeUsedMap]=useState({}); // lessonId -> total seconds used
+  const [callTimeUsedMap,setCallTimeUsedMap]=useState({});
   const [cancelReq,setCancelReq]=useState(null);
   const [offlineStartedIds,setOfflineStartedIds]=useState(new Set()); // lessons student has started
   React.useEffect(()=>{
@@ -3806,12 +3632,12 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
 
         <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.7}}>
           {lesson.online?(
-            <>🌐 Online session — use the call button above for a voice call (3-min limit).</>
+            <>🌐 Online session — tap 🎙️ above for a voice call (3-min limit).</>
           ):(
             <>{withinLocationWindow
               ?"📍 Location window open — tap 📍 above to see live GPS for both you and the student."
               :"🔒 "+locationWindowOpenStr}
-              {" Voice call (3-min limit) available any time."}
+              {" 🎙️ Voice call (3-min limit) available any time."}
             </>
           )}
         </div>
@@ -3876,7 +3702,7 @@ function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWi
         {/* Call/Location helper text */}
         {isAccepted&&(
           <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.6}}>
-            Voice call limited to 3 minutes.
+            🎙️ Voice call limited to 3 minutes.
             {!lesson.online&&" · 📍 Location sharing available 30 min before lesson starts."}
           </div>
         )}
