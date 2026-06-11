@@ -744,7 +744,7 @@ function useLiveLocation(active){
 async function startAgoraVoiceCall(appId, channel, uid){
   const AgoraRTC=await loadAgora();
   AgoraRTC.setLogLevel(3);
-  const client=AgoraRTC.createClient({mode:"rtc",codec:"vp8"});
+  const client=AgoraRTC.createClient({mode:"rtc",codec:"opus"});
   await client.join(appId, channel, null, uid||null);
   const audioTrack=await AgoraRTC.createMicrophoneAudioTrack({
     encoderConfig:"speech_low_quality",
@@ -759,7 +759,7 @@ async function startAgoraVoiceCall(appId, channel, uid){
 async function sendCallSignal(lessonId, signal){
   try{
     await fbUpdate("tutor_requests",lessonId,{call_signal:JSON.stringify({...signal,ts:Date.now()})});
-  }catch(e){}
+  }catch(e){console.warn("[CallSignal] failed for doc",lessonId,":",e.message);}
 }
 
 /* ══ CALL DIALOG — Agora Voice, On-Demand, 3-min Limit ══ */
@@ -2557,7 +2557,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     return levelAndSubject.length>0?levelAndSubject:subjectMatches;
   };
   const filteredNotes=()=>{
-    let n=notes.map(note=>({...note,...(interactions[note.id]||{liked:false,saved:false})}));
+    let n=notes.map(note=>{const{id:_ixId,...ixRest}=interactions[note.id]||{};return{...note,liked:ixRest.liked||false,saved:ixRest.saved||false};});
     if(archFilter==="FAVORITES")n=n.filter(x=>x.liked);
     if(archFilter==="SAVED")n=n.filter(x=>x.saved);
     if(archSearch)n=n.filter(x=>x.title?.toLowerCase().includes(archSearch.toLowerCase())||x.subject?.toLowerCase().includes(archSearch.toLowerCase()));
@@ -3171,7 +3171,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
         }catch(e){showToast("PDF save failed: "+e.message,"error");setPublishing(false);return;}
       }
       const localNote={id:tempId,title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,createdAt:nowKEiso(),created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pdfMarker,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:pdfMarker,cover_url:pubForm.coverPreview||null,createdAt:nowKEiso(),created_at:nowKEiso()})||{};
+      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:pdfMarker,cover_url:pubForm.coverPreview||null,cover_pos:pubForm.coverPos||{x:50,y:50},createdAt:nowKEiso(),created_at:nowKEiso()})||{};
       // Re-key the PDF under the real Firestore ID
       if(saved.id&&saved.id!==tempId&&pdfMarker){
         try{
@@ -3257,7 +3257,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
   }
 
   const filteredNotes=()=>{
-    let n=notes.map(note=>({...note,...(interactions[note.id]||{liked:false,saved:false})}));
+    let n=notes.map(note=>{const{id:_ixId,...ixRest}=interactions[note.id]||{};return{...note,liked:ixRest.liked||false,saved:ixRest.saved||false};});
     if(archFilter==="FAVORITES")n=n.filter(x=>x.liked);
     if(archFilter==="SAVED")n=n.filter(x=>x.saved);
     if(archFilter==="MY NOTES")n=n.filter(x=>x.tutor_name===profile.name||x._mine);
@@ -3903,10 +3903,8 @@ function ArchSearch({value,onChange,C}){return(<div style={{margin:"14px 14px 10
 function FilterRow({value,onChange,C,tabs,counts}){
   const T=tabs||["ALL","FAVORITES","SAVED"];
   return(<div style={{display:"flex",margin:"0 14px 14px",background:C.surface,borderRadius:50,padding:4,border:"1px solid "+C.border}}>{T.map(f=>{
-    const cnt=counts&&counts[f];
-    return(<button key={f} onClick={()=>onChange(f)} style={{flex:1,padding:"8px 0",borderRadius:50,border:"none",cursor:"pointer",background:value===f?C.accentBg:"transparent",color:value===f?C.accentText:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10,letterSpacing:1,position:"relative"}}>
+    return(<button key={f} onClick={()=>onChange(f)} style={{flex:1,padding:"8px 0",borderRadius:50,border:"none",cursor:"pointer",background:value===f?C.accentBg:"transparent",color:value===f?C.accentText:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10,letterSpacing:1}}>
       {f}
-      {cnt>0&&<span style={{position:"absolute",top:2,right:6,background:"#EF4444",color:"#fff",borderRadius:50,fontSize:8,minWidth:13,height:13,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:"0 2px",fontWeight:900,lineHeight:1}}>{cnt}</span>}
     </button>);
   })}</div>);
 }
