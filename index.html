@@ -2508,19 +2508,16 @@ function StudentApp({user,onLogout,backHandlerRef}){
   }
 
   async function handleInteraction(noteId,field){
-    if(!user.id||user.id.startsWith("anon-"))return; // anon users can't persist
+    if(!user.id||user.id.startsWith("anon-"))return;
     const cur=interactions[noteId]||{liked:false,saved:false};
     const toggled=!cur[field];
     const next={...cur,[field]:toggled};
     setInteractions(i=>({...i,[noteId]:next})); // optimistic update
+    // Use a deterministic doc ID so set() is always an upsert — never duplicates
+    const docId=user.id+"_"+noteId;
     try{
-      if(cur.id){
-        await fbUpdate("note_interactions",cur.id,{[field]:toggled});
-      }else{
-        const _ixRow=await fbAdd("note_interactions",{note_id:noteId,user_id:user.id,liked:next.liked,saved:next.saved});
-        const newId=(_ixRow&&_ixRow.id)||("local-"+Date.now());
-        setInteractions(i=>({...i,[noteId]:{...next,id:newId}}));
-      }
+      await fbSet("note_interactions",docId,{note_id:noteId,user_id:user.id,liked:next.liked,saved:next.saved});
+      setInteractions(i=>({...i,[noteId]:{...next,id:docId}}));
     }catch(e){
       setInteractions(i=>({...i,[noteId]:cur})); // revert on error
     }
@@ -3201,14 +3198,10 @@ function TutorApp({user,onLogout,backHandlerRef}){
     const toggled=!cur[field];
     const next={...cur,[field]:toggled};
     setInteractions(i=>({...i,[noteId]:next}));
+    const docId=user.id+"_"+noteId;
     try{
-      if(cur.id){
-        await fbUpdate("note_interactions",cur.id,{[field]:toggled});
-      }else{
-        const _ixRow=await fbAdd("note_interactions",{note_id:noteId,user_id:user.id,liked:next.liked,saved:next.saved});
-        const newId=(_ixRow&&_ixRow.id)||("local-"+Date.now());
-        setInteractions(i=>({...i,[noteId]:{...next,id:newId}}));
-      }
+      await fbSet("note_interactions",docId,{note_id:noteId,user_id:user.id,liked:next.liked,saved:next.saved});
+      setInteractions(i=>({...i,[noteId]:{...next,id:docId}}));
     }catch(e){
       setInteractions(i=>({...i,[noteId]:cur}));
     }
@@ -3934,7 +3927,7 @@ function NoteGrid({notes,C,onLike,onSave,onOpen,onEdit}){
             {note.rating>0&&(
               <div style={{position:"absolute",top:7,left:7,background:"rgba(0,0,0,.62)",backdropFilter:"blur(4px)",borderRadius:8,padding:"3px 7px",display:"flex",alignItems:"center",gap:3}}>
                 <span style={{fontSize:10,color:"#F59E0B"}}>★</span>
-                <span style={{fontSize:10,fontWeight:900,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>{note.rating.toFixed(1)}{note.rating_count>1?` (${note.rating_count})`:""}</span>
+                <span style={{fontSize:10,fontWeight:900,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>{note.rating.toFixed(1)}</span>
               </div>
             )}
             {/* Action buttons — bottom right on cover */}
