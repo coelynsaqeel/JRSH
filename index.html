@@ -771,10 +771,14 @@ function useLiveLocation(active){
 async function startAgoraVoiceCall(appId, channel, uid){
   const AgoraRTC=await loadAgora();
   AgoraRTC.setLogLevel(3);
-  const client=AgoraRTC.createClient({mode:"rtc",codec:"opus"});
-  await client.join(appId, channel, null, uid||null);
+  // codec here is the video codec config (required by SDK even for audio-only calls)
+  // "vp8" is the correct value — "opus" is NOT valid here (Agora handles audio codec internally)
+  const client=AgoraRTC.createClient({mode:"rtc",codec:"vp8"});
+  // Pass null for token (use in dev/test — add token server for production)
+  // Pass null for UID so Agora assigns one automatically (avoids string UID issues)
+  await client.join(appId, channel, null, null);
   const audioTrack=await AgoraRTC.createMicrophoneAudioTrack({
-    encoderConfig:"speech_low_quality",
+    encoderConfig:"speech_standard",
     AEC:true, ANS:true, AGC:true
   });
   await client.publish([audioTrack]);
