@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
   <title>JRSH</title>
   <style>
     *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -384,16 +384,18 @@ async function fbQuery(col,filters=[],ord=null,lim=100){
   }
 }
 async function fbSet(col,id,data){
-  try{const d={...data,updatedAt:nowKEiso()};await _db.collection(col).doc(id).set(d,{merge:true});return{id,...d};}
-  catch(e){console.warn("fbSet",col,id,e.message);return data;}
+  const d={...data,updatedAt:nowKEiso()};
+  await _db.collection(col).doc(id).set(d,{merge:true});
+  return{id,...d};
 }
 async function fbAdd(col,data){
-  try{const d={...data,createdAt:nowKEiso()};const r=await _db.collection(col).add(d);return{id:r.id,...d};}
-  catch(e){console.warn("fbAdd",col,e.message);return data;}
+  const d={...data,createdAt:nowKEiso()};
+  const r=await _db.collection(col).add(d);
+  return{id:r.id,...d};
 }
 async function fbUpdate(col,id,data){
-  try{await _db.collection(col).doc(id).update({...data,updatedAt:nowKEiso()});return true;}
-  catch(e){console.warn("fbUpdate",col,id,e.message);return false;}
+  await _db.collection(col).doc(id).update({...data,updatedAt:nowKEiso()});
+  return true;
 }
 async function fbDel(col,id){
   try{await _db.collection(col).doc(id).delete();return true;}
@@ -3177,32 +3179,31 @@ function TutorApp({user,onLogout,backHandlerRef}){
     setPublishing(true);
     try{
       const color=COVER_COLORS[Math.floor(Math.random()*COVER_COLORS.length)];
-      // Save PDF to Firestore cloud first (accessible from any device), use a temp ID, re-key after Firestore returns real ID
-      const tempId="note-"+Date.now()+"-"+Math.random().toString(36).slice(2,8);
+      // Use a deterministic doc ID so we never need to re-key
+      const noteId="note-"+user.id.slice(0,8)+"-"+Date.now()+"-"+Math.random().toString(36).slice(2,6);
+      const ts=nowKEiso();
+      // Upload PDF first if present
       let pdfMarker=null;
       if(pubForm.file&&pubForm.pdfDataUrl){
         try{
-          await savePdfToCloud(tempId,pubForm.pdfDataUrl);
-          pdfMarker=localPdfUrl(tempId);
+          await savePdfToCloud(noteId,pubForm.pdfDataUrl);
+          pdfMarker=localPdfUrl(noteId);
         }catch(e){showToast("PDF save failed: "+e.message,"error");setPublishing(false);return;}
       }
-      const localNote={id:tempId,title:pubForm.title.toUpperCase(),subject:pubForm.subject,tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,createdAt:nowKEiso(),created_at:nowKEiso(),rating:0,cover_url:pubForm.coverPreview||null,cover_color:color,pdf_url:pdfMarker,cover_pos:pubForm.coverPos||{x:50,y:50}};
-      const saved=await fbAdd("notes",{tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,title:pubForm.title.toUpperCase(),subject:pubForm.subject,cover_color:color,rating:0,pdf_url:pdfMarker,cover_url:pubForm.coverPreview||null,cover_pos:pubForm.coverPos||{x:50,y:50},createdAt:nowKEiso(),created_at:nowKEiso()})||{};
-      // Re-key the PDF under the real Firestore ID
-      if(saved.id&&saved.id!==tempId&&pdfMarker){
-        try{
-          const pdfData=await loadPdfFromCloud(tempId);
-          if(pdfData){
-            await savePdfToCloud(saved.id,pdfData);
-            await deletePdfFromCloud(tempId);
-            const newMarker=localPdfUrl(saved.id);
-            await fbUpdate("notes",saved.id,{pdf_url:newMarker});
-            saved.pdf_url=newMarker;localNote.pdf_url=newMarker;
-          }
-        }catch(_){}
-      }
-      setNotes(ns=>[{...localNote,...saved,pdf_url:saved.pdf_url||pdfMarker,cover_pos:pubForm.coverPos||{x:50,y:50}},...ns]);
-      setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});setShowPublish(false);
+      // Write note doc using fbSet (set with merge=true) with our own ID — throws on failure
+      const noteData={
+        tutor_id:user.id,tutor_name:profile.name,tutor_pfp:profile.pfp_url||null,
+        title:pubForm.title.toUpperCase(),subject:pubForm.subject,
+        cover_color:color,rating:0,rating_count:0,
+        pdf_url:pdfMarker,cover_url:pubForm.coverPreview||null,
+        cover_pos:pubForm.coverPos||{x:50,y:50},
+        createdAt:ts,created_at:ts,
+      };
+      await _db.collection("notes").doc(noteId).set(noteData);
+      // onSnapshot will pick it up automatically; also push to local state for instant UI
+      setNotes(ns=>[{id:noteId,...noteData},...ns.filter(n=>n.id!==noteId)]);
+      setPubForm({title:"",subject:"",file:null,coverPreview:null,coverFile:null,pdfDataUrl:null,coverPos:null});
+      setShowPublish(false);
       showToast("Note published!","ok");
     }catch(e){showToast("Publish failed: "+e.message,"error");}
     finally{setPublishing(false);}
