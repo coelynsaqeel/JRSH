@@ -769,7 +769,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   const isOffline = !lesson.online;
 
   // Phase: idle | outgoing | incoming | live | ended
-  const [phase, setPhase]  = React.useState("idle");
+  const [phase, setPhase]  = React.useState(lesson._incomingRing?"incoming":"idle");
   const [ringTimer, setRingTimer] = React.useState(30);
   const [callSecs, setCallSecs]   = React.useState(0);
   const [muted, setMuted]   = React.useState(false);
@@ -792,6 +792,8 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   const pollRef    = React.useRef(null);
   const lastSigTs  = React.useRef(0);
   const callSecsRef= React.useRef(0);
+  const phaseRef   = React.useRef(phase); // always current phase — avoids stale closure
+  React.useEffect(()=>{phaseRef.current=phase;},[phase]);
 
   const otherRole = user.role==="tutor" ? "student" : "tutor";
 
@@ -848,29 +850,42 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
 
   // ── Real-time signal via Firestore onSnapshot (falls back to polling) ──
   React.useEffect(()=>{
-    if(!lesson.id||phase==="ended") return;
+    if(!lesson.id) return;
     let unsub=null;
     const handleSig=async(sig)=>{
+      const curPhase=phaseRef.current;
       if(!sig||sig.ts<=lastSigTs.current||sig.from===user.id) return;
       lastSigTs.current=sig.ts;
-      if(sig.type==="ring"&&phase==="idle"){setPhase("incoming");setRingTimer(30);}
-      if(sig.type==="accept"&&phase==="outgoing"){await connectVoice();}
-      if(sig.type==="decline"&&phase==="outgoing"){hangUp("declined");}
-      if(sig.type==="end"&&(phase==="live"||phase==="outgoing"||phase==="incoming")){hangUp("ended");}
+      if(sig.type==="ring"&&curPhase==="idle"){
+        setPhase("incoming");setRingTimer(30);
+        // Web notification for background tab
+        try{
+          if(Notification.permission==="granted"){
+            new Notification("Incoming Voice Call",{body:(lesson.student_name||lesson._tutorName||"Contact")+" is calling – "+lesson.subject,icon:"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2322C55E'%3E%3Ccircle cx='12' cy='12' r='12'/%3E%3Cpath d='M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z' fill='white'/%3E%3C/svg%3E",tag:"incoming-call",requireInteraction:true});
+          }else if(Notification.permission!=="denied"){
+            Notification.requestPermission().then(p=>{if(p==="granted")new Notification("Incoming Voice Call",{body:(lesson.student_name||lesson._tutorName||"Contact")+" is calling",tag:"incoming-call",requireInteraction:true});});
+          }
+        }catch(e){}
+      }
+      if(sig.type==="accept"&&curPhase==="outgoing"){await connectVoice();}
+      if(sig.type==="decline"&&curPhase==="outgoing"){hangUp("declined");}
+      if(sig.type==="end"&&(curPhase==="live"||curPhase==="outgoing"||curPhase==="incoming")){hangUp("ended");}
     };
     const fallbackPoll=()=>{
+      const reqId=lesson._reqId||lesson.id;
       pollRef.current=setInterval(async()=>{
-        try{const row=await fbGet("tutor_requests",lesson.id);if(!row?.call_signal)return;handleSig(JSON.parse(row.call_signal));}catch(e){}
+        try{const row=await fbGet("tutor_requests",reqId);if(!row?.call_signal)return;handleSig(JSON.parse(row.call_signal));}catch(e){}
       },2000);
     };
+    const reqId=lesson._reqId||lesson.id;
     try{
-      unsub=_db.collection("tutor_requests").doc(String(lesson.id)).onSnapshot(
+      unsub=_db.collection("tutor_requests").doc(String(reqId)).onSnapshot(
         snap=>{try{const row=snap.data();if(row?.call_signal)handleSig(JSON.parse(row.call_signal));}catch(e){}},
         ()=>fallbackPoll()
       );
     }catch(e){fallbackPoll();}
     return()=>{if(unsub)unsub();clearInterval(pollRef.current);};
-  },[lesson.id,phase,user.id]);
+  },[lesson.id,user.id]);
 
   // ── Ring countdown (incoming) + audio ring ──
   const ringAudioRef=React.useRef(null);
@@ -935,7 +950,8 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   async function connectVoice(){
     setPhase("live");
     try{
-      const channel="jrsh-"+(lesson.id||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,20);
+      const reqId=lesson._reqId||lesson.id;
+      const channel="jrsh-"+(reqId||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,20);
       const eng=await startAgoraVoiceCall(AGORA_APP_ID, channel, user?.id||null);
       engineRef.current=eng;
       // Subscribe remote audio
@@ -957,20 +973,23 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   // ── Initiate call ──
   async function initiateCall(){
     setPhase("outgoing");
-    await sendCallSignal(lesson.id,{from:user.id,type:"ring"});
+    const reqId=lesson._reqId||lesson.id;
+    await sendCallSignal(reqId,{from:user.id,type:"ring"});
   }
   initiateCallRef.current = initiateCall;
 
   // ── Accept incoming ──
   async function acceptCall(){
     try{if(ringAudioRef.current)ringAudioRef.current.stop();}catch(e){}
-    await sendCallSignal(lesson.id,{from:user.id,type:"accept"});
+    const reqId=lesson._reqId||lesson.id;
+    await sendCallSignal(reqId,{from:user.id,type:"accept"});
     await connectVoice();
   }
 
   // ── Decline ──
   async function declineCall(){
-    await sendCallSignal(lesson.id,{from:user.id,type:"decline"});
+    const reqId=lesson._reqId||lesson.id;
+    await sendCallSignal(reqId,{from:user.id,type:"decline"});
     hangUp("declined");
   }
 
@@ -980,8 +999,10 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
     try{if(ringAudioRef.current)ringAudioRef.current.stop();}catch(e){}
     const secsUsed=callSecsRef.current;
     callSecsRef.current=0;
-    if(phase==="live"||phase==="outgoing"){
-      await sendCallSignal(lesson.id,{from:user.id,type:"end"});
+    const curPhase=phaseRef.current;
+    const reqId=lesson._reqId||lesson.id;
+    if(curPhase==="live"||curPhase==="outgoing"){
+      await sendCallSignal(reqId,{from:user.id,type:"end"});
     }
     if(engineRef.current){
       try{engineRef.current.audioTrack.stop();engineRef.current.audioTrack.close();}catch(e){}
@@ -1563,6 +1584,14 @@ function AppRoot(){
   const [connStatus,setConnStatus]=useState("checking"); // checking|ok|error
   const backHandlerRef=React.useRef(null);
   const C=lC();
+
+  // Request notification permission once on load
+  React.useEffect(()=>{
+    if(typeof Notification!=="undefined"&&Notification.permission==="default"){
+      // Defer slightly so UI is ready
+      setTimeout(()=>{try{Notification.requestPermission();}catch(e){}},3000);
+    }
+  },[]);
 
   function navTo(s){window.history.pushState({screen:s},"",window.location.pathname);setScreen(s);}
 
@@ -2278,6 +2307,41 @@ function StudentApp({user,onLogout,backHandlerRef}){
     return()=>clearInterval(interval);
   },[lessons,acceptedMap,callLesson]);
 
+  // ── Global incoming-call listener for student (catches tutor-initiated calls) ──
+  const studentIncomingSigTs=React.useRef({});
+  useEffect(()=>{
+    if(!user.id||user.id.startsWith("anon-"))return;
+    const acceptedLessons=lessons.filter(l=>acceptedMap[l.id]&&l.online&&l._reqId);
+    if(!acceptedLessons.length)return;
+    const unsubs=acceptedLessons.map(lesson=>{
+      const reqId=lesson._reqId||lesson.id;
+      let unsub=null;
+      try{
+        unsub=_db.collection("tutor_requests").doc(String(reqId)).onSnapshot(snap=>{
+          try{
+            if(callLesson)return;
+            const row=snap.data();
+            if(!row?.call_signal)return;
+            const sig=JSON.parse(row.call_signal);
+            const lastTs=studentIncomingSigTs.current[reqId]||0;
+            if(!sig||sig.ts<=lastTs||sig.from===user.id)return;
+            studentIncomingSigTs.current[reqId]=sig.ts;
+            if(sig.type==="ring"){
+              setCallLesson({...lesson,_incomingRing:true});
+              try{
+                if(Notification.permission==="granted"){
+                  new Notification("Incoming Voice Call",{body:(lesson._tutorName||"Tutor")+" is calling – "+lesson.subject,tag:"incoming-call",requireInteraction:true});
+                }
+              }catch(e){}
+            }
+          }catch(e){}
+        },()=>{});
+      }catch(e){}
+      return unsub;
+    });
+    return()=>unsubs.forEach(u=>{try{if(u)u();}catch(e){}});
+  },[lessons,acceptedMap,user.id,callLesson]);
+
   // Periodically sync start_ts from tutor_requests into student lessons (after tutor accepts)
   useEffect(()=>{
     if(!user.id||user.id.startsWith("anon-"))return;
@@ -2988,6 +3052,46 @@ function TutorApp({user,onLogout,backHandlerRef}){
     },5000);
     return()=>clearInterval(interval);
   },[requests,callLesson]);
+
+  // ── Global incoming-call listener for tutor (catches manual student calls) ──
+  // Watches all accepted tutor_request docs for call_signal type="ring"
+  // Opens CallDialog in incoming phase even when not in a call
+  const incomingSigTs=React.useRef({});
+  useEffect(()=>{
+    if(!user.id||user.id.startsWith("anon-"))return;
+    const booked=requests.filter(r=>r.status==="accepted"&&r.online);
+    if(!booked.length)return;
+    const unsubs=booked.map(req=>{
+      let unsub=null;
+      try{
+        unsub=_db.collection("tutor_requests").doc(String(req.id)).onSnapshot(snap=>{
+          try{
+            if(callLesson)return; // already in a call — don't interrupt
+            const row=snap.data();
+            if(!row?.call_signal)return;
+            const sig=JSON.parse(row.call_signal);
+            const lastTs=incomingSigTs.current[req.id]||0;
+            if(!sig||sig.ts<=lastTs||sig.from===user.id)return;
+            incomingSigTs.current[req.id]=sig.ts;
+            if(sig.type==="ring"){
+              // Open CallDialog already showing "incoming" ring
+              setCallLesson({...req,_incomingRing:true});
+              // Web notification
+              try{
+                if(Notification.permission==="granted"){
+                  new Notification("Incoming Voice Call",{body:(req.student_name||"Student")+" is calling – "+req.subject,icon:"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='12' fill='%2322C55E'/%3E%3Cpath d='M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z' fill='white'/%3E%3C/svg%3E",tag:"incoming-call",requireInteraction:true});
+                }else if(Notification.permission!=="denied"){
+                  Notification.requestPermission().then(p=>{if(p==="granted")new Notification("Incoming Voice Call",{body:(req.student_name||"Student")+" is calling",tag:"incoming-call",requireInteraction:true});});
+                }
+              }catch(e){}
+            }
+          }catch(e){}
+        },()=>{});
+      }catch(e){}
+      return unsub;
+    });
+    return()=>unsubs.forEach(u=>{try{if(u)u();}catch(e){}});
+  },[requests,user.id,callLesson]);
 
   const booked=requests.filter(r=>r.status==="accepted");
   const pending=requests.filter(r=>r.status==="pending");
