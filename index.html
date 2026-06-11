@@ -7,6 +7,7 @@
   <style>
     *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
     html,body{margin:0;padding:0;height:100%;height:100dvh;overflow:hidden;background:#f0f0f0;}
+    html.dark-mode,html.dark-mode body{background:#111111!important;}
     #root{height:100%;height:100dvh;display:flex;align-items:stretch;justify-content:center;overflow:hidden;}
     @media(min-width:600px){
       #root{background:#e8e8e8;}
@@ -19,6 +20,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black"/>
   <meta name="apple-mobile-web-app-title" content="JRSH"/>
+  <script>try{if(localStorage.getItem('jrsh_dm')==='1')document.documentElement.classList.add('dark-mode');}catch(e){}</script>
   <script>
     if('serviceWorker' in navigator){
       window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));
@@ -1637,12 +1639,16 @@ function AppRoot(){
 
   if(restoring){
     return(
-      <div style={{position:"fixed",inset:0,background:"#fff",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
-        <Logo/>
-        <div style={{width:48,height:4,borderRadius:2,background:"#eee",overflow:"hidden"}}>
-          <div style={{height:"100%",width:"60%",background:"#111",borderRadius:2,animation:"shimmer 1s ease-in-out infinite alternate"}}/>
+      <div style={{position:"fixed",inset:0,background:"var(--splash-bg, #fff)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
+        <Logo dm={document.documentElement.classList.contains('dark-mode')}/>
+        <div style={{width:48,height:4,borderRadius:2,background:"var(--splash-bar-bg, #eee)",overflow:"hidden"}}>
+          <div style={{height:"100%",width:"60%",background:"var(--splash-bar-fill, #111)",borderRadius:2,animation:"shimmer 1s ease-in-out infinite alternate"}}/>
         </div>
-        <style>{`@keyframes shimmer{from{margin-left:0}to{margin-left:40%}}`}</style>
+        <style>{`
+          @keyframes shimmer{from{margin-left:0}to{margin-left:40%}}
+          :root{--splash-bg:#fff;--splash-bar-bg:#eee;--splash-bar-fill:#111;}
+          .dark-mode{--splash-bg:#111111;--splash-bar-bg:#2A2A2A;--splash-bar-fill:#F0F0F0;}
+        `}</style>
       </div>
     );
   }
@@ -2115,7 +2121,7 @@ function TutorRegister({onBack, onAuth, onSignIn}){
 function StudentApp({user,onLogout,backHandlerRef}){
   const isSample=false; // All users load from Supabase (anon users get empty arrays)
   const [dm,setDmRaw]=useState(()=>{try{return localStorage.getItem("jrsh_dm")==="1";}catch(e){return false;}});
-  const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");}catch(e){}return next;});
+  const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");document.documentElement.classList.toggle("dark-mode",next);}catch(e){}return next;});
   const C=dm?dC():lC();
   const [tab,setTab]=useState("timetable");
   const [lessons,setLessons]=useState([]);
@@ -2590,7 +2596,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
         <div style={{position:"absolute",top:0,left:0,right:0,height:52,zIndex:10,display:"flex",alignItems:"center",justifyContent:"center",padding:"10px 16px",background:C.surface,borderBottom:"1px solid "+C.border}}><Logo dm={dm}/></div>
         <Scroll>
           <ArchSearch value={archSearch} onChange={setArchSearch} C={C}/>
-          <FilterRow value={archFilter} onChange={setArchFilter} C={C}/>
+          <FilterRow value={archFilter} onChange={setArchFilter} C={C} counts={{FAVORITES:notes.filter(n=>(interactions[n.id]||{}).liked).length,SAVED:notes.filter(n=>(interactions[n.id]||{}).saved).length}}/>
           {loadingN?<Ldg C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote}/>}
         </Scroll>
       </>}
@@ -2778,7 +2784,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
 function TutorApp({user,onLogout,backHandlerRef}){
   const isSample=false;
   const [dm,setDmRaw]=useState(()=>{try{return localStorage.getItem("jrsh_dm")==="1";}catch(e){return false;}});
-  const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");}catch(e){}return next;});
+  const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");document.documentElement.classList.toggle("dark-mode",next);}catch(e){}return next;});
   const C=dm?dC():lC();
   const [tab,setTab]=useState("timetable");
   const [requests,setRequests]=useState([]);
@@ -3276,7 +3282,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
         <Hdr C={C} dm={dm}><PBtn C={C} onClick={()=>setShowPublish(true)}><span style={{fontSize:16}}>+</span> PUBLISH</PBtn></Hdr>
         <Scroll>
           <ArchSearch value={archSearch} onChange={setArchSearch} C={C}/>
-          <FilterRow value={archFilter} onChange={setArchFilter} C={C} tabs={["ALL","FAVORITES","SAVED","MY NOTES"]}/>
+          <FilterRow value={archFilter} onChange={setArchFilter} C={C} tabs={["ALL","FAVORITES","SAVED","MY NOTES"]} counts={{FAVORITES:notes.filter(n=>(interactions[n.id]||{}).liked).length,SAVED:notes.filter(n=>(interactions[n.id]||{}).saved).length}}/>
           {loadingN?<Ldg C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote} onEdit={archFilter==="MY NOTES"?setEditingNote:null}/>}
         </Scroll>
       </>}
@@ -3797,9 +3803,15 @@ function CoverEditor({src,pos,onPosChange,onChangeCover}){
   );
 }
 function ArchSearch({value,onChange,C}){return(<div style={{margin:"14px 14px 10px",position:"relative"}}><span style={{position:"absolute",left:16,top:"50%",transform:"translateY(-50%)",fontSize:16,color:C.sub}}>🔍</span><input value={value} onChange={e=>onChange(e.target.value)} placeholder="Search collective database…" style={{width:"100%",padding:"13px 16px 13px 44px",borderRadius:50,border:"1.5px solid "+C.border,background:C.surface,color:C.text,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"Barlow,sans-serif"}}/></div>);}
-function FilterRow({value,onChange,C,tabs}){
+function FilterRow({value,onChange,C,tabs,counts}){
   const T=tabs||["ALL","FAVORITES","SAVED"];
-  return(<div style={{display:"flex",margin:"0 14px 14px",background:C.surface,borderRadius:50,padding:4,border:"1px solid "+C.border}}>{T.map(f=><button key={f} onClick={()=>onChange(f)} style={{flex:1,padding:"8px 0",borderRadius:50,border:"none",cursor:"pointer",background:value===f?C.accentBg:"transparent",color:value===f?C.accentText:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10,letterSpacing:1}}>{f}</button>)}</div>);
+  return(<div style={{display:"flex",margin:"0 14px 14px",background:C.surface,borderRadius:50,padding:4,border:"1px solid "+C.border}}>{T.map(f=>{
+    const cnt=counts&&counts[f];
+    return(<button key={f} onClick={()=>onChange(f)} style={{flex:1,padding:"8px 0",borderRadius:50,border:"none",cursor:"pointer",background:value===f?C.accentBg:"transparent",color:value===f?C.accentText:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10,letterSpacing:1,position:"relative"}}>
+      {f}
+      {cnt>0&&<span style={{position:"absolute",top:2,right:6,background:"#EF4444",color:"#fff",borderRadius:50,fontSize:8,minWidth:13,height:13,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:"0 2px",fontWeight:900,lineHeight:1}}>{cnt}</span>}
+    </button>);
+  })}</div>);
 }
 
 function NoteGrid({notes,C,onLike,onSave,onOpen,onEdit}){
