@@ -240,6 +240,27 @@ const SB_AUTH_URL=SB_URL+"/auth/v1";
 /* ── Kenya time helpers (EAT = UTC+3) ── */
 function nowKE(){return new Date(new Date().toLocaleString("en-US",{timeZone:"Africa/Nairobi"}));}
 function nowKEiso(){const ke=new Date(Date.now()+3*60*60*1000);return ke.toISOString().replace("Z","+03:00");}
+
+/* ══ IMAGE COMPRESSION — resizes & compresses to stay well under Firestore 1MB doc limit ══ */
+function compressImage(dataUrl,maxW=800,maxH=800,quality=0.72){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>{
+      let{width:w,height:h}=img;
+      if(w>maxW||h>maxH){
+        const ratio=Math.min(maxW/w,maxH/h);
+        w=Math.round(w*ratio);h=Math.round(h*ratio);
+      }
+      const canvas=document.createElement("canvas");
+      canvas.width=w;canvas.height=h;
+      const ctx=canvas.getContext("2d");
+      ctx.drawImage(img,0,0,w,h);
+      resolve(canvas.toDataURL("image/jpeg",quality));
+    };
+    img.onerror=reject;
+    img.src=dataUrl;
+  });
+}
 function fmtKETime(ds){if(!ds)return"";try{return new Date(ds).toLocaleTimeString("en-KE",{timeZone:"Africa/Nairobi",hour:"2-digit",minute:"2-digit"});}catch(e){return"";}}
 function fmtKEDate(ds){if(!ds)return"";try{return new Date(ds).toLocaleDateString("en-KE",{timeZone:"Africa/Nairobi",day:"2-digit",month:"short",year:"numeric"});}catch(e){return"";}}
 function fmtKEDateTime(ds){if(!ds)return"";try{return new Date(ds).toLocaleString("en-KE",{timeZone:"Africa/Nairobi",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});}catch(e){return"";}}
@@ -2677,7 +2698,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
         <IdentHdr C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{try{localStorage.setItem("jrsh_acct_deleted","1");}catch(e){}await sbAuth.deleteAccount(user.id,"student");clearSession();onLogout();}}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
-          <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
+          <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const c=await compressImage(ev.target.result,400,400,0.82);setEditP(p=>({...p,pfp_local:c}));}catch(_){setEditP(p=>({...p,pfp_local:ev.target.result}));}};r.readAsDataURL(f);}}/>
           <ConfCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isStudent
             onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving}/>
           <div style={{height:24}}/>
@@ -3320,7 +3341,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
           </div>
           {editingNote.cover_url&&<button onClick={()=>editCoverRef.current&&editCoverRef.current.click()} style={{marginTop:8,fontSize:10,fontWeight:700,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",background:"none",border:"none",cursor:"pointer",padding:0}}>Change image →</button>}
         </div>
-        <input type="file" accept="image/*" ref={editCoverRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{setEditingNote(n=>({...n,cover_url:ev.target.result,cover_pos:{x:50,y:50}}));setShowNoteEditCover(true);};r.readAsDataURL(f);}}/>
+        <input type="file" accept="image/*" ref={editCoverRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const compressed=await compressImage(ev.target.result);setEditingNote(n=>({...n,cover_url:compressed,cover_pos:{x:50,y:50}}));}catch(_){setEditingNote(n=>({...n,cover_url:ev.target.result,cover_pos:{x:50,y:50}}));}setShowNoteEditCover(true);};r.readAsDataURL(f);}}/>
         <div style={{marginTop:10,display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>editPdfRef.current&&editPdfRef.current.click()} style={{padding:"9px 16px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,cursor:"pointer"}}>
             📎 {editingNote.pdf_url?"REPLACE PDF":"ATTACH PDF"}
@@ -3405,7 +3426,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
         <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{try{localStorage.setItem("jrsh_acct_deleted","1");}catch(e){}await sbAuth.deleteAccount(user.id,"tutor");clearSession();onLogout();}}/>
         <Scroll>
           <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
-          <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setEditP(p=>({...p,pfp_local:ev.target.result}));r.readAsDataURL(f);}}/>
+          <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const c=await compressImage(ev.target.result,400,400,0.82);setEditP(p=>({...p,pfp_local:c}));}catch(_){setEditP(p=>({...p,pfp_local:ev.target.result}));}};r.readAsDataURL(f);}}/>
           <ConfCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isTutor
             onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving}/>
           <div style={{height:24}}/>
@@ -3527,7 +3548,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
           </div>
           {pubForm.coverPreview&&<div style={{fontSize:9,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,textAlign:"center",marginBottom:6}}>✋ DRAG IMAGE TO REPOSITION · TAP TO CHANGE</div>}
         </div>
-        <input type="file" accept="image/*" ref={coverRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{setPubForm(p=>({...p,coverPreview:ev.target.result,coverFile:f,coverPos:{x:50,y:50}}));setShowCoverEdit(true);};r.readAsDataURL(f);}}/>
+        <input type="file" accept="image/*" ref={coverRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const compressed=await compressImage(ev.target.result);setPubForm(p=>({...p,coverPreview:compressed,coverFile:f,coverPos:{x:50,y:50}}));}catch(_){setPubForm(p=>({...p,coverPreview:ev.target.result,coverFile:f,coverPos:{x:50,y:50}}));}setShowCoverEdit(true);};r.readAsDataURL(f);}}/>
         <ML C={C}>TITLE</ML>
         <input style={miSty(C)} placeholder="e.g. Algebra Chapter 3" value={pubForm.title} onChange={e=>setPubForm(f=>({...f,title:e.target.value}))}/>
         <ML C={C}>SUBJECT</ML>
