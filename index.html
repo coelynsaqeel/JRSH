@@ -293,19 +293,23 @@ const PDF_CHUNK_SIZE = 700000; // ~700KB per chunk (safe under Firestore 1MB lim
 
 async function savePdfToCloud(noteId, dataUrl){
   try{
-    // Split into chunks if needed
+    // Split into chunks
     const chunks=[];
     for(let i=0;i<dataUrl.length;i+=PDF_CHUNK_SIZE){chunks.push(dataUrl.slice(i,i+PDF_CHUNK_SIZE));}
-    // Save chunk count doc first
+    // Save metadata doc
     await _db.collection("note_pdfs").doc(noteId).set({noteId,chunks:chunks.length,ts:Date.now()});
-    // Save each chunk
-    const batch=_db.batch();
-    chunks.forEach((chunk,i)=>{
-      batch.set(_db.collection("note_pdfs").doc(noteId+"_chunk_"+i),{noteId,chunkIndex:i,data:chunk});
-    });
-    await batch.commit();
+    // Commit in batches of 499 (Firestore batch limit is 500)
+    const BATCH_LIMIT=499;
+    for(let start=0;start<chunks.length;start+=BATCH_LIMIT){
+      const batch=_db.batch();
+      chunks.slice(start,start+BATCH_LIMIT).forEach((chunk,j)=>{
+        const i=start+j;
+        batch.set(_db.collection("note_pdfs").doc(noteId+"_chunk_"+i),{noteId,chunkIndex:i,data:chunk});
+      });
+      await batch.commit();
+    }
     return true;
-  }catch(e){console.warn("savePdfToCloud",e.message);return false;}
+  }catch(e){console.warn("savePdfToCloud",e.message);throw e;}
 }
 
 async function loadPdfFromCloud(noteId){
@@ -2343,7 +2347,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const studentIncomingSigTs=React.useRef({});
   useEffect(()=>{
     if(!user.id||user.id.startsWith("anon-"))return;
-    const acceptedLessons=lessons.filter(l=>acceptedMap[l.id]&&l.online&&l._reqId);
+    const acceptedLessons=lessons.filter(l=>acceptedMap[l.id]&&l._reqId);
     if(!acceptedLessons.length)return;
     const unsubs=acceptedLessons.map(lesson=>{
       const reqId=lesson._reqId||lesson.id;
@@ -3095,7 +3099,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const incomingSigTs=React.useRef({});
   useEffect(()=>{
     if(!user.id||user.id.startsWith("anon-"))return;
-    const booked=requests.filter(r=>r.status==="accepted"&&r.online);
+    const booked=requests.filter(r=>r.status==="accepted");
     if(!booked.length)return;
     const unsubs=booked.map(req=>{
       let unsub=null;
@@ -3983,9 +3987,15 @@ function NoteGrid({notes,C,onLike,onSave,onOpen,onEdit}){
           </div>
           {/* ── Info bar ── */}
           <div style={{padding:"8px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:11,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",color:C.text,lineHeight:1.15,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{note.title}</div>
-              <div style={{fontSize:9,fontWeight:700,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{note.tutor_name?.toUpperCase()}</div>
+            <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:0}}>
+              {note.tutor_pfp
+                ?<img src={note.tutor_pfp} alt="" style={{width:24,height:24,borderRadius:"50%",objectFit:"cover",flexShrink:0}} onError={e=>e.target.style.display="none"}/>
+                :<div style={{width:24,height:24,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:10,fontWeight:900,color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif"}}>{(note.tutor_name||"?")[0].toUpperCase()}</div>
+              }
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:11,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",color:C.text,lineHeight:1.15,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{note.title}</div>
+                <div style={{fontSize:9,fontWeight:700,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{note.tutor_name?.toUpperCase()}</div>
+              </div>
             </div>
             <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0}}>
               <div style={{fontSize:8,fontWeight:800,letterSpacing:1,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",border:"1px solid "+C.border,borderRadius:4,padding:"1px 5px",whiteSpace:"nowrap"}}>{note.subject?.toUpperCase()}</div>
