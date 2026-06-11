@@ -2271,20 +2271,26 @@ function StudentApp({user,onLogout,backHandlerRef}){
   },[user.id]);
 
   useEffect(()=>{
+    // Load interactions once
+    const isAnon=user.id&&user.id.startsWith("anon-");
     (async()=>{
-      setLoadingN(true);
       try{
-        const isAnon=user.id&&user.id.startsWith("anon-");
-        const [n,ix]=await Promise.all([
-          fbQuery("notes",[],{field:"createdAt",dir:"desc"},100),
-          isAnon?Promise.resolve([]):fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]),
-        ]);
-        setNotes(Array.isArray(n)?n:[]);
+        const ix=isAnon?[]:await fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]);
         const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
         setInteractions(map);
-      }catch(e){console.warn("Notes load:",e.message);setNotes([]);}
-      finally{setLoadingN(false);}
+      }catch(e){}
     })();
+    // Live notes listener — real-time for all users
+    setLoadingN(true);
+    let firstSnap=true;
+    const unsubNotes=_db.collection("notes").orderBy("createdAt","desc").limit(100).onSnapshot(
+      snap=>{
+        setNotes(snap.docs.map(d=>({id:d.id,...d.data()})));
+        if(firstSnap){firstSnap=false;setLoadingN(false);}
+      },
+      e=>{console.warn("Notes snapshot:",e.message);setLoadingN(false);}
+    );
+    // Load tutors once
     (async()=>{
       try{
         const allTutors=await fbQuery("profiles",[{field:"role",op:"==",value:"tutor"}],null,100);
@@ -2292,6 +2298,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
         setTutors(studentLevel?allTutors.filter(t=>!t.curriculum_level||t.curriculum_level===studentLevel):allTutors);
       }catch(e){setTutors([]);}
     })();
+    return()=>unsubNotes();
   },[user.id]);
 
   // Auto-trigger call when accepted lesson starts (online only)
@@ -2966,20 +2973,27 @@ function TutorApp({user,onLogout,backHandlerRef}){
       }catch(e){console.warn("Requests load:",e.message);setRequests([]);}
       finally{setLoadingR(false);}
     })();
-    (async()=>{
+    // Live notes listener — real-time for all users
+    {
+      const isAnon2=user.id&&user.id.startsWith("anon-");
+      (async()=>{
+        try{
+          const ix=isAnon2?[]:await fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]);
+          const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
+          setInteractions(map);
+        }catch(e){}
+      })();
       setLoadingN(true);
-      try{
-        const isAnon=user.id&&user.id.startsWith("anon-");
-        const [n,ix]=await Promise.all([
-          fbQuery("notes",[],{field:"createdAt",dir:"desc"},100),
-          isAnon?Promise.resolve([]):fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]),
-        ]);
-        setNotes(Array.isArray(n)?n:[]);
-        const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
-        setInteractions(map);
-      }catch(e){setNotes([]);}
-      finally{setLoadingN(false);}
-    })();
+      let firstSnapT=true;
+      const _unsubNotesT=_db.collection("notes").orderBy("createdAt","desc").limit(100).onSnapshot(
+        snap=>{
+          setNotes(snap.docs.map(d=>({id:d.id,...d.data()})));
+          if(firstSnapT){firstSnapT=false;setLoadingN(false);}
+        },
+        e=>{console.warn("Notes snapshot (tutor):",e.message);setLoadingN(false);}
+      );
+      return()=>_unsubNotesT();
+    }
   },[user.id]);
 
   // ── Poll tutor_requests so tutor sees student-side cancellations in real-time ──
