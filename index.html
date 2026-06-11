@@ -2283,9 +2283,11 @@ function StudentApp({user,onLogout,backHandlerRef}){
     // Live notes listener — real-time for all users
     setLoadingN(true);
     let firstSnap=true;
-    const unsubNotes=_db.collection("notes").orderBy("createdAt","desc").limit(100).onSnapshot(
+    const unsubNotes=_db.collection("notes").limit(150).onSnapshot(
       snap=>{
-        setNotes(snap.docs.map(d=>({id:d.id,...d.data()})));
+        const docs=snap.docs.map(d=>({id:d.id,...d.data()}));
+        docs.sort((a,b)=>(b.createdAt||b.created_at||"").localeCompare(a.createdAt||a.created_at||""));
+        setNotes(docs);
         if(firstSnap){firstSnap=false;setLoadingN(false);}
       },
       e=>{console.warn("Notes snapshot:",e.message);setLoadingN(false);}
@@ -2974,26 +2976,26 @@ function TutorApp({user,onLogout,backHandlerRef}){
       finally{setLoadingR(false);}
     })();
     // Live notes listener — real-time for all users
-    {
-      const isAnon2=user.id&&user.id.startsWith("anon-");
-      (async()=>{
-        try{
-          const ix=isAnon2?[]:await fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]);
-          const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
-          setInteractions(map);
-        }catch(e){}
-      })();
-      setLoadingN(true);
-      let firstSnapT=true;
-      const _unsubNotesT=_db.collection("notes").orderBy("createdAt","desc").limit(100).onSnapshot(
-        snap=>{
-          setNotes(snap.docs.map(d=>({id:d.id,...d.data()})));
-          if(firstSnapT){firstSnapT=false;setLoadingN(false);}
-        },
-        e=>{console.warn("Notes snapshot (tutor):",e.message);setLoadingN(false);}
-      );
-      return()=>_unsubNotesT();
-    }
+    const isAnon2=user.id&&user.id.startsWith("anon-");
+    (async()=>{
+      try{
+        const ix=isAnon2?[]:await fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]);
+        const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
+        setInteractions(map);
+      }catch(e){}
+    })();
+    setLoadingN(true);
+    let firstSnapT=true;
+    const _unsubNotesT=_db.collection("notes").limit(150).onSnapshot(
+      snap=>{
+        const docs=snap.docs.map(d=>({id:d.id,...d.data()}));
+        docs.sort((a,b)=>(b.createdAt||b.created_at||"").localeCompare(a.createdAt||a.created_at||""));
+        setNotes(docs);
+        if(firstSnapT){firstSnapT=false;setLoadingN(false);}
+      },
+      e=>{console.warn("Notes snapshot (tutor):",e.message);setLoadingN(false);}
+    );
+    return()=>_unsubNotesT();
   },[user.id]);
 
   // ── Poll tutor_requests so tutor sees student-side cancellations in real-time ──
