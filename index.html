@@ -859,8 +859,8 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0, activeCallRef}){
   const isOffline = !lesson.online;
 
   // Phase: idle | outgoing | incoming | live | ended
-  const isVideo = !!lesson.online;
-  const [phase, setPhase]  = React.useState(lesson._incomingRing?"incoming":"idle");
+  const isVideo = !!lesson.online && !lesson._voiceOnly;
+  const [phase, setPhase]  = React.useState(lesson._incomingRing?"incoming": lesson._startCall?"outgoing" : "idle");
   const [ringTimer, setRingTimer] = React.useState(30);
   const [callSecs, setCallSecs]   = React.useState(0);
   const [muted, setMuted]   = React.useState(false);
@@ -900,7 +900,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0, activeCallRef}){
   // (runs once after first render; initiateCall defined below via ref)
   const initiateCallRef = React.useRef(null);
   React.useEffect(()=>{
-    if(lesson._autoRing&&lesson.online){
+    if((lesson._autoRing&&lesson.online)||lesson._startCall){
       // Small delay to allow initiateCallRef to be set
       const t=setTimeout(()=>{ if(initiateCallRef.current) initiateCallRef.current(); },200);
       return()=>clearTimeout(t);
@@ -1149,27 +1149,28 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0, activeCallRef}){
   // ── Idle state — just show call button ──
   if(phase==="idle"){
     const cName=lesson.student_name||lesson._tutorName||"Contact";
+    const pfpUrl=(user.role==="student"?lesson._tutorObj?.pfp_url:null)||lesson._pfpUrl||null;
     return(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onEnd("cancelled");}}>
         <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:"100%",padding:"28px 22px 44px"}}>
-          {/* Header row with name + voice call icon top-right */}
+          {/* Header row */}
           <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
-            <div style={{width:56,height:56,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.accentText}}>{cName[0].toUpperCase()}</span>
+            <div style={{width:56,height:56,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden",border:"2px solid "+C.border}}>
+              {pfpUrl
+                ?<img src={pfpUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
+                :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.accentText}}>{cName[0].toUpperCase()}</span>}
             </div>
             <div style={{flex:1}}>
               <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:18,color:C.text}}>{cName}</div>
-              <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} · 🌐 Online</div>
+              <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} · {isVideo?"🌐 Online":"🎙️ Voice"}</div>
             </div>
-            {/* Voice call button — top-right, capped at 3 min */}
-            <button onClick={()=>{onEnd("voice");}} title="Voice call (3 min)" style={{width:44,height:44,borderRadius:"50%",border:"1.5px solid "+C.border,background:"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke={C.text} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
-            </button>
           </div>
-          {/* Primary action: Video Call (no time limit shown, no location button) */}
+          {/* Call button */}
           <button onClick={initiateCall} style={{width:"100%",padding:"15px",borderRadius:50,border:"none",background:"#22C55E",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1.5,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-            VIDEO CALL
+            {isVideo
+              ?<><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>VIDEO CALL</>
+              :<><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>VOICE CALL</>
+            }
           </button>
           <button onClick={()=>onEnd("cancelled")} style={{marginTop:12,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
         </div>
@@ -1237,23 +1238,6 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0, activeCallRef}){
             </div>
           );
         })()}
-      </div>
-
-      {/* Controls */}
-      <div style={{padding:"20px 0 48px",background:"rgba(0,0,0,.85)",display:"flex",flexDirection:"column",alignItems:"center",gap:18,position:"relative",zIndex:1}}>
-        {phase==="incoming"&&(
-          <div style={{display:"flex",gap:44,alignItems:"center"}}>
-            <div style={{textAlign:"center"}}>
-              <button onClick={declineCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>📵</button>
-              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>DECLINE</div>
-            </div>
-            <div style={{textAlign:"center"}}>
-              <button onClick={acceptCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#22C55E",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg></button>
-              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>ANSWER</div>
-            </div>
-          </div>
-        )}
-
       </div>
 
       {/* ── Bottom Controls Bar ── */}
@@ -2809,12 +2793,13 @@ function StudentApp({user,onLogout,backHandlerRef}){
               const isAccepted=l._accepted||acceptedMap[l.id];
               const isPending=l._pending&&!isAccepted;
               if(isAccepted&&l.online){
-                // Re-entry: if call is already live for this lesson, go straight back to call screen
+                // Active call → re-enter directly
                 if(activeCallRef.current&&activeCallRef.current.lessonId===l.id){
-                  setCallLesson(l); // re-mount dialog which will resume the live state
-                } else {
                   setCallLesson(l);
+                  return;
                 }
+                // Start call immediately — no details modal for online accepted lessons
+                setCallLesson({...l,_startCall:true});
                 return;
               }
               if(isAccepted){
@@ -2826,7 +2811,6 @@ function StudentApp({user,onLogout,backHandlerRef}){
               } else if(isPending){
                 setShowLessonDetails(l);
               } else {
-                // unbooked, declined, or tutor-cancelled — open tutor search
                 setShowTutors(l);
               }
             }}
@@ -3597,8 +3581,13 @@ function TutorApp({user,onLogout,backHandlerRef}){
           {loadingR?<Ldg C={C}/>:
             <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} showStudent onTap={l=>{
               if(l.online&&l.status==="accepted"){
-                // If there's already an active call for this lesson, go straight back to it
-                setCallLesson(l);
+                // Active call → re-enter directly
+                if(activeCallRef.current&&activeCallRef.current.lessonId===l.id){
+                  setCallLesson(l);
+                  return;
+                }
+                // Start call immediately — no details modal for online accepted lessons
+                setCallLesson({...l,_startCall:true});
                 return;
               }
               setShowStudentProf(l);
@@ -4005,6 +3994,7 @@ function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWi
   const isPending=lesson._pending&&!isAccepted;
   const tutorName=lesson._tutorName||lesson._tutorObj?.name||null;
   const tutorObj=lesson._tutorObj||null;
+  const pfpUrl=tutorObj?.pfp_url||lesson._pfpUrl||null;
   const statusColor=isAccepted?"#166634":isPending?"#92400E":"#9F1239";
   const statusText=isAccepted?("✓ Accepted by "+tutorName):isPending?("⏳ Awaiting "+tutorName):"Unbooked";
   return(
@@ -4012,22 +4002,25 @@ function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWi
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:"100%",padding:"24px 22px 36px",maxHeight:"88dvh",overflowY:"auto"}}>
         {/* Header row */}
         <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
-          <div style={{width:60,height:60,borderRadius:"50%",background:isAccepted?"#D1FAE5":isPending?"#FEF3C7":"#FCE4EC",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,border:"2px solid "+(isAccepted?"#86EFAC":isPending?"#FCD34D":"#F8BBD9")}}>
-            {tutorObj?.pfp_url?<img src={tutorObj.pfp_url} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"50%"}} alt=""/>:<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:"#111"}}>{(tutorName||lesson.subject||"?")[0].toUpperCase()}</span>}
+          <div style={{width:60,height:60,borderRadius:"50%",background:isAccepted?"#D1FAE5":isPending?"#FEF3C7":"#FCE4EC",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,border:"2px solid "+(isAccepted?"#86EFAC":isPending?"#FCD34D":"#F8BBD9"),overflow:"hidden"}}>
+            {pfpUrl
+              ?<img src={pfpUrl} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"50%"}} alt=""/>
+              :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:"#111"}}>{(tutorName||lesson.subject||"?")[0].toUpperCase()}</span>}
           </div>
           <div style={{flex:1}}>
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{lesson.subject}</div>
             <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.day} · {timeLbl(lesson.from_hour)}–{timeLbl(lesson.to_hour)} · {lesson.online?"🌐 Online":"📍 Offline"}</div>
           </div>
-          {/* Action buttons — only for accepted lessons */}
+          {/* Top-right action buttons */}
           {isAccepted&&(
             <div style={{display:"flex",gap:8,flexShrink:0}}>
               {withinLocationWindow&&!lesson.online&&(
-                <button onClick={()=>{onClose();onLocation&&onLocation(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#F59E0B",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title="Live location (30 min before lesson)">
+                <button onClick={()=>{onClose();onLocation&&onLocation(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#F59E0B",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title="Live location">
                   📍
                 </button>
               )}
-              <button onClick={()=>{onClose();onCall&&onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} title="Voice call · 3 min">
+              {/* Voice-only call — starts immediately, no idle modal */}
+              <button onClick={()=>{onClose();onCall&&onCall({...lesson,_voiceOnly:true,_startCall:true});}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} title="Voice call">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
               </button>
             </div>
@@ -4035,7 +4028,7 @@ function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWi
         </div>
         {/* Status badge */}
         <div style={{fontSize:11,fontWeight:800,color:statusColor,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5,marginBottom:16,padding:"6px 12px",borderRadius:8,background:isAccepted?"rgba(22,101,52,.08)":isPending?"rgba(146,64,14,.08)":"rgba(159,18,57,.08)",display:"inline-block"}}>{statusText}</div>
-        {/* Details */}
+        {/* Details rows */}
         {[
           {label:"MODE",value:lesson.online?"🌐 Online":"📍 Offline"},
           {label:"DAY",value:lesson.day},
@@ -4051,13 +4044,7 @@ function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWi
             <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
           </div>
         ))}
-        {/* Call/Location helper text */}
-        {isAccepted&&(
-          <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.6}}>
-            🎙️ Voice call limited to 3 minutes.
-            {!lesson.online&&" · 📍 Location sharing available 30 min before lesson starts."}
-          </div>
-        )}
+        {/* Video Call CTA removed — online accepted lessons go straight to call on tap */}
         <button onClick={onClose} style={{marginTop:18,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
       </div>
     </div>
