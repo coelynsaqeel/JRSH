@@ -760,29 +760,47 @@ function useLiveLocation(active){
 // caller=false → creates answer (the one who accepted)
 // sigDocId  → shared Firestore doc under "webrtc_signals" — same string on both sides
 // isCaller  → true for the person who pressed Call, false for the person who accepted
-async function startWebRTCVoice(sigDocId, isCaller){
+async function startWebRTCVoice(sigDocId, isCaller, isVideo=false){
   const sigDoc=_db.collection("webrtc_signals").doc(sigDocId);
   const unsubs=[];
 
-  // ── 1. Mic ──
-  const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+  // ── 1. Mic + camera (video=true for online lessons) ──
+  const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:isVideo?{facingMode:"user"}:false});
 
   // ── 2. Peer connection ──
   const pc=new RTCPeerConnection(STUN_SERVERS);
   stream.getTracks().forEach(t=>pc.addTrack(t,stream));
 
-  // ── 3. Remote audio output ──
+  // ── 3. Remote media output ──
+  const remoteStream=new MediaStream();
+  // Video element (used for both remote video and local preview)
+  const remoteVideoEl=document.createElement("video");
+  remoteVideoEl.autoplay=true; remoteVideoEl.playsInline=true; remoteVideoEl.muted=false;
+  remoteVideoEl.srcObject=remoteStream;
+  remoteVideoEl.style.cssText="position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:501;background:#000;display:none;";
+  document.body.appendChild(remoteVideoEl);
+  // Local preview (picture-in-picture)
+  const localVideoEl=document.createElement("video");
+  localVideoEl.autoplay=true; localVideoEl.playsInline=true; localVideoEl.muted=true;
+  localVideoEl.srcObject=stream;
+  localVideoEl.style.cssText="position:fixed;bottom:160px;right:16px;width:90px;height:120px;object-fit:cover;border-radius:12px;z-index:502;border:2px solid rgba(255,255,255,.3);display:none;";
+  document.body.appendChild(localVideoEl);
+  // Audio element for voice-only fallback
   const audioEl=document.createElement("audio");
   audioEl.autoplay=true; audioEl.playsInline=true;
   document.body.appendChild(audioEl);
-  const remoteStream=new MediaStream();
-  audioEl.srcObject=remoteStream;
   pc.ontrack=e=>{
     e.streams[0]?.getTracks().forEach(t=>{
-      if(!remoteStream.getTracks().includes(t)) remoteStream.addTrack(t);
+      if(!remoteStream.getTracks().find(x=>x.id===t.id)) remoteStream.addTrack(t);
     });
-    // Ensure audio plays (mobile browsers sometimes need explicit play())
-    audioEl.play().catch(()=>{});
+    if(isVideo){
+      remoteVideoEl.style.display="block";
+      localVideoEl.style.display="block";
+      remoteVideoEl.play().catch(()=>{});
+    } else {
+      audioEl.srcObject=remoteStream;
+      audioEl.play().catch(()=>{});
+    }
   };
 
   // ── 4. Trickle ICE — send each candidate to Firestore immediately ──
@@ -859,9 +877,13 @@ async function startWebRTCVoice(sigDocId, isCaller){
       stream.getTracks().forEach(t=>t.stop());
       try{pc.close();}catch(_){}
       try{audioEl.pause();audioEl.srcObject=null;audioEl.remove();}catch(_){}
+      try{remoteVideoEl.pause();remoteVideoEl.srcObject=null;remoteVideoEl.remove();}catch(_){}
+      try{localVideoEl.pause();localVideoEl.srcObject=null;localVideoEl.remove();}catch(_){}
       try{sigDoc.delete();}catch(_){}
     },
     mute:(m)=>stream.getAudioTracks().forEach(t=>t.enabled=!m),
+    camOff:(off)=>stream.getVideoTracks().forEach(t=>t.enabled=!off),
+    localVideoEl, remoteVideoEl,
   };
 }
 
@@ -880,10 +902,12 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   const isOffline = !lesson.online;
 
   // Phase: idle | outgoing | incoming | live | ended
+  const isVideo = !!lesson.online;
   const [phase, setPhase]  = React.useState(lesson._incomingRing?"incoming":"idle");
   const [ringTimer, setRingTimer] = React.useState(30);
   const [callSecs, setCallSecs]   = React.useState(0);
   const [muted, setMuted]   = React.useState(false);
+  const [camOff, setCamOff] = React.useState(false);
   const [agoraErr, setAgoraErr] = React.useState("");
   const [showLocMap, setShowLocMap] = React.useState(lesson._openLocation||false);
   const [otherLoc, setOtherLoc]   = React.useState(null);
@@ -1062,15 +1086,14 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
     setPhase("live");
     try{
       const reqId=lesson._reqId||lesson.id;
-      // sigDocId is shared by both parties — derived from reqId
       const sigDocId="wrtc-"+(reqId||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,28);
-      const eng=await startWebRTCVoice(sigDocId, isCaller);
+      const eng=await startWebRTCVoice(sigDocId, isCaller, !!lesson.online);
       engineRef.current=eng;
     }catch(e){
       const msg=e?.message||"";
       let errMsg="Call failed";
-      if(msg.includes("Permission denied")||msg.includes("NotAllowed")||msg.includes("not allowed")){errMsg="Microphone access denied — please allow mic in browser settings";}
-      else if(msg.includes("getUserMedia")||msg.includes("microphone")){errMsg="Could not access microphone — check browser permissions";}
+      if(msg.includes("Permission denied")||msg.includes("NotAllowed")||msg.includes("not allowed")){errMsg="Camera/mic access denied — please allow in browser settings";}
+      else if(msg.includes("getUserMedia")||msg.includes("microphone")){errMsg="Could not access camera/mic — check browser permissions";}
       else if(msg){errMsg=msg;}
       setAgoraErr(errMsg);
     }
@@ -1115,14 +1138,23 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
       engineRef.current=null;
     }
     setPhase("ended");
-    const isAutoRingDrop=lesson._autoRing&&lesson.online&&(reason==="no_answer"||reason==="timeout"||reason==="ended");
-    onEnd(isAutoRingDrop?reason:"cancelled", secsUsed);
+    // For auto-ring online lessons: pass reason through on no_answer or ended so lesson gets dropped
+    // "timeout" = hit 3-min call limit — don't drop the lesson, just end this call segment
+    const shouldPassReason=lesson._autoRing&&lesson.online&&(reason==="no_answer"||reason==="ended");
+    onEnd(shouldPassReason?reason:"cancelled", secsUsed);
   }
 
   function toggleMute(){
     const next=!muted;
     if(engineRef.current?.mute){try{engineRef.current.mute(next);}catch(e){}}
     setMuted(next);
+  }
+  function toggleCam(){
+    const next=!camOff;
+    if(engineRef.current?.camOff){try{engineRef.current.camOff(next);}catch(e){}}
+    // Hide/show local preview too
+    if(engineRef.current?.localVideoEl){engineRef.current.localVideoEl.style.display=next?"none":"block";}
+    setCamOff(next);
   }
 
   const fmtTime=s=>{const m=Math.floor(s/60),sec=s%60;return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0");};
@@ -1187,9 +1219,9 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
 
         <div style={{textAlign:"center"}}>
           <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1}}>
-            {phase==="outgoing"&&"CALLING…"}
-            {phase==="incoming"&&"INCOMING VOICE CALL"}
-            {phase==="live"&&"VOICE CALL LIVE"}
+            {phase==="outgoing"&&(isVideo?"VIDEO CALLING…":"CALLING…")}
+            {phase==="incoming"&&(isVideo?"INCOMING VIDEO CALL":"INCOMING VOICE CALL")}
+            {phase==="live"&&(isVideo?"VIDEO CALL LIVE":"VOICE CALL LIVE")}
           </div>
           <div style={{color:"#ddd",fontSize:15,marginTop:2,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{lesson.student_name||lesson._tutorName||""}</div>
           <div style={{color:"#888",fontSize:12,marginTop:2}}>{lesson.subject} · {isOffline?"Offline":"Online"}</div>
@@ -1240,7 +1272,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
         )}
 
         {(phase==="outgoing"||phase==="live")&&(
-          <div style={{display:"flex",gap:20,alignItems:"center"}}>
+          <div style={{display:"flex",gap:20,alignItems:"center",flexWrap:"wrap",justifyContent:"center"}}>
             {phase==="live"&&(
               <div style={{textAlign:"center"}}>
                 <button onClick={toggleMute} style={{width:56,height:56,borderRadius:"50%",border:"none",background:muted?"#EF4444":"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
@@ -1249,7 +1281,14 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
                 <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{muted?"UNMUTE":"MUTE"}</div>
               </div>
             )}
-
+            {phase==="live"&&isVideo&&(
+              <div style={{textAlign:"center"}}>
+                <button onClick={toggleCam} style={{width:56,height:56,borderRadius:"50%",border:"none",background:camOff?"#EF4444":"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
+                  {camOff?"🚫":"📷"}
+                </button>
+                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{camOff?"CAM OFF":"CAM"}</div>
+              </div>
+            )}
             {phase==="live"&&withinLocationWindow&&(
               <div style={{textAlign:"center"}}>
                 <button onClick={()=>setShowLocMap(true)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
@@ -2683,7 +2722,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
       {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePagesPersist(pp=>({...pp,[openNote.id]:p}))} onRate={r=>handleRateNote(openNote.id,r)} existingRating={ratingMap[openNote.id]?.rating||0}/>}
       {callLesson&&<CallDialog lesson={callLesson} user={user} callTimeUsed={callTimeUsedMap[callLesson.id]||0} onEnd={(reason,secsUsed)=>{
         if(secsUsed>0) setCallTimeUsedMap(m=>({...m,[callLesson.id]:(m[callLesson.id]||0)+secsUsed}));
-        if(reason!=="cancelled"){
+        if(reason==="no_answer"||reason==="ended"){
           setLessons(ls=>ls.filter(l=>l.id!==callLesson.id));
           setAcceptedMap(m=>{const n={...m};delete n[callLesson.id];return n;});
         }
@@ -2708,8 +2747,18 @@ function StudentApp({user,onLogout,backHandlerRef}){
             <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>{
               const isAccepted=l._accepted||acceptedMap[l.id];
               const isPending=l._pending&&!isAccepted;
+              if(isAccepted&&l.online){
+                // Online accepted lesson — if in progress (within scheduled window), go straight to call
+                const now=Date.now();
+                const {startMs,endMs}=getScheduledMs(l);
+                const inProgress=now>=startMs&&now<=endMs;
+                if(inProgress){
+                  // Re-open call page (or open fresh if no active call)
+                  setCallLesson(l);
+                  return;
+                }
+              }
               if(isAccepted){
-                // Accepted: show tutor profile if we have the tutor object, otherwise lesson details
                 if(l._tutorObj){
                   setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);
                 } else {
@@ -2718,7 +2767,6 @@ function StudentApp({user,onLogout,backHandlerRef}){
               } else if(isPending){
                 setShowLessonDetails(l);
               } else {
-                // Only unbooked/declined → find a tutor
                 setShowTutors(l);
               }
             }}
@@ -3438,7 +3486,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
       </Modal>}
       {callLesson&&<CallDialog lesson={callLesson} user={user} callTimeUsed={callTimeUsedMap[callLesson.id]||0} onEnd={(reason,secsUsed)=>{
         if(secsUsed>0) setCallTimeUsedMap(m=>({...m,[callLesson.id]:(m[callLesson.id]||0)+secsUsed}));
-        if(reason!=="cancelled"){
+        if(reason==="no_answer"||reason==="ended"){
           // Credit tutor wallet: 90% of lesson fee (10% platform commission)
           if(reason==="ended"){
             const hours=(callLesson.to_hour-callLesson.from_hour)||1;
@@ -3472,7 +3520,14 @@ function TutorApp({user,onLogout,backHandlerRef}){
         </div>
         <Scroll>
           {loadingR?<Ldg C={C}/>:
-            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} showStudent onTap={l=>setShowStudentProf(l)}
+            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} showStudent onTap={l=>{
+              if(l.online&&l.status==="accepted"){
+                const now=Date.now();
+                const {startMs,endMs}=getScheduledMs(l);
+                if(now>=startMs&&now<=endMs){setCallLesson(l);return;}
+              }
+              setShowStudentProf(l);
+            }}
               renderExtra={l=>{
                 const isOffline=!l.online;
                 const studentStarted=offlineStartedIds.has(l.id);
