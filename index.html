@@ -758,75 +758,108 @@ function useLiveLocation(active){
 /* ══ NATIVE WebRTC VOICE ENGINE ══ */
 // caller=true  → creates offer (the one who pressed call)
 // caller=false → creates answer (the one who accepted)
-// sigDocId     → Firestore doc ID under "webrtc_signals" collection for SDP/ICE exchange
+// sigDocId  → shared Firestore doc under "webrtc_signals" — same string on both sides
+// isCaller  → true for the person who pressed Call, false for the person who accepted
 async function startWebRTCVoice(sigDocId, isCaller){
-  // 1. Get mic
+  const sigDoc=_db.collection("webrtc_signals").doc(sigDocId);
+  const unsubs=[];
+
+  // ── 1. Mic ──
   const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
-  // 2. Create peer connection
+
+  // ── 2. Peer connection ──
   const pc=new RTCPeerConnection(STUN_SERVERS);
   stream.getTracks().forEach(t=>pc.addTrack(t,stream));
-  // 3. Play remote audio when it arrives
-  const remoteStream=new MediaStream();
+
+  // ── 3. Remote audio output ──
   const audioEl=document.createElement("audio");
-  audioEl.autoplay=true; audioEl.srcObject=remoteStream;
+  audioEl.autoplay=true; audioEl.playsInline=true;
   document.body.appendChild(audioEl);
-  pc.ontrack=e=>e.streams[0]?.getTracks().forEach(t=>remoteStream.addTrack(t));
-  // 4. ICE candidate collection
-  const iceCandidates=[];
-  let iceDone=false;
-  pc.onicecandidate=e=>{if(e.candidate)iceCandidates.push(e.candidate.toJSON());};
-  pc.onicegatheringstatechange=async()=>{
-    if(pc.iceGatheringState!=="complete")return;
-    iceDone=true;
-    const field=isCaller?"caller_ice":"callee_ice";
-    try{await _db.collection("webrtc_signals").doc(sigDocId).set({[field]:JSON.stringify(iceCandidates)},{merge:true});}catch(e){}
-  };
-  const sigDoc=_db.collection("webrtc_signals").doc(sigDocId);
-  let unsubSig=null;
-  if(isCaller){
-    // 5a. Caller: create offer, save to Firestore, wait for answer
-    const offer=await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await sigDoc.set({offer:JSON.stringify({type:offer.type,sdp:offer.sdp}),ts:Date.now()},{merge:true});
-    unsubSig=sigDoc.onSnapshot(async snap=>{
-      const d=snap.data();
-      if(!d?.answer||pc.signalingState==="stable")return;
-      try{
-        const ans=JSON.parse(d.answer);
-        await pc.setRemoteDescription(new RTCSessionDescription(ans));
-        // Add callee ICE candidates
-        if(d.callee_ice){JSON.parse(d.callee_ice).forEach(c=>{try{pc.addIceCandidate(new RTCIceCandidate(c));}catch(_){}});}
-      }catch(_){}
+  const remoteStream=new MediaStream();
+  audioEl.srcObject=remoteStream;
+  pc.ontrack=e=>{
+    e.streams[0]?.getTracks().forEach(t=>{
+      if(!remoteStream.getTracks().includes(t)) remoteStream.addTrack(t);
     });
-  }else{
-    // 5b. Callee: wait for offer, create answer
-    const snap=await sigDoc.get();
-    const d=snap.data()||{};
-    if(d.offer){
-      const off=JSON.parse(d.offer);
-      await pc.setRemoteDescription(new RTCSessionDescription(off));
-      const answer=await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      await sigDoc.set({answer:JSON.stringify({type:answer.type,sdp:answer.sdp})},{merge:true});
-      // Add caller ICE candidates if already present
-      if(d.caller_ice){JSON.parse(d.caller_ice).forEach(c=>{try{pc.addIceCandidate(new RTCIceCandidate(c));}catch(_){}});}
-      // Also watch for caller_ice arriving later
-      unsubSig=sigDoc.onSnapshot(snap2=>{
-        const d2=snap2.data();
-        if(d2?.caller_ice){JSON.parse(d2.caller_ice).forEach(c=>{try{pc.addIceCandidate(new RTCIceCandidate(c));}catch(_){}});}
-      });
+    // Ensure audio plays (mobile browsers sometimes need explicit play())
+    audioEl.play().catch(()=>{});
+  };
+
+  // ── 4. Trickle ICE — send each candidate to Firestore immediately ──
+  const myIceField = isCaller ? "caller_ice" : "callee_ice";
+  const theirIceField = isCaller ? "callee_ice" : "caller_ice";
+  let iceSeq=0;
+  pc.onicecandidate=async e=>{
+    if(!e.candidate) return; // null = gathering complete, ignore
+    const key=myIceField+"_"+iceSeq++;
+    try{await sigDoc.set({[key]:JSON.stringify(e.candidate.toJSON())},{merge:true});}catch(_){}
+  };
+
+  // ── Helper: drain any ICE candidates from Firestore into pc ──
+  const appliedIce=new Set();
+  async function drainIce(data){
+    if(!data) return;
+    for(const [k,v] of Object.entries(data)){
+      if(!k.startsWith(theirIceField+"_")||appliedIce.has(k)) continue;
+      appliedIce.add(k);
+      try{await pc.addIceCandidate(new RTCIceCandidate(JSON.parse(v)));}catch(_){}
     }
   }
-  // Return engine handle — caller stores this in engineRef
+
+  // ── 5. Signaling — fully event-driven via onSnapshot ──
+  let remoteDescSet=false;
+
+  if(isCaller){
+    // Caller: write offer, then watch for answer + callee ICE
+    const offer=await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await sigDoc.set({offer:JSON.stringify({type:offer.type,sdp:offer.sdp}),ts:Date.now()});
+
+    unsubs.push(sigDoc.onSnapshot(async snap=>{
+      const d=snap.data();
+      if(!d) return;
+      // Set remote description once when answer arrives
+      if(d.answer && !remoteDescSet){
+        remoteDescSet=true;
+        try{
+          await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(d.answer)));
+        }catch(err){console.warn("caller setRemote",err);}
+      }
+      // Always try to drain callee ICE (new ones may arrive after answer)
+      if(remoteDescSet) await drainIce(d);
+    }));
+
+  }else{
+    // Callee: watch for offer (may already be there or arrive shortly)
+    unsubs.push(sigDoc.onSnapshot(async snap=>{
+      const d=snap.data();
+      if(!d) return;
+
+      // Set remote + create answer once
+      if(d.offer && !remoteDescSet){
+        remoteDescSet=true;
+        try{
+          await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(d.offer)));
+          const answer=await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          await sigDoc.set({answer:JSON.stringify({type:answer.type,sdp:answer.sdp})},{merge:true});
+        }catch(err){console.warn("callee setRemote/answer",err); return;}
+      }
+
+      // Drain caller ICE — works whether it arrived before or after answer
+      if(remoteDescSet) await drainIce(d);
+    }));
+  }
+
+  // ── 6. Return engine handle ──
   return{
     pc, stream, audioEl,
     cleanup:()=>{
-      if(unsubSig)unsubSig();
+      unsubs.forEach(u=>u());
       stream.getTracks().forEach(t=>t.stop());
       try{pc.close();}catch(_){}
       try{audioEl.pause();audioEl.srcObject=null;audioEl.remove();}catch(_){}
-      // Clean up signal doc
-      try{_db.collection("webrtc_signals").doc(sigDocId).delete();}catch(_){}
+      try{sigDoc.delete();}catch(_){}
     },
     mute:(m)=>stream.getAudioTracks().forEach(t=>t.enabled=!m),
   };
