@@ -58,6 +58,7 @@
     *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
     body{background:#F5F5F5} ::-webkit-scrollbar{width:0}
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    @keyframes skshimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
     @keyframes ring{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.4)}50%{box-shadow:0 0 0 8px rgba(34,197,94,0)}}
     @keyframes spin{to{transform:rotate(360deg)}}
   </style>
@@ -2300,6 +2301,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");document.documentElement.classList.toggle("dark-mode",next);}catch(e){}return next;});
   const C=dm?dC():lC();
   const [tab,setTab]=useState("timetable");
+  const [refreshKey,setRefreshKey]=useState(0);
   const [lessons,setLessons]=useState([]);
   const [loadingL,setLoadingL]=useState(true);
   const [acceptedMap,setAcceptedMap]=useState({});
@@ -2369,51 +2371,37 @@ function StudentApp({user,onLogout,backHandlerRef}){
       try{
         const isAnon=user.id&&user.id.startsWith("anon-");
         if(isAnon){setLessons([]);setLoadingL(false);return;}
-        // Lessons + tutor request acceptance map
+        // Fetch lessons and requests in parallel
         const [data,reqs]=await Promise.all([
           fbQuery("lessons",[{field:"student_id",op:"==",value:user.id}],{field:"from_hour",dir:"asc"},100),
           fbQuery("tutor_requests",[{field:"student_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100),
         ]);
-        const m={};
-        const declinedIds=new Set();
-        const pendingMap={};
-        const tutorIds=new Set();
+        const m={};const declinedIds=new Set();const pendingMap={};const tutorIds=new Set();
         reqs.forEach(r=>{
           if(r.status==="accepted"){m[r.lesson_id]=true;if(r.tutor_id)tutorIds.add(r.tutor_id);}
           if(r.status==="declined") declinedIds.add(r.lesson_id);
           if(r.status==="pending"){pendingMap[r.lesson_id]={tutorName:r.tutor_name,tutorId:r.tutor_id,reqId:r.id};if(r.tutor_id)tutorIds.add(r.tutor_id);}
         });
-        // Fetch tutor profile objects for display in details modal
+        // Fetch tutor profiles + pfp all at once
         const tutorObjMap={};
         await Promise.all([...tutorIds].map(async tid=>{
-          try{const tp=await fbGet("profiles",tid+"_tutor")||await fbGet("profiles",tid);if(tp)tutorObjMap[tid]=tp;}catch(e){}
-        }));
-        // Also fetch pfp for each tutor
-        await Promise.all([...tutorIds].map(async tid=>{
-          if(tutorObjMap[tid]&&!tutorObjMap[tid].pfp_url){
-            try{const pfp=await sbAuth.getProfilePhoto(tid,"tutor");if(pfp)tutorObjMap[tid]={...tutorObjMap[tid],pfp_url:pfp};}catch(e){}
-          }
+          try{
+            const [tp,pfp]=await Promise.all([
+              fbGet("profiles",tid+"_tutor").catch(()=>null)||fbGet("profiles",tid).catch(()=>null),
+              sbAuth.getProfilePhoto(tid,"tutor").catch(()=>null),
+            ]);
+            if(tp)tutorObjMap[tid]={...tp,pfp_url:pfp||tp.pfp_url||null};
+          }catch(e){}
         }));
         setAcceptedMap(m);
         setLessons((data||[]).map(l=>{
           const req=reqs.find(r=>r.lesson_id===l.id&&(r.status==="accepted"||r.status==="pending"));
           const tutorId=req?.tutor_id||l._tutorId;
           const tutorObj=tutorId?tutorObjMap[tutorId]||null:null;
-          return{
-            ...l,
-            _accepted:!!m[l.id],
-            _declined:declinedIds.has(l.id)&&!m[l.id],
-            _pending:!!pendingMap[l.id]&&!m[l.id],
-            _tutorName:pendingMap[l.id]?.tutorName||req?.tutor_name||l._tutorName,
-            _tutorId:tutorId,
-            _tutorObj:tutorObj||l._tutorObj||null,
-            _reqId:req?.id||null,
-          };
+          return{...l,_accepted:!!m[l.id],_declined:declinedIds.has(l.id)&&!m[l.id],_pending:!!pendingMap[l.id]&&!m[l.id],_tutorName:pendingMap[l.id]?.tutorName||req?.tutor_name||l._tutorName,_tutorId:tutorId,_tutorObj:tutorObj||l._tutorObj||null,_reqId:req?.id||null};
         }));
-        // History: lessons that are past their end time
         const now=Date.now();
         const hist=(data||[]).filter(l=>l.start_ts&&(l.start_ts+(l.to_hour-l.from_hour)*3600000)<now);
-        // Also fetch explicitly cancelled requests as history
         const cancelled=reqs.filter(r=>r.status==="cancelled");
         const histIds=new Set(hist.map(l=>l.id));
         const cancHist=cancelled.map(r=>({id:r.lesson_id,subject:r.subject||"Lesson",day:r.day,from_hour:r.from_hour,to_hour:r.to_hour,_tutorName:r.tutor_name,status:"cancelled",start_ts:r.start_ts})).filter(x=>x.id&&!histIds.has(x.id));
@@ -2421,7 +2409,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
       }catch(e){console.warn("Lessons load:",e.message);setLessons([]);setLessonHistory([]);}
       finally{setLoadingL(false);}
     })();
-  },[user.id]);
+  },[user.id,refreshKey]);
 
   useEffect(()=>{
     // Load interactions once
@@ -2776,38 +2764,36 @@ function StudentApp({user,onLogout,backHandlerRef}){
 }
       {showLessonDetails&&(()=>{
         const l=showLessonDetails;
+        if(l._onlineModal&&(l._accepted||acceptedMap[l.id])){
+          return<OnlineLessonModal lesson={l} C={C} isStudent onClose={()=>setShowLessonDetails(null)}
+            onVoiceCall={()=>{setShowLessonDetails(null);setCallLesson({...l,_voiceOnly:true,_startCall:true});}}/>;
+        }
         const now=Date.now();
         const {startMs:lStart,endMs:lEnd}=getScheduledMs(l);
         const withinLoc=!l.online&&(now>=lStart-1800000)&&(now<=lEnd);
         return<LessonDetailsModal lesson={l} C={C} onClose={()=>setShowLessonDetails(null)} withinLocationWindow={withinLoc}
           onCall={lesson=>{setCallLesson(lesson);setShowLessonDetails(null);}}
-          onLocation={lesson=>{setCallLesson({...lesson,_openLocation:true});setShowLessonDetails(null);}}
-        />;
+          onLocation={lesson=>{setCallLesson({...lesson,_openLocation:true});setShowLessonDetails(null);}}/>;
       })()}
 
       {tab==="timetable"&&<>
         <Hdr C={C} dm={dm}><PBtn outline C={C} onClick={()=>{setShowManage(true);window.history.pushState({screen:"app",modal:"manage"},"",window.location.pathname);}}>MANAGE</PBtn><PBtn C={C} onClick={()=>setShowAdd(true)}>ADD SLOT</PBtn></Hdr>
         <Scroll>
-          {loadingL?<Ldg C={C}/>:
+          {loadingL?<TimetableSkeleton C={C}/>:
             <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>{
               const isAccepted=l._accepted||acceptedMap[l.id];
               const isPending=l._pending&&!isAccepted;
               if(isAccepted&&l.online){
-                // Active call → re-enter directly
                 if(activeCallRef.current&&activeCallRef.current.lessonId===l.id){
                   setCallLesson(l);
                   return;
                 }
-                // Start call immediately — no details modal for online accepted lessons
-                setCallLesson({...l,_startCall:true});
+                setShowLessonDetails({...l,_onlineModal:true});
                 return;
               }
               if(isAccepted){
-                if(l._tutorObj){
-                  setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);
-                } else {
-                  setShowLessonDetails(l);
-                }
+                if(l._tutorObj){setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);}
+                else{setShowLessonDetails(l);}
               } else if(isPending){
                 setShowLessonDetails(l);
               } else {
@@ -2864,24 +2850,27 @@ function StudentApp({user,onLogout,backHandlerRef}){
         <Scroll>
           <ArchSearch value={archSearch} onChange={setArchSearch} C={C}/>
           <FilterRow value={archFilter} onChange={setArchFilter} C={C} counts={{FAVORITES:notes.filter(n=>(interactions[n.id]||{}).liked).length,SAVED:notes.filter(n=>(interactions[n.id]||{}).saved).length}}/>
-          {loadingN?<SkeletonNoteGrid C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote}/>}
+          {loadingN?<ArchiveSkeleton C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote}/>}
         </Scroll>
       </>}
 
       {tab==="identity"&&<>
         <IdentHdr C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{try{localStorage.setItem("jrsh_acct_deleted","1");}catch(e){}await sbAuth.deleteAccount(user.id,"student");clearSession();onLogout();}}/>
         <Scroll>
-          <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
-          <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const c=await compressImage(ev.target.result,400,400,0.82);setEditP(p=>({...p,pfp_local:c}));}catch(_){setEditP(p=>({...p,pfp_local:ev.target.result}));}};r.readAsDataURL(f);}}/>
-          <ConfCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isStudent
-            onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving}/>
-          <div style={{height:24}}/>
+          {loadingL?<ProfileSkeleton C={C}/>:<>
+            <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
+            <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const c=await compressImage(ev.target.result,400,400,0.82);setEditP(p=>({...p,pfp_local:c}));}catch(_){setEditP(p=>({...p,pfp_local:ev.target.result}));}};r.readAsDataURL(f);}}/>
+            <ConfCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isStudent
+              onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving}/>
+            <div style={{height:24}}/>
+          </>}
         </Scroll>
       </>}
 
-      <BotNav tab={tab} setTab={setTab} C={C}/>
-
-      {showAdd&&<Modal onClose={()=>setShowAdd(false)} C={C}>
+      <BotNav tab={tab} setTab={setTab} C={C} onRefresh={id=>{
+        if(id==="timetable"||id==="identity"){setLoadingL(true);setRefreshKey(k=>k+1);}
+        if(id==="archive"){setLoadingN(true);setRefreshKey(k=>k+1);}
+      }}/><Modal onClose={()=>setShowAdd(false)} C={C}>
         <MT>📅 New Session</MT><MS C={C}>Configure the slot.</MS>
         <ML C={C}>SUBJECT</ML><Picker value={addForm.subject} onChange={v=>setAddForm(f=>({...f,subject:v}))} items={SUBJECTS} placeholder="Select Subject" C={C}/>
         <ML C={C}>DAY</ML><Picker value={addForm.day} onChange={v=>setAddForm(f=>({...f,day:v}))} items={DAYS.map((d,i)=>({label:d+" – "+DAY_FULL[i],value:d}))} placeholder="Select Day" C={C}/>
@@ -3054,6 +3043,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");document.documentElement.classList.toggle("dark-mode",next);}catch(e){}return next;});
   const C=dm?dC():lC();
   const [tab,setTab]=useState("timetable");
+  const [refreshKey,setRefreshKey]=useState(0);
   const [requests,setRequests]=useState([]);
   const [loadingR,setLoadingR]=useState(true);
   const [showManage,setShowManage]=useState(false);
@@ -3195,7 +3185,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
       e=>{console.warn("Notes snapshot (tutor):",e.message);setLoadingN(false);}
     );
     return()=>_unsubNotesT();
-  },[user.id]);
+  },[user.id,refreshKey]);
 
   // ── Poll tutor_requests so tutor sees student-side cancellations in real-time ──
   useEffect(()=>{
@@ -3578,12 +3568,14 @@ function TutorApp({user,onLogout,backHandlerRef}){
           </div>
         </div>
         <Scroll>
-          {loadingR?<SkeletonDayGrid C={C}/>:
+          {loadingR?<TimetableSkeleton C={C}/>:
             <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} showStudent onTap={l=>{
-              // For accepted lessons (online or offline), show details modal first
-              // instead of jumping straight into call or profile
-              if(l.status === "accepted" || l._accepted){
-                setShowStudentProf(l);
+              if(l.online&&l.status==="accepted"){
+                if(activeCallRef.current&&activeCallRef.current.lessonId===l.id){
+                  setCallLesson(l);
+                  return;
+                }
+                setShowStudentProf({...l,_onlineModal:true});
                 return;
               }
               setShowStudentProf(l);
@@ -3614,24 +3606,35 @@ function TutorApp({user,onLogout,backHandlerRef}){
         <Scroll>
           <ArchSearch value={archSearch} onChange={setArchSearch} C={C}/>
           <FilterRow value={archFilter} onChange={setArchFilter} C={C} tabs={["ALL","FAVORITES","SAVED","MY NOTES"]} counts={{FAVORITES:notes.filter(n=>(interactions[n.id]||{}).liked).length,SAVED:notes.filter(n=>(interactions[n.id]||{}).saved).length}}/>
-          {loadingN?<Ldg C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote} onEdit={archFilter==="MY NOTES"?setEditingNote:null}/>}
+          {loadingN?<ArchiveSkeleton C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote} onEdit={archFilter==="MY NOTES"?setEditingNote:null}/>}
         </Scroll>
       </>}
 
       {tab==="identity"&&<>
         <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{try{localStorage.setItem("jrsh_acct_deleted","1");}catch(e){}await sbAuth.deleteAccount(user.id,"tutor");clearSession();onLogout();}}/>
         <Scroll>
-          <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
-          <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const c=await compressImage(ev.target.result,400,400,0.82);setEditP(p=>({...p,pfp_local:c}));}catch(_){setEditP(p=>({...p,pfp_local:ev.target.result}));}};r.readAsDataURL(f);}}/>
-          <ConfCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isTutor
-            onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving}/>
-          <div style={{height:24}}/>
+          {loadingR?<ProfileSkeleton C={C}/>:<>
+            <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
+            <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const c=await compressImage(ev.target.result,400,400,0.82);setEditP(p=>({...p,pfp_local:c}));}catch(_){setEditP(p=>({...p,pfp_local:ev.target.result}));}};r.readAsDataURL(f);}}/>
+            <ConfCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isTutor
+              onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving}/>
+            <div style={{height:24}}/>
+          </>}
         </Scroll>
       </>}
 
-      {showStudentProf&&<StudentProfileModal lesson={showStudentProf} C={C} onClose={()=>setShowStudentProf(null)} onCall={l=>{setCallLesson(l);setShowStudentProf(null);}} onLocation={l=>{setCallLesson({...l,_openLocation:true});setShowStudentProf(null);}}/>}
+      {showStudentProf&&(showStudentProf._onlineModal
+        ?<OnlineLessonModal lesson={showStudentProf} C={C} isStudent={false} onClose={()=>setShowStudentProf(null)}
+            onVoiceCall={()=>{const l=showStudentProf;setShowStudentProf(null);setCallLesson({...l,_voiceOnly:true,_startCall:true});}}/>
+        :<StudentProfileModal lesson={showStudentProf} C={C} onClose={()=>setShowStudentProf(null)}
+            onCall={l=>{setCallLesson({...l,_voiceOnly:true,_startCall:true});setShowStudentProf(null);}}
+            onLocation={l=>{setCallLesson({...l,_openLocation:true});setShowStudentProf(null);}}/>
+      )}
       {showWallet&&<WalletModal bal={walletBal} txs={walletTx} withdrawAmt={withdrawAmt} setWithdrawAmt={setWithdrawAmt} withdrawMsg={withdrawMsg} onWithdraw={doWithdraw} onClose={()=>setShowWallet(false)} C={C} tutorPhone={profile.phone||profile.mpesa_phone||""}/>}
-      <BotNav tab={tab} setTab={setTab} C={C}/>
+      <BotNav tab={tab} setTab={setTab} C={C} onRefresh={id=>{
+        if(id==="timetable"||id==="identity"){setLoadingR(true);setRefreshKey(k=>k+1);}
+        if(id==="archive"){setLoadingN(true);setRefreshKey(k=>k+1);}
+      }}/>
 
       {showHistory&&<HistoryModal history={lessonHistory} onClose={()=>setShowHistory(false)} C={C}/>}
       {showManage&&<Modal onClose={()=>{setShowManage(false);setShowReq(null);}} C={C}>
@@ -3843,6 +3846,69 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onDeleteAccount,onClo
 function PBtn({C,children,onClick,outline}){return <button onClick={onClick} style={{padding:"9px 20px",borderRadius:50,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1.5,display:"flex",alignItems:"center",gap:6,border:outline?"1.5px solid "+C.border:"none",background:outline?"transparent":C.accentBg,color:outline?C.text:C.accentText}}>{children}</button>;}
 function AvaBubble({name,C}){return <div style={{width:36,height:36,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:14}}>{name?name[0].toUpperCase():"?"}</div>;}
 function Ldg({C}){return <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}>LOADING…</div>;}
+
+// ── Skeleton shimmer primitives ──
+function SkeletonBox({w="100%",h=16,r=8,C,style={}}){
+  return(
+    <div style={{width:w,height:h,borderRadius:r,background:C.border,position:"relative",overflow:"hidden",...style}}>
+      <div style={{position:"absolute",inset:0,background:"linear-gradient(90deg,transparent 0%,rgba(255,255,255,.06) 50%,transparent 100%)",backgroundSize:"200% 100%",animation:"skshimmer 1.4s infinite"}}/>
+    </div>
+  );
+}
+
+function TimetableSkeleton({C}){
+  return(
+    <div style={{padding:"0 16px"}}>
+      {[0,1,2,3].map(i=>(
+        <div key={i} style={{display:"flex",gap:12,marginBottom:20,alignItems:"flex-start"}}>
+          <SkeletonBox C={C} w={36} h={14} r={4} style={{marginTop:4,flexShrink:0}}/>
+          <div style={{flex:1}}>
+            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:14,padding:"14px 14px 12px",display:"flex",flexDirection:"column",gap:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <SkeletonBox C={C} w="40%" h={14} r={4}/>
+                <SkeletonBox C={C} w="28%" h={10} r={4}/>
+              </div>
+              <SkeletonBox C={C} w="60%" h={10} r={4}/>
+              <SkeletonBox C={C} w="100%" h={28} r={8}/>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ArchiveSkeleton({C}){
+  return(
+    <div style={{padding:"0 16px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+      {[0,1,2,3,4,5].map(i=>(
+        <div key={i} style={{background:C.surface,border:"1px solid "+C.border,borderRadius:14,padding:14,display:"flex",flexDirection:"column",gap:8}}>
+          <SkeletonBox C={C} w="100%" h={80} r={8}/>
+          <SkeletonBox C={C} w="70%" h={12} r={4}/>
+          <SkeletonBox C={C} w="50%" h={10} r={4}/>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProfileSkeleton({C}){
+  return(
+    <div style={{padding:"0 16px"}}>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,marginBottom:24,paddingTop:8}}>
+        <SkeletonBox C={C} w={88} h={88} r={44}/>
+        <SkeletonBox C={C} w={140} h={16} r={6}/>
+        <SkeletonBox C={C} w={100} h={11} r={4}/>
+      </div>
+      {[0,1,2,3].map(i=>(
+        <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 0",borderBottom:"1px solid "+C.border}}>
+          <SkeletonBox C={C} w="30%" h={10} r={4}/>
+          <SkeletonBox C={C} w="45%" h={12} r={4}/>
+        </div>
+      ))}
+    </div>
+  );
+}
 function Empty({C,children}){return <div style={{textAlign:"center",padding:"24px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{children}</div>;}
 
 function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
@@ -3924,7 +3990,7 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
                 📍
               </button>
             )}
-            {onCall&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} title="Voice call (3 min limit)">
+            {onCall&&lesson.status==="accepted"&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} title="Voice call (3 min limit)">
               <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
             </button>}
           </div>
@@ -3969,12 +4035,12 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
 
         <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.7}}>
           {lesson.online?(
-            <>🌐 Online session — tap 🎙️ above for a voice call (3-min limit).</>
+            <>🌐 Online session{lesson.status==="accepted"?" — tap 🎙️ above for a voice call.":""}</>
           ):(
             <>{withinLocationWindow
               ?"📍 Location window open — tap 📍 above to see live GPS for both you and the student."
               :"🔒 "+locationWindowOpenStr}
-              {" 🎙️ Voice call (3-min limit) available any time."}
+              {lesson.status==="accepted"&&" 🎙️ Voice call available any time."}
             </>
           )}
         </div>
@@ -3984,6 +4050,59 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
   );
 }
 /* ══ LESSON DETAILS MODAL (Student) ══ */
+function OnlineLessonModal({lesson,C,onClose,onVoiceCall,isStudent}){
+  if(!lesson)return null;
+  const otherName=isStudent?(lesson._tutorName||lesson._tutorObj?.name||"Tutor"):(lesson.student_name||"Student");
+  const pfpUrl=isStudent?(lesson._tutorObj?.pfp_url||lesson._pfpUrl||null):(lesson.student_pfp||null);
+  const tutorObj=isStudent?lesson._tutorObj:null;
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",padding:"24px 22px 40px",maxHeight:"88dvh",overflowY:"auto"}}>
+
+        {/* Header */}
+        <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
+          <div style={{width:62,height:62,borderRadius:"50%",background:C.accentBg,flexShrink:0,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #22C55E"}}>
+            {pfpUrl
+              ?<img src={pfpUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{otherName[0].toUpperCase()}</span>}
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{otherName}</div>
+            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} · 🌐 Online</div>
+          </div>
+          {/* Voice call button */}
+          <button onClick={()=>{onClose();onVoiceCall&&onVoiceCall();}} style={{width:48,height:48,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,boxShadow:"0 2px 12px rgba(34,197,94,.35)"}}>
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
+          </button>
+        </div>
+
+        {/* Detail rows */}
+        {[
+          {label:"SUBJECT",value:lesson.subject},
+          {label:"DAY",value:lesson.day},
+          {label:"TIME",value:timeLbl(lesson.from_hour)+" – "+timeLbl(lesson.to_hour)},
+          {label:"MODE",value:"🌐 Online"},
+          {label:"STATUS",value:"✓ ACCEPTED"},
+          tutorObj?.curriculum_level&&{label:"LEVEL",value:tutorObj.curriculum_level},
+          tutorObj?.hourly_rate_online&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_online+"/hr"},
+        ].filter(Boolean).map(row=>(
+          <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid "+C.border}}>
+            <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
+            <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
+          </div>
+        ))}
+
+        {/* Info note */}
+        <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.7}}>
+          🌐 Online session — tap 🎙️ above to start a voice call.
+        </div>
+
+        <button onClick={onClose} style={{marginTop:16,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
+      </div>
+    </div>
+  );
+}
+
 function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWindow}){
   if(!lesson)return null;
   const isAccepted=lesson._accepted;
@@ -3991,56 +4110,75 @@ function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWi
   const tutorName=lesson._tutorName||lesson._tutorObj?.name||null;
   const tutorObj=lesson._tutorObj||null;
   const pfpUrl=tutorObj?.pfp_url||lesson._pfpUrl||null;
-  const statusColor=isAccepted?"#166634":isPending?"#92400E":"#9F1239";
-  const statusText=isAccepted?("✓ Accepted by "+tutorName):isPending?("⏳ Awaiting "+tutorName):"Unbooked";
+  const lessonStartMs=lesson.start_ts||null;
+  const locationWindowOpenStr=lessonStartMs?"Live location unlocks 30 min before "+lesson.day+" "+timeLbl(lesson.from_hour):"Live location unlocks 30 min before the lesson starts.";
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:"100%",padding:"24px 22px 36px",maxHeight:"88dvh",overflowY:"auto"}}>
-        {/* Header row */}
+
+        {/* Header: pfp + name + call button (accepted only) */}
         <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
-          <div style={{width:60,height:60,borderRadius:"50%",background:isAccepted?"#D1FAE5":isPending?"#FEF3C7":"#FCE4EC",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,border:"2px solid "+(isAccepted?"#86EFAC":isPending?"#FCD34D":"#F8BBD9"),overflow:"hidden"}}>
+          <div style={{width:60,height:60,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden",border:"2px solid "+C.border}}>
             {pfpUrl
-              ?<img src={pfpUrl} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"50%"}} alt=""/>
-              :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:"#111"}}>{(tutorName||lesson.subject||"?")[0].toUpperCase()}</span>}
+              ?<img src={pfpUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{(tutorName||lesson.subject||"?")[0].toUpperCase()}</span>}
           </div>
           <div style={{flex:1}}>
-            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{lesson.subject}</div>
-            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.day} · {timeLbl(lesson.from_hour)}–{timeLbl(lesson.to_hour)} · {lesson.online?"🌐 Online":"📍 Offline"}</div>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{tutorName||"Tutor"}</div>
+            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} {timeLbl(lesson.from_hour)}–{timeLbl(lesson.to_hour)} · {lesson.online?"🌐 Online":"📍 Offline"}</div>
           </div>
-          {/* Top-right action buttons */}
           {isAccepted&&(
-            <div style={{display:"flex",gap:8,flexShrink:0}}>
-              {withinLocationWindow&&!lesson.online&&(
-                <button onClick={()=>{onClose();onLocation&&onLocation(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#F59E0B",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title="Live location">
-                  📍
-                </button>
-              )}
-              {/* Voice-only call — starts immediately, no idle modal */}
-              <button onClick={()=>{onClose();onCall&&onCall({...lesson,_voiceOnly:true,_startCall:true});}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} title="Voice call">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
-              </button>
-            </div>
+            <button onClick={()=>{onClose();onCall&&onCall({...lesson,_voiceOnly:true,_startCall:true});}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}}>
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
+            </button>
           )}
         </div>
-        {/* Status badge */}
-        <div style={{fontSize:11,fontWeight:800,color:statusColor,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5,marginBottom:16,padding:"6px 12px",borderRadius:8,background:isAccepted?"rgba(22,101,52,.08)":isPending?"rgba(146,64,14,.08)":"rgba(159,18,57,.08)",display:"inline-block"}}>{statusText}</div>
-        {/* Details rows */}
+
+        {/* Detail rows */}
         {[
-          {label:"MODE",value:lesson.online?"🌐 Online":"📍 Offline"},
+          {label:"SUBJECT",value:lesson.subject},
           {label:"DAY",value:lesson.day},
           {label:"TIME",value:timeLbl(lesson.from_hour)+" – "+timeLbl(lesson.to_hour)},
-          {label:"SUBJECT",value:lesson.subject},
-          tutorName&&{label:"TUTOR",value:tutorName},
-          tutorObj?.curriculum_level&&{label:"LEVEL",value:tutorObj.curriculum_level},
-          tutorObj?.hourly_rate_online&&lesson.online&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_online+"/hr"},
-          tutorObj?.hourly_rate_offline&&!lesson.online&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_offline+"/hr"},
-        ].filter(Boolean).map(row=>(
+          {label:"MODE",value:lesson.online?"🌐 Online":"📍 Offline (in person)"},
+          {label:"STATUS",value:isAccepted?"ACCEPTED":isPending?"PENDING":"UNBOOKED"},
+        ].map(row=>(
           <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid "+C.border}}>
             <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
             <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
           </div>
         ))}
-        {/* Video Call CTA removed — online accepted lessons go straight to call on tap */}
+
+        {/* Tutor profile card */}
+        {tutorObj&&(tutorObj.curriculum_level||tutorObj.age||tutorObj.gender||tutorObj.hourly_rate_online||tutorObj.hourly_rate_offline)&&(
+          <div style={{marginTop:14,padding:14,borderRadius:14,background:C.surfaceAlt,border:"1px solid "+C.border}}>
+            <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:10}}>TUTOR PROFILE</div>
+            {[
+              tutorObj.age&&{label:"AGE",value:tutorObj.age+" yrs"},
+              tutorObj.gender&&{label:"GENDER",value:tutorObj.gender},
+              tutorObj.curriculum_level&&{label:"LEVEL",value:tutorObj.curriculum_level},
+              lesson.online&&tutorObj.hourly_rate_online&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_online+"/hr"},
+              !lesson.online&&tutorObj.hourly_rate_offline&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_offline+"/hr"},
+            ].filter(Boolean).map(row=>(
+              <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid "+C.border}}>
+                <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
+                <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Info footer */}
+        <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.7}}>
+          {lesson.online
+            ?<>🌐 Online session{isAccepted?" — tap 🎙️ above for a voice call.":isPending?" — awaiting tutor confirmation.":""}</>
+            :<>{withinLocationWindow
+                ?"📍 Location window open — tap 📍 above to see live GPS."
+                :"🔒 "+locationWindowOpenStr}
+              {isAccepted&&" 🎙️ Voice call available any time."}
+            </>
+          }
+        </div>
+
         <button onClick={onClose} style={{marginTop:18,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
       </div>
     </div>
@@ -4433,11 +4571,16 @@ function HistoryModal({history,onClose,C,isStudent}){
     </div>
   );
 }
-function BotNav({tab,setTab,C}){
+function BotNav({tab,setTab,C,onRefresh}){
   const tabs=[{id:"timetable",label:"TIMETABLE",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>},{id:"archive",label:"ARCHIVE",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>},{id:"identity",label:"IDENTITY",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>}];
   return(
     <div style={{position:"fixed",bottom:0,left:0,right:0,background:C.surface,borderTop:"1px solid "+C.border,borderRadius:"20px 20px 0 0",display:"flex",padding:"6px 0 10px",zIndex:100,maxWidth:"100vw"}}>
-      {tabs.map(n=><button key={n.id} onClick={()=>setTab(n.id)} style={{flex:1,border:"none",background:"transparent",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"8px 0",color:tab===n.id?C.text:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:10,letterSpacing:1.5}}>{n.icon}{n.label}</button>)}
+      {tabs.map(n=>(
+        <button key={n.id} onClick={()=>{
+          if(n.id===tab){onRefresh&&onRefresh(n.id);}
+          else setTab(n.id);
+        }} style={{flex:1,border:"none",background:"transparent",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"8px 0",color:tab===n.id?C.text:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:10,letterSpacing:1.5}}>{n.icon}{n.label}</button>
+      ))}
     </div>
   );
 }
