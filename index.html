@@ -1786,44 +1786,39 @@ function AppRoot(){
 
   React.useEffect(()=>{
     (async()=>{
-      // Check connection first
-      const online=await checkSbConn();
-      setConnStatus(online?"ok":"error");
-
-      // Restore session
-      try{
-        const sess=loadSession();
-        if(sess&&sess.profile&&sess.role){
-          if(sess.token)setAuthToken(sess.token||null);
-          let prof=sess.profile;
-          if(online&&sess.profile.id&&!sess.profile.id.startsWith("anon-")){
-            // Refresh token if possible
-            if(sess.refresh_token){
-              try{
-                const fresh=await sbAuth.refreshToken(sess.refresh_token);
-                if(fresh?.access_token){
-                  setAuthToken(fresh.access_token);
-                  saveSession({...sess,token:fresh.access_token,refresh_token:fresh.refresh_token||sess.refresh_token});
-                }
-              }catch(e){}
-            }
-            try{if(localStorage.getItem("jrsh_acct_deleted")){clearSession();setRestoring(false);return;}}catch(e){}
-            try{const u=_auth.currentUser;if(u){const t=await u.getIdToken(false);if(t)setAuthToken(t);}}catch(e){}
+      // ── 1. Restore from localStorage IMMEDIATELY (no network) ──
+      const sess=loadSession();
+      if(sess&&sess.profile&&sess.role){
+        if(sess.token)setAuthToken(sess.token||null);
+        setUser(sess.profile);
+        setRole(sess.profile.role||sess.role);
+        setScreen("app");
+        setRestoring(false);
+        window.history.replaceState({screen:"app"},"",window.location.pathname);
+        // ── 2. Refresh profile in background silently ──
+        (async()=>{
+          try{
+            const online=await withTimeout(checkSbConn(),2000,false);
+            setConnStatus(online?"ok":"error");
+            if(!online||!sess.profile.id||sess.profile.id.startsWith("anon-"))return;
+            try{const u=_auth.currentUser;if(u){const t=await withTimeout(u.getIdToken(false),2000,null);if(t)setAuthToken(t);}}catch(e){}
             const freshProf=await sbAuth.getProfile(sess.profile.id,sess.role||sess.profile.role);
-            if(freshProf){
-              // Load pfp if stored separately
-              if(!freshProf.pfp_url){
-                const pfp=await sbAuth.getProfilePhoto(sess.profile.id,freshProf.role);
-                if(pfp)freshProf.pfp_url=pfp;
-              }
-              prof=freshProf;
-            }else{clearSession();setRestoring(false);return;}
-          }
-          setUser(prof);setRole(prof.role||sess.role);setScreen("app");
-        }
-      }catch(e){}
+            if(!freshProf){clearSession();return;}
+            if(!freshProf.pfp_url){
+              const pfp=await sbAuth.getProfilePhoto(sess.profile.id,freshProf.role);
+              if(pfp)freshProf.pfp_url=pfp;
+            }
+            setUser(freshProf);
+            saveSession({...sess,profile:freshProf});
+          }catch(e){}
+        })();
+        return;
+      }
+      // ── No cached session — check connection then show welcome ──
+      const online=await withTimeout(checkSbConn(),2000,false);
+      setConnStatus(online?"ok":"error");
       setRestoring(false);
-      window.history.replaceState({screen:screen},"",window.location.pathname);
+      window.history.replaceState({screen:"welcome"},"",window.location.pathname);
     })();
   },[]);
 
@@ -1908,10 +1903,10 @@ function SignInModal({onClose,onAuth,C,connOk}){
       const np=await sbAuth.upsertProfile({id:userId,email:email.trim(),name:meta.name||d.user?.displayName||email.split("@")[0],role:"student",createdAt:nowKEiso()});
       profiles=[np];
     }
-    // Load pfp for each profile
-    for(const p of profiles){
+    // Load pfp for all profiles in parallel
+    await Promise.all(profiles.map(async p=>{
       if(!p.pfp_url){const ph=await sbAuth.getProfilePhoto(userId,p.role);if(ph)p.pfp_url=ph;}
-    }
+    }));
     setLoading(false);
     if(profiles.length>1){setRoleProfiles(profiles);setPendingToken(token);return;}
     onAuth({...profiles[0]},token);
@@ -2348,6 +2343,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const [archSearch,setArchSearch]=useState("");
   const [interactions,setInteractions]=useState({});
   const [profile,setProfile]=useState(user);
+  useEffect(()=>{setProfile(u=>({...u,...user}));},[user.name,user.pfp_url,user.age,user.gender,user.grade,user.location]);
   const [profEdit,setProfEdit]=useState(false);
   const [editP,setEditP]=useState({...user});
   const [profSaving,setProfSaving]=useState(false);
@@ -3107,6 +3103,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const [pubForm,setPubForm]=useState({title:"",subject:"",file:null,coverPreview:null,coverFile:null});
   const [publishing,setPublishing]=useState(false);
   const [profile,setProfile]=useState(user);
+  useEffect(()=>{setProfile(u=>({...u,...user}));},[user.name,user.pfp_url,user.age,user.gender,user.curriculum_level,user.location,user.hourly_rate_online,user.hourly_rate_offline]);
   const [showStudentProf,setShowStudentProf]=React.useState(null);
   const [showWallet,setShowWallet]=React.useState(false);
   const [walletBal,setWalletBal]=React.useState(0);
