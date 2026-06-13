@@ -2334,22 +2334,11 @@ function StudentApp({user,onLogout,backHandlerRef}){
           if(r.status==="declined") declinedIds.add(r.lesson_id);
           if(r.status==="pending"){pendingMap[r.lesson_id]={tutorName:r.tutor_name,tutorId:r.tutor_id,reqId:r.id};if(r.tutor_id)tutorIds.add(r.tutor_id);}
         });
-        // Fetch tutor profile objects for display in details modal
-        const tutorObjMap={};
-        await Promise.all([...tutorIds].map(async tid=>{
-          try{const tp=await fbGet("profiles",tid+"_tutor")||await fbGet("profiles",tid);if(tp)tutorObjMap[tid]=tp;}catch(e){}
-        }));
-        // Also fetch pfp for each tutor
-        await Promise.all([...tutorIds].map(async tid=>{
-          if(tutorObjMap[tid]&&!tutorObjMap[tid].pfp_url){
-            try{const pfp=await sbAuth.getProfilePhoto(tid,"tutor");if(pfp)tutorObjMap[tid]={...tutorObjMap[tid],pfp_url:pfp};}catch(e){}
-          }
-        }));
+        // Show lessons immediately without waiting for tutor photos
         setAcceptedMap(m);
-        setLessons((data||[]).map(l=>{
+        const mappedLessons=(data||[]).map(l=>{
           const req=reqs.find(r=>r.lesson_id===l.id&&(r.status==="accepted"||r.status==="pending"));
           const tutorId=req?.tutor_id||l._tutorId;
-          const tutorObj=tutorId?tutorObjMap[tutorId]||null:null;
           return{
             ...l,
             _accepted:!!m[l.id],
@@ -2357,9 +2346,23 @@ function StudentApp({user,onLogout,backHandlerRef}){
             _pending:!!pendingMap[l.id]&&!m[l.id],
             _tutorName:pendingMap[l.id]?.tutorName||req?.tutor_name||l._tutorName,
             _tutorId:tutorId,
-            _tutorObj:tutorObj||l._tutorObj||null,
+            _tutorObj:null,
             _reqId:req?.id||null,
           };
+        });
+        setLessons(mappedLessons);
+        // Fetch tutor profiles + photos in background (doesn't block timetable render)
+        Promise.all([...tutorIds].map(async tid=>{
+          try{
+            const [tp,pfp]=await Promise.all([
+              fbGet("profiles",tid+"_tutor").then(r=>r||fbGet("profiles",tid)),
+              sbAuth.getProfilePhoto(tid,"tutor").catch(()=>null),
+            ]);
+            if(tp){
+              const tutorObj=pfp?{...tp,pfp_url:pfp}:tp;
+              setLessons(prev=>prev.map(l=>l._tutorId===tid?{...l,_tutorObj:tutorObj}:l));
+            }
+          }catch(e){}
         }));
         // History: lessons that are past their end time
         const now=Date.now();
@@ -2375,19 +2378,21 @@ function StudentApp({user,onLogout,backHandlerRef}){
   },[user.id]);
 
   useEffect(()=>{
-    // Load interactions once
     const isAnon=user.id&&user.id.startsWith("anon-");
-    (async()=>{
-      try{
-        const ix=isAnon?[]:await fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]);
-        const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
-        setInteractions(map);
-      }catch(e){}
-    })();
+    // Load interactions + tutors in parallel — neither blocks the timetable
+    Promise.all([
+      isAnon?Promise.resolve([]):fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]).catch(()=>[]),
+      fbQuery("profiles",[{field:"role",op:"==",value:"tutor"}],null,100).catch(()=>[]),
+    ]).then(([ix,allTutors])=>{
+      const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
+      setInteractions(map);
+      const studentLevel=gradeToLevel(user.grade||profile?.grade);
+      setTutors(studentLevel?allTutors.filter(t=>!t.curriculum_level||t.curriculum_level===studentLevel):allTutors);
+    });
     // Live notes listener — real-time for all users
     setLoadingN(true);
     let firstSnap=true;
-    const unsubNotes=_db.collection("notes").limit(150).onSnapshot(
+    const unsubNotes=_db.collection("notes").limit(40).onSnapshot(
       snap=>{
         const docs=snap.docs.map(d=>({id:d.id,...d.data()}));
         docs.sort((a,b)=>(b.createdAt||b.created_at||"").localeCompare(a.createdAt||a.created_at||""));
@@ -2396,14 +2401,6 @@ function StudentApp({user,onLogout,backHandlerRef}){
       },
       e=>{console.warn("Notes snapshot:",e.message);setLoadingN(false);}
     );
-    // Load tutors once
-    (async()=>{
-      try{
-        const allTutors=await fbQuery("profiles",[{field:"role",op:"==",value:"tutor"}],null,100);
-        const studentLevel=gradeToLevel(user.grade||profile?.grade);
-        setTutors(studentLevel?allTutors.filter(t=>!t.curriculum_level||t.curriculum_level===studentLevel):allTutors);
-      }catch(e){setTutors([]);}
-    })();
     return()=>unsubNotes();
   },[user.id]);
 
