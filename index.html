@@ -729,26 +729,14 @@ function LessonTimer({lesson,C}){
 }
 
 /* ══ CALL DIALOG ══ */
-/* ══ AGORA CONFIG ══ */
-// Replace with your actual Agora App ID from console.agora.io
-const AGORA_APP_ID = "00defc553d7542b586015a98e230338e";
-
-/* ══ AGORA DYNAMIC LOADER ══ */
-let _agoraPromise=null;
-function loadAgora(){
-  if(window.AgoraRTC) return Promise.resolve(window.AgoraRTC);
-  if(_agoraPromise) return _agoraPromise;
-  _agoraPromise=new Promise((resolve,reject)=>{
-    const s=document.createElement("script");
-    s.src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.0.js";
-    s.onload=()=>resolve(window.AgoraRTC);
-    s.onerror=()=>reject(new Error("Failed to load Agora SDK"));
-    document.head.appendChild(s);
-  });
-  return _agoraPromise;
-}
-
-/* ══ CALL DIALOG — Agora RTC Video/Voice ══ */
+/* ══ NATIVE WebRTC VOICE ENGINE (no third-party SDK, no tokens needed) ══ */
+// Uses browser's built-in RTCPeerConnection + Firestore for SDP/ICE signaling
+// Free STUN servers from Google — sufficient for most networks
+const STUN_SERVERS={iceServers:[
+  {urls:"stun:stun.l.google.com:19302"},
+  {urls:"stun:stun1.l.google.com:19302"},
+  {urls:"stun:stun2.l.google.com:19302"},
+]};
 /* ══ LIVE LOCATION HOOK ══ */
 function useLiveLocation(active){
   const [loc,setLoc]=React.useState(null);
@@ -767,18 +755,114 @@ function useLiveLocation(active){
   return{loc,err};
 }
 
-/* ══ AGORA VOICE CALL ENGINE ══ */
-async function startAgoraVoiceCall(appId, channel, uid){
-  const AgoraRTC=await loadAgora();
-  AgoraRTC.setLogLevel(3);
-  const client=AgoraRTC.createClient({mode:"rtc",codec:"opus"});
-  await client.join(appId, channel, null, uid||null);
-  const audioTrack=await AgoraRTC.createMicrophoneAudioTrack({
-    encoderConfig:"speech_low_quality",
-    AEC:true, ANS:true, AGC:true
-  });
-  await client.publish([audioTrack]);
-  return{client,audioTrack};
+/* ══ NATIVE WebRTC VOICE ENGINE ══ */
+// caller=true  → creates offer (the one who pressed call)
+// caller=false → creates answer (the one who accepted)
+// sigDocId  → shared Firestore doc under "webrtc_signals" — same string on both sides
+// isCaller  → true for the person who pressed Call, false for the person who accepted
+async function startWebRTCVoice(sigDocId, isCaller){
+  const sigDoc=_db.collection("webrtc_signals").doc(sigDocId);
+  const unsubs=[];
+
+  // ── 1. Mic ──
+  const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+
+  // ── 2. Peer connection ──
+  const pc=new RTCPeerConnection(STUN_SERVERS);
+  stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+
+  // ── 3. Remote audio output ──
+  const audioEl=document.createElement("audio");
+  audioEl.autoplay=true; audioEl.playsInline=true;
+  document.body.appendChild(audioEl);
+  const remoteStream=new MediaStream();
+  audioEl.srcObject=remoteStream;
+  pc.ontrack=e=>{
+    e.streams[0]?.getTracks().forEach(t=>{
+      if(!remoteStream.getTracks().includes(t)) remoteStream.addTrack(t);
+    });
+    // Ensure audio plays (mobile browsers sometimes need explicit play())
+    audioEl.play().catch(()=>{});
+  };
+
+  // ── 4. Trickle ICE — send each candidate to Firestore immediately ──
+  const myIceField = isCaller ? "caller_ice" : "callee_ice";
+  const theirIceField = isCaller ? "callee_ice" : "caller_ice";
+  let iceSeq=0;
+  pc.onicecandidate=async e=>{
+    if(!e.candidate) return; // null = gathering complete, ignore
+    const key=myIceField+"_"+iceSeq++;
+    try{await sigDoc.set({[key]:JSON.stringify(e.candidate.toJSON())},{merge:true});}catch(_){}
+  };
+
+  // ── Helper: drain any ICE candidates from Firestore into pc ──
+  const appliedIce=new Set();
+  async function drainIce(data){
+    if(!data) return;
+    for(const [k,v] of Object.entries(data)){
+      if(!k.startsWith(theirIceField+"_")||appliedIce.has(k)) continue;
+      appliedIce.add(k);
+      try{await pc.addIceCandidate(new RTCIceCandidate(JSON.parse(v)));}catch(_){}
+    }
+  }
+
+  // ── 5. Signaling — fully event-driven via onSnapshot ──
+  let remoteDescSet=false;
+
+  if(isCaller){
+    // Caller: write offer, then watch for answer + callee ICE
+    const offer=await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await sigDoc.set({offer:JSON.stringify({type:offer.type,sdp:offer.sdp}),ts:Date.now()});
+
+    unsubs.push(sigDoc.onSnapshot(async snap=>{
+      const d=snap.data();
+      if(!d) return;
+      // Set remote description once when answer arrives
+      if(d.answer && !remoteDescSet){
+        remoteDescSet=true;
+        try{
+          await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(d.answer)));
+        }catch(err){console.warn("caller setRemote",err);}
+      }
+      // Always try to drain callee ICE (new ones may arrive after answer)
+      if(remoteDescSet) await drainIce(d);
+    }));
+
+  }else{
+    // Callee: watch for offer (may already be there or arrive shortly)
+    unsubs.push(sigDoc.onSnapshot(async snap=>{
+      const d=snap.data();
+      if(!d) return;
+
+      // Set remote + create answer once
+      if(d.offer && !remoteDescSet){
+        remoteDescSet=true;
+        try{
+          await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(d.offer)));
+          const answer=await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          await sigDoc.set({answer:JSON.stringify({type:answer.type,sdp:answer.sdp})},{merge:true});
+        }catch(err){console.warn("callee setRemote/answer",err); return;}
+      }
+
+      // Drain caller ICE — works whether it arrived before or after answer
+      if(remoteDescSet) await drainIce(d);
+    }));
+  }
+
+  // ── 6. Return engine handle ──
+  return{
+    pc, stream, audioEl,
+    cleanup:()=>{
+      unsubs.forEach(u=>u());
+      stream.getTracks().forEach(t=>t.stop());
+      try{pc.close();}catch(_){}
+      try{audioEl.pause();audioEl.srcObject=null;audioEl.remove();}catch(_){}
+      try{sigDoc.delete();}catch(_){}
+    },
+    mute:(m)=>stream.getAudioTracks().forEach(t=>t.enabled=!m),
+  };
 }
 
 /* ══ CALL SIGNAL HELPERS (via Firebase Firestore polling) ══ */
@@ -894,7 +978,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
           }
         }catch(e){}
       }
-      if(sig.type==="accept"&&curPhase==="outgoing"){await connectVoice();}
+      if(sig.type==="accept"&&curPhase==="outgoing"){await connectVoice(true);} // caller creates offer
       if(sig.type==="decline"&&curPhase==="outgoing"){hangUp("declined");}
       if(sig.type==="end"&&(curPhase==="live"||curPhase==="outgoing"||curPhase==="incoming")){hangUp("ended");}
     };
@@ -973,25 +1057,20 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
     return()=>clearInterval(id);
   },[phase]);
 
-  // ── Agora connect ──
-  async function connectVoice(){
+  // ── WebRTC connect — isCaller=true for caller, false for callee ──
+  async function connectVoice(isCaller){
     setPhase("live");
     try{
       const reqId=lesson._reqId||lesson.id;
-      const channel="jrsh-"+(reqId||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,20);
-      const eng=await startAgoraVoiceCall(AGORA_APP_ID, channel, user?.id||null);
+      // sigDocId is shared by both parties — derived from reqId
+      const sigDocId="wrtc-"+(reqId||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,28);
+      const eng=await startWebRTCVoice(sigDocId, isCaller);
       engineRef.current=eng;
-      // Subscribe remote audio
-      eng.client.on("user-published",async(remote,mediaType)=>{
-        await eng.client.subscribe(remote,mediaType);
-        if(mediaType==="audio") remote.audioTrack.play();
-      });
     }catch(e){
       const msg=e?.message||"";
       let errMsg="Call failed";
       if(msg.includes("Permission denied")||msg.includes("NotAllowed")||msg.includes("not allowed")){errMsg="Microphone access denied — please allow mic in browser settings";}
-      else if(msg.includes("Failed to load")){errMsg="Could not load voice engine — check internet connection";}
-      else if(msg.includes("INVALID_VENDOR_KEY")||msg.includes("invalid")||msg.toLowerCase().includes("app id")){errMsg="Voice service config error — contact support";}
+      else if(msg.includes("getUserMedia")||msg.includes("microphone")){errMsg="Could not access microphone — check browser permissions";}
       else if(msg){errMsg=msg;}
       setAgoraErr(errMsg);
     }
@@ -1010,7 +1089,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
     try{if(ringAudioRef.current)ringAudioRef.current.stop();}catch(e){}
     const reqId=lesson._reqId||lesson.id;
     await sendCallSignal(reqId,{from:user.id,type:"accept"});
-    await connectVoice();
+    await connectVoice(false); // callee creates answer
   }
 
   // ── Decline ──
@@ -1032,8 +1111,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
       await sendCallSignal(reqId,{from:user.id,type:"end"});
     }
     if(engineRef.current){
-      try{engineRef.current.audioTrack.stop();engineRef.current.audioTrack.close();}catch(e){}
-      try{await engineRef.current.client.leave();}catch(e){}
+      try{engineRef.current.cleanup();}catch(e){}
       engineRef.current=null;
     }
     setPhase("ended");
@@ -1041,11 +1119,10 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
     onEnd(isAutoRingDrop?reason:"cancelled", secsUsed);
   }
 
-  async function toggleMute(){
-    if(engineRef.current?.audioTrack){
-      try{await engineRef.current.audioTrack.setEnabled(muted);}catch(e){}
-    }
-    setMuted(m=>!m);
+  function toggleMute(){
+    const next=!muted;
+    if(engineRef.current?.mute){try{engineRef.current.mute(next);}catch(e){}}
+    setMuted(next);
   }
 
   const fmtTime=s=>{const m=Math.floor(s/60),sec=s%60;return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0");};
