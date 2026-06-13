@@ -2864,7 +2864,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
         <Scroll>
           <ArchSearch value={archSearch} onChange={setArchSearch} C={C}/>
           <FilterRow value={archFilter} onChange={setArchFilter} C={C} counts={{FAVORITES:notes.filter(n=>(interactions[n.id]||{}).liked).length,SAVED:notes.filter(n=>(interactions[n.id]||{}).saved).length}}/>
-          {loadingN?<Ldg C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote}/>}
+          {loadingN?<SkeletonNoteGrid C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote}/>}
         </Scroll>
       </>}
 
@@ -3578,16 +3578,12 @@ function TutorApp({user,onLogout,backHandlerRef}){
           </div>
         </div>
         <Scroll>
-          {loadingR?<Ldg C={C}/>:
+          {loadingR?<SkeletonDayGrid C={C}/>:
             <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} showStudent onTap={l=>{
-              if(l.online&&l.status==="accepted"){
-                // Active call → re-enter directly
-                if(activeCallRef.current&&activeCallRef.current.lessonId===l.id){
-                  setCallLesson(l);
-                  return;
-                }
-                // Start call immediately — no details modal for online accepted lessons
-                setCallLesson({...l,_startCall:true});
+              // For accepted lessons (online or offline), show details modal first
+              // instead of jumping straight into call or profile
+              if(l.status === "accepted" || l._accepted){
+                setShowStudentProf(l);
                 return;
               }
               setShowStudentProf(l);
