@@ -285,7 +285,19 @@ const FB_CONFIG={
 if(!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
 const _auth=firebase.auth();
 const _db=firebase.firestore();
+// Enable offline persistence so repeat visits load from cache instantly
+_db.enablePersistence({synchronizeTabs:true}).catch(()=>{});
 _auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
+
+/* ── In-process memory cache for profile/pfp lookups ── */
+const _memCache={};
+function memGet(k){return _memCache[k];}
+function memSet(k,v){_memCache[k]=v;}
+
+/* ── Timeout wrapper — max 3s per Firestore call ── */
+function withTimeout(promise,ms=3000,fallback=null){
+  return Promise.race([promise,new Promise(r=>setTimeout(()=>r(fallback),ms))]);
+}
 
 /* ── PDF storage via Firestore (accessible from any device) ── */
 // PDFs stored as base64 in a separate Firestore collection to stay under 1MB doc limit
@@ -389,22 +401,30 @@ async function checkSbConn(){
 
 /* ── Firestore helpers ── */
 async function fbGet(col,id){
-  try{const s=await _db.collection(col).doc(id).get();return s.exists?{id:s.id,...s.data()}:null;}
-  catch(e){console.warn("fbGet",col,id,e.message);return null;}
+  const ck=col+"/"+id;
+  if(memGet(ck)!==undefined)return memGet(ck);
+  try{
+    const s=await withTimeout(_db.collection(col).doc(id).get(),3000,null);
+    const v=s&&s.exists?{id:s.id,...s.data()}:null;
+    memSet(ck,v);
+    return v;
+  }catch(e){console.warn("fbGet",col,id,e.message);return null;}
 }
 async function fbQuery(col,filters=[],ord=null,lim=100){
   try{
     let q=_db.collection(col);
     filters.forEach(f=>{q=q.where(f.field,f.op,f.value);});
     if(ord){const f=typeof ord==="string"?ord:ord.field,d=typeof ord==="string"?"desc":(ord.dir||"desc");q=q.orderBy(f,d);}
-    const snap=await q.limit(lim).get();
+    const snap=await withTimeout(q.limit(lim).get(),3000,null);
+    if(!snap)return[];
     return snap.docs.map(d=>({id:d.id,...d.data()}));
   }catch(e){
-    // Retry without ordering if index not built
+    // Retry without ordering — no timeout retry, return empty fast
     try{
       let q2=_db.collection(col);
       filters.forEach(f=>{q2=q2.where(f.field,f.op,f.value);});
-      const snap2=await q2.limit(lim).get();
+      const snap2=await withTimeout(q2.limit(lim).get(),2000,null);
+      if(!snap2)return[];
       return snap2.docs.map(d=>({id:d.id,...d.data()}));
     }catch(e2){console.warn("fbQuery",col,e2.message);return[];}
   }
@@ -531,8 +551,12 @@ const sbAuth={
     return fbSet("profiles",docId,{...profileData,id:uid});
   },
   async getProfilePhoto(userId,role){
+    const ck="pfp/"+userId+"/"+(role||"");
+    if(memGet(ck)!==undefined)return memGet(ck);
     const doc=await fbGet("profile_photos",userId+"_"+(role||""));
-    return doc?.pfp_url||null;
+    const v=doc?.pfp_url||null;
+    memSet(ck,v);
+    return v;
   },
   async deleteAccount(userId,role){
     await fbDel("profiles",userId+(role?"_"+role:""));
@@ -3925,18 +3949,27 @@ function ArchiveSkeleton({C}){
 
 function ProfileSkeleton({C}){
   return(
-    <div style={{padding:"16px 16px 0"}}>
-      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,marginBottom:24}}>
-        <SkeletonBox C={C} w={88} h={88} r={44}/>
-        <SkeletonBox C={C} w={140} h={16} r={6}/>
-        <SkeletonBox C={C} w={100} h={11} r={4}/>
-      </div>
-      {[0,1,2,3].map(i=>(
-        <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 0",borderBottom:"1px solid "+C.border}}>
-          <SkeletonBox C={C} w="30%" h={10} r={4}/>
-          <SkeletonBox C={C} w="45%" h={12} r={4}/>
+    <div style={{padding:"20px 16px 0"}}>
+      {/* Avatar card */}
+      <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:20,padding:"24px 20px",marginBottom:14,display:"flex",alignItems:"center",gap:16}}>
+        <SkeletonBox C={C} w={72} h={72} r={36} style={{flexShrink:0}}/>
+        <div style={{flex:1,display:"flex",flexDirection:"column",gap:8}}>
+          <SkeletonBox C={C} w="60%" h={16} r={6}/>
+          <SkeletonBox C={C} w="40%" h={11} r={4}/>
+          <SkeletonBox C={C} w="30%" h={11} r={4}/>
         </div>
-      ))}
+      </div>
+      {/* Info rows card */}
+      <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:20,padding:"8px 20px",marginBottom:14}}>
+        {[0,1,2,3].map(i=>(
+          <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 0",borderBottom:i<3?"1px solid "+C.border:"none"}}>
+            <SkeletonBox C={C} w="28%" h={10} r={4}/>
+            <SkeletonBox C={C} w="42%" h={12} r={4}/>
+          </div>
+        ))}
+      </div>
+      {/* Action button */}
+      <SkeletonBox C={C} w="100%" h={48} r={50}/>
     </div>
   );
 }
