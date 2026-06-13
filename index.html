@@ -58,7 +58,6 @@
     *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
     body{background:#F5F5F5} ::-webkit-scrollbar{width:0}
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-    @keyframes skshimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
     @keyframes ring{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.4)}50%{box-shadow:0 0 0 8px rgba(34,197,94,0)}}
     @keyframes spin{to{transform:rotate(360deg)}}
   </style>
@@ -285,19 +284,7 @@ const FB_CONFIG={
 if(!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
 const _auth=firebase.auth();
 const _db=firebase.firestore();
-// Enable offline persistence so repeat visits load from cache instantly
-_db.enablePersistence({synchronizeTabs:true}).catch(()=>{});
 _auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
-
-/* ── In-process memory cache for profile/pfp lookups ── */
-const _memCache={};
-function memGet(k){return _memCache[k];}
-function memSet(k,v){_memCache[k]=v;}
-
-/* ── Timeout wrapper — max 3s per Firestore call ── */
-function withTimeout(promise,ms=3000,fallback=null){
-  return Promise.race([promise,new Promise(r=>setTimeout(()=>r(fallback),ms))]);
-}
 
 /* ── PDF storage via Firestore (accessible from any device) ── */
 // PDFs stored as base64 in a separate Firestore collection to stay under 1MB doc limit
@@ -401,30 +388,22 @@ async function checkSbConn(){
 
 /* ── Firestore helpers ── */
 async function fbGet(col,id){
-  const ck=col+"/"+id;
-  if(memGet(ck)!==undefined)return memGet(ck);
-  try{
-    const s=await withTimeout(_db.collection(col).doc(id).get(),3000,null);
-    const v=s&&s.exists?{id:s.id,...s.data()}:null;
-    memSet(ck,v);
-    return v;
-  }catch(e){console.warn("fbGet",col,id,e.message);return null;}
+  try{const s=await _db.collection(col).doc(id).get();return s.exists?{id:s.id,...s.data()}:null;}
+  catch(e){console.warn("fbGet",col,id,e.message);return null;}
 }
 async function fbQuery(col,filters=[],ord=null,lim=100){
   try{
     let q=_db.collection(col);
     filters.forEach(f=>{q=q.where(f.field,f.op,f.value);});
     if(ord){const f=typeof ord==="string"?ord:ord.field,d=typeof ord==="string"?"desc":(ord.dir||"desc");q=q.orderBy(f,d);}
-    const snap=await withTimeout(q.limit(lim).get(),3000,null);
-    if(!snap)return[];
+    const snap=await q.limit(lim).get();
     return snap.docs.map(d=>({id:d.id,...d.data()}));
   }catch(e){
-    // Retry without ordering — no timeout retry, return empty fast
+    // Retry without ordering if index not built
     try{
       let q2=_db.collection(col);
       filters.forEach(f=>{q2=q2.where(f.field,f.op,f.value);});
-      const snap2=await withTimeout(q2.limit(lim).get(),2000,null);
-      if(!snap2)return[];
+      const snap2=await q2.limit(lim).get();
       return snap2.docs.map(d=>({id:d.id,...d.data()}));
     }catch(e2){console.warn("fbQuery",col,e2.message);return[];}
   }
@@ -551,12 +530,8 @@ const sbAuth={
     return fbSet("profiles",docId,{...profileData,id:uid});
   },
   async getProfilePhoto(userId,role){
-    const ck="pfp/"+userId+"/"+(role||"");
-    if(memGet(ck)!==undefined)return memGet(ck);
     const doc=await fbGet("profile_photos",userId+"_"+(role||""));
-    const v=doc?.pfp_url||null;
-    memSet(ck,v);
-    return v;
+    return doc?.pfp_url||null;
   },
   async deleteAccount(userId,role){
     await fbDel("profiles",userId+(role?"_"+role:""));
@@ -754,14 +729,26 @@ function LessonTimer({lesson,C}){
 }
 
 /* ══ CALL DIALOG ══ */
-/* ══ NATIVE WebRTC VOICE ENGINE (no third-party SDK, no tokens needed) ══ */
-// Uses browser's built-in RTCPeerConnection + Firestore for SDP/ICE signaling
-// Free STUN servers from Google — sufficient for most networks
-const STUN_SERVERS={iceServers:[
-  {urls:"stun:stun.l.google.com:19302"},
-  {urls:"stun:stun1.l.google.com:19302"},
-  {urls:"stun:stun2.l.google.com:19302"},
-]};
+/* ══ AGORA CONFIG ══ */
+// Replace with your actual Agora App ID from console.agora.io
+const AGORA_APP_ID = "00defc553d7542b586015a98e230338e";
+
+/* ══ AGORA DYNAMIC LOADER ══ */
+let _agoraPromise=null;
+function loadAgora(){
+  if(window.AgoraRTC) return Promise.resolve(window.AgoraRTC);
+  if(_agoraPromise) return _agoraPromise;
+  _agoraPromise=new Promise((resolve,reject)=>{
+    const s=document.createElement("script");
+    s.src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.0.js";
+    s.onload=()=>resolve(window.AgoraRTC);
+    s.onerror=()=>reject(new Error("Failed to load Agora SDK"));
+    document.head.appendChild(s);
+  });
+  return _agoraPromise;
+}
+
+/* ══ CALL DIALOG — Agora RTC Video/Voice ══ */
 /* ══ LIVE LOCATION HOOK ══ */
 function useLiveLocation(active){
   const [loc,setLoc]=React.useState(null);
@@ -780,93 +767,18 @@ function useLiveLocation(active){
   return{loc,err};
 }
 
-/* ══ NATIVE WebRTC VOICE ENGINE ══ */
-// caller=true  → creates offer (the one who pressed call)
-// caller=false → creates answer (the one who accepted)
-// sigDocId  → shared Firestore doc under "webrtc_signals" — same string on both sides
-// isCaller  → true for the person who pressed Call, false for the person who accepted
-async function startWebRTCVoice(sigDocId, isCaller, isVideo=false, onRemoteStream){
-  const sigDoc=_db.collection("webrtc_signals").doc(sigDocId);
-  const unsubs=[];
-
-  // ── 1. Mic + camera ──
-  const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:isVideo?{facingMode:"user",width:{ideal:640},height:{ideal:480}}:false});
-
-  // ── 2. Peer connection ──
-  const pc=new RTCPeerConnection(STUN_SERVERS);
-  stream.getTracks().forEach(t=>pc.addTrack(t,stream));
-
-  // ── 3. Remote stream — notify React via callback (no DOM injection) ──
-  const remoteStream=new MediaStream();
-  pc.ontrack=e=>{
-    e.streams[0]?.getTracks().forEach(t=>{
-      if(!remoteStream.getTracks().find(x=>x.id===t.id)) remoteStream.addTrack(t);
-    });
-    if(onRemoteStream) onRemoteStream(remoteStream);
-  };
-
-  // ── 4. Trickle ICE ──
-  const myIceField=isCaller?"caller_ice":"callee_ice";
-  const theirIceField=isCaller?"callee_ice":"caller_ice";
-  let iceSeq=0;
-  pc.onicecandidate=async e=>{
-    if(!e.candidate) return;
-    const key=myIceField+"_"+iceSeq++;
-    try{await sigDoc.set({[key]:JSON.stringify(e.candidate.toJSON())},{merge:true});}catch(_){}
-  };
-
-  const appliedIce=new Set();
-  async function drainIce(data){
-    if(!data) return;
-    for(const [k,v] of Object.entries(data)){
-      if(!k.startsWith(theirIceField+"_")||appliedIce.has(k)) continue;
-      appliedIce.add(k);
-      try{await pc.addIceCandidate(new RTCIceCandidate(JSON.parse(v)));}catch(_){}
-    }
-  }
-
-  // ── 5. Signaling ──
-  let remoteDescSet=false;
-  if(isCaller){
-    const offer=await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await sigDoc.set({offer:JSON.stringify({type:offer.type,sdp:offer.sdp}),ts:Date.now()});
-    unsubs.push(sigDoc.onSnapshot(async snap=>{
-      const d=snap.data(); if(!d) return;
-      if(d.answer&&!remoteDescSet){
-        remoteDescSet=true;
-        try{await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(d.answer)));}catch(err){console.warn("caller setRemote",err);}
-      }
-      if(remoteDescSet) await drainIce(d);
-    }));
-  }else{
-    unsubs.push(sigDoc.onSnapshot(async snap=>{
-      const d=snap.data(); if(!d) return;
-      if(d.offer&&!remoteDescSet){
-        remoteDescSet=true;
-        try{
-          await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(d.offer)));
-          const answer=await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          await sigDoc.set({answer:JSON.stringify({type:answer.type,sdp:answer.sdp})},{merge:true});
-        }catch(err){console.warn("callee answer",err); return;}
-      }
-      if(remoteDescSet) await drainIce(d);
-    }));
-  }
-
-  // ── 6. Return handle — streams exposed for React to attach to <video> refs ──
-  return{
-    pc, localStream:stream, remoteStream,
-    cleanup:()=>{
-      unsubs.forEach(u=>u());
-      stream.getTracks().forEach(t=>t.stop());
-      try{pc.close();}catch(_){}
-      try{sigDoc.delete();}catch(_){}
-    },
-    mute:(m)=>stream.getAudioTracks().forEach(t=>t.enabled=!m),
-    camOff:(off)=>stream.getVideoTracks().forEach(t=>t.enabled=!off),
-  };
+/* ══ AGORA VOICE CALL ENGINE ══ */
+async function startAgoraVoiceCall(appId, channel, uid){
+  const AgoraRTC=await loadAgora();
+  AgoraRTC.setLogLevel(3);
+  const client=AgoraRTC.createClient({mode:"rtc",codec:"opus"});
+  await client.join(appId, channel, null, uid||null);
+  const audioTrack=await AgoraRTC.createMicrophoneAudioTrack({
+    encoderConfig:"speech_low_quality",
+    AEC:true, ANS:true, AGC:true
+  });
+  await client.publish([audioTrack]);
+  return{client,audioTrack};
 }
 
 /* ══ CALL SIGNAL HELPERS (via Firebase Firestore polling) ══ */
@@ -878,54 +790,25 @@ async function sendCallSignal(lessonId, signal){
 }
 
 /* ══ CALL DIALOG — Agora Voice, On-Demand, 3-min Limit ══ */
-function CallDialog({lesson, user, onEnd, C, callTimeUsed=0, activeCallRef}){
+function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   const CALL_LIMIT = 3*60;
   const remaining180=Math.max(0,CALL_LIMIT-callTimeUsed);
   const isOffline = !lesson.online;
 
   // Phase: idle | outgoing | incoming | live | ended
-  const isVideo = !!lesson.online && !lesson._voiceOnly;
-  const [phase, setPhase]  = React.useState(lesson._incomingRing?"incoming": lesson._startCall?"outgoing" : "idle");
+  const [phase, setPhase]  = React.useState(lesson._incomingRing?"incoming":"idle");
   const [ringTimer, setRingTimer] = React.useState(30);
   const [callSecs, setCallSecs]   = React.useState(0);
   const [muted, setMuted]   = React.useState(false);
-  const [camOff, setCamOff] = React.useState(false);
   const [agoraErr, setAgoraErr] = React.useState("");
   const [showLocMap, setShowLocMap] = React.useState(lesson._openLocation||false);
   const [otherLoc, setOtherLoc]   = React.useState(null);
-  const [remoteStream, setRemoteStream] = React.useState(null);
-  const remoteVideoRef = React.useRef(null);
-  const localVideoRef  = React.useRef(null);
-  const remoteAudioRef = React.useRef(null);
-  // Track active call in parent ref for re-entry and back-button safety
-  React.useEffect(()=>{
-    if(!activeCallRef)return;
-    if(phase==="live"){activeCallRef.current={lessonId:lesson.id,phase:"live"};}
-    else if(phase==="ended"||phase==="idle"){activeCallRef.current=null;}
-  },[phase,lesson.id,activeCallRef]);
-  React.useEffect(()=>{
-    if(remoteVideoRef.current&&remoteStream){
-      remoteVideoRef.current.srcObject=remoteStream;
-      remoteVideoRef.current.play().catch(()=>{});
-    }
-    // Always wire audio separately so voice works even without video
-    if(remoteAudioRef.current&&remoteStream){
-      remoteAudioRef.current.srcObject=remoteStream;
-      remoteAudioRef.current.play().catch(()=>{});
-    }
-  },[remoteStream]);
-  React.useEffect(()=>{
-    if(localVideoRef.current&&engineRef.current?.localStream){
-      localVideoRef.current.srcObject=engineRef.current.localStream;
-      localVideoRef.current.play().catch(()=>{});
-    }
-  },[phase]);
 
   // Auto-initiate outgoing ring for online auto-triggered calls
   // (runs once after first render; initiateCall defined below via ref)
   const initiateCallRef = React.useRef(null);
   React.useEffect(()=>{
-    if((lesson._autoRing&&lesson.online)||lesson._startCall){
+    if(lesson._autoRing&&lesson.online){
       // Small delay to allow initiateCallRef to be set
       const t=setTimeout(()=>{ if(initiateCallRef.current) initiateCallRef.current(); },200);
       return()=>clearTimeout(t);
@@ -1011,7 +894,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0, activeCallRef}){
           }
         }catch(e){}
       }
-      if(sig.type==="accept"&&curPhase==="outgoing"){await connectVoice(true);} // caller creates offer
+      if(sig.type==="accept"&&curPhase==="outgoing"){await connectVoice();}
       if(sig.type==="decline"&&curPhase==="outgoing"){hangUp("declined");}
       if(sig.type==="end"&&(curPhase==="live"||curPhase==="outgoing"||curPhase==="incoming")){hangUp("ended");}
     };
@@ -1090,23 +973,25 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0, activeCallRef}){
     return()=>clearInterval(id);
   },[phase]);
 
-  // ── WebRTC connect — isCaller=true for caller, false for callee ──
-  async function connectVoice(isCaller){
+  // ── Agora connect ──
+  async function connectVoice(){
     setPhase("live");
     try{
       const reqId=lesson._reqId||lesson.id;
-      const sigDocId="wrtc-"+(reqId||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,28);
-      const eng=await startWebRTCVoice(sigDocId, isCaller, !!lesson.online, (rs)=>{
-        setRemoteStream(rs);
-      });
+      const channel="jrsh-"+(reqId||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,20);
+      const eng=await startAgoraVoiceCall(AGORA_APP_ID, channel, user?.id||null);
       engineRef.current=eng;
-      // Wire local stream to preview ref
-      if(localVideoRef.current&&eng.localStream) localVideoRef.current.srcObject=eng.localStream;
+      // Subscribe remote audio
+      eng.client.on("user-published",async(remote,mediaType)=>{
+        await eng.client.subscribe(remote,mediaType);
+        if(mediaType==="audio") remote.audioTrack.play();
+      });
     }catch(e){
       const msg=e?.message||"";
       let errMsg="Call failed";
-      if(msg.includes("Permission denied")||msg.includes("NotAllowed")||msg.includes("not allowed")){errMsg="Camera/mic access denied — please allow in browser settings";}
-      else if(msg.includes("getUserMedia")||msg.includes("microphone")){errMsg="Could not access camera/mic — check browser permissions";}
+      if(msg.includes("Permission denied")||msg.includes("NotAllowed")||msg.includes("not allowed")){errMsg="Microphone access denied — please allow mic in browser settings";}
+      else if(msg.includes("Failed to load")){errMsg="Could not load voice engine — check internet connection";}
+      else if(msg.includes("INVALID_VENDOR_KEY")||msg.includes("invalid")||msg.toLowerCase().includes("app id")){errMsg="Voice service config error — contact support";}
       else if(msg){errMsg=msg;}
       setAgoraErr(errMsg);
     }
@@ -1125,7 +1010,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0, activeCallRef}){
     try{if(ringAudioRef.current)ringAudioRef.current.stop();}catch(e){}
     const reqId=lesson._reqId||lesson.id;
     await sendCallSignal(reqId,{from:user.id,type:"accept"});
-    await connectVoice(false); // callee creates answer
+    await connectVoice();
   }
 
   // ── Decline ──
@@ -1147,25 +1032,20 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0, activeCallRef}){
       await sendCallSignal(reqId,{from:user.id,type:"end"});
     }
     if(engineRef.current){
-      try{engineRef.current.cleanup();}catch(e){}
+      try{engineRef.current.audioTrack.stop();engineRef.current.audioTrack.close();}catch(e){}
+      try{await engineRef.current.client.leave();}catch(e){}
       engineRef.current=null;
     }
     setPhase("ended");
-    // For auto-ring online lessons: pass reason through on no_answer or ended so lesson gets dropped
-    // "timeout" = hit 3-min call limit — don't drop the lesson, just end this call segment
-    const shouldPassReason=lesson._autoRing&&lesson.online&&(reason==="no_answer"||reason==="ended");
-    onEnd(shouldPassReason?reason:"cancelled", secsUsed);
+    const isAutoRingDrop=lesson._autoRing&&lesson.online&&(reason==="no_answer"||reason==="timeout"||reason==="ended");
+    onEnd(isAutoRingDrop?reason:"cancelled", secsUsed);
   }
 
-  function toggleMute(){
-    const next=!muted;
-    if(engineRef.current?.mute){try{engineRef.current.mute(next);}catch(e){}}
-    setMuted(next);
-  }
-  function toggleCam(){
-    const next=!camOff;
-    if(engineRef.current?.camOff){try{engineRef.current.camOff(next);}catch(e){}}
-    setCamOff(next);
+  async function toggleMute(){
+    if(engineRef.current?.audioTrack){
+      try{await engineRef.current.audioTrack.setEnabled(muted);}catch(e){}
+    }
+    setMuted(m=>!m);
   }
 
   const fmtTime=s=>{const m=Math.floor(s/60),sec=s%60;return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0");};
@@ -1173,31 +1053,34 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0, activeCallRef}){
 
   // ── Idle state — just show call button ──
   if(phase==="idle"){
-    const cName=lesson.student_name||lesson._tutorName||"Contact";
-    const pfpUrl=(user.role==="student"?lesson._tutorObj?.pfp_url:null)||lesson._pfpUrl||null;
     return(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onEnd("cancelled");}}>
         <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:"100%",padding:"28px 22px 44px"}}>
-          {/* Header row */}
           <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
-            <div style={{width:56,height:56,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden",border:"2px solid "+C.border}}>
-              {pfpUrl
-                ?<img src={pfpUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
-                :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.accentText}}>{cName[0].toUpperCase()}</span>}
+            <div style={{width:56,height:56,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,color:C.accentText}}>{(lesson.student_name||lesson._tutorName||"?")[0].toUpperCase()}</span>
             </div>
             <div style={{flex:1}}>
-              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:18,color:C.text}}>{cName}</div>
-              <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} · {isVideo?"🌐 Online":"🎙️ Voice"}</div>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:18,color:C.text}}>{lesson.student_name||lesson._tutorName||"Contact"}</div>
+              <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} · {isOffline?"📍 Offline":"🌐 Online"}</div>
             </div>
           </div>
-          {/* Call button */}
-          <button onClick={initiateCall} style={{width:"100%",padding:"15px",borderRadius:50,border:"none",background:"#22C55E",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1.5,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-            {isVideo
-              ?<><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>VIDEO CALL</>
-              :<><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>VOICE CALL</>
-            }
-          </button>
-          <button onClick={()=>onEnd("cancelled")} style={{marginTop:12,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
+          <div style={{display:"flex",gap:12}}>
+            <button onClick={initiateCall} style={{flex:1,padding:"15px",borderRadius:50,border:"none",background:"#22C55E",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1.5,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg> VOICE CALL <span style={{fontSize:11,opacity:.8}}>· {fmtTime(remaining180)} left</span>
+            </button>
+            {withinLocationWindow&&(
+              <button onClick={()=>setShowLocMap(true)} style={{width:52,height:52,borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.text,fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}} title="View live locations">
+                📍
+              </button>
+            )}
+          </div>
+          {withinLocationWindow&&(
+            <div style={{marginTop:8,fontSize:10,color:C.sub,textAlign:"center",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
+              📍 LIVE LOCATION AVAILABLE — within 30 min of lesson
+            </div>
+          )}
+          <button onClick={()=>onEnd("cancelled")} style={{marginTop:14,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
         </div>
         {showLocMap&&<LocationModal lesson={lesson} user={user} myLoc={myLoc} otherLoc={otherLoc} locErr={locErr} otherRole={otherRole} onClose={()=>setShowLocMap(false)} C={C}/>}
       </div>
@@ -1207,133 +1090,105 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0, activeCallRef}){
   // ── Full-screen call states ──
   return(
     <div style={{position:"fixed",inset:0,background:"#0a0a0a",zIndex:500,display:"flex",flexDirection:"column",fontFamily:"Barlow,sans-serif"}}>
-      {/* Hidden audio element — ensures remote audio plays even when no video track */}
-      <audio ref={remoteAudioRef} autoPlay playsInline style={{display:"none"}}/>
-      {/* Remote video — fullscreen background when live video call */}
-      {isVideo&&<video ref={remoteVideoRef} autoPlay playsInline style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",zIndex:0,background:"#000",display:remoteStream?"block":"none"}} onCanPlay={e=>e.target.play().catch(()=>{})}/>}
-      {/* Local preview — bottom-right PiP */}
-      {isVideo&&phase==="live"&&<video ref={localVideoRef} autoPlay playsInline muted style={{position:"absolute",bottom:160,right:16,width:90,height:120,objectFit:"cover",borderRadius:12,zIndex:2,border:"2px solid rgba(255,255,255,.3)",display:camOff?"none":"block"}} onCanPlay={e=>e.target.play().catch(()=>{})}/>}
-
       {/* Location overlay */}
       {showLocMap&&<LocationModal lesson={lesson} user={user} myLoc={myLoc} otherLoc={otherLoc} locErr={locErr} otherRole={otherRole} onClose={()=>setShowLocMap(false)} C={C}/>}
 
-      {/* Call body — only show when remote video not covering screen */}
-      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24,position:"relative",zIndex:1,background:"transparent",pointerEvents:"none"}}>
-        {/* Avatar + info — hide when remote video is live and streaming */}
-        {!(isVideo&&remoteStream&&phase==="live")&&(()=>{
+      {/* Call body */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24}}>
+        {(()=>{
           const cName=lesson.student_name||lesson._tutorName||"?";
           const cPfp=(user.role==="student"?lesson._tutorObj?.pfp_url:null)||lesson._pfpUrl||null;
           const bdr="3px solid "+(phase==="live"?"#22C55E":phase==="incoming"?"#F59E0B":"#3b82f6");
           const glow="0 0 0 16px "+(phase==="live"?"rgba(34,197,94,.08)":phase==="incoming"?"rgba(245,158,11,.1)":"rgba(59,130,246,.08)");
           return(
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:16,pointerEvents:"auto"}}>
-              <div style={{width:96,height:96,borderRadius:"50%",background:"#1a1a1a",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",border:bdr,boxShadow:glow,flexShrink:0}}>
-                {cPfp?<img src={cPfp} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
-                  :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:38,color:"#fff"}}>{cName[0].toUpperCase()}</span>}
-              </div>
-              <div style={{textAlign:"center"}}>
-                <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1,textShadow:"0 1px 6px rgba(0,0,0,.8)"}}>
-                  {phase==="outgoing"&&(isVideo?"VIDEO CALLING…":"CALLING…")}
-                  {phase==="incoming"&&(isVideo?"INCOMING VIDEO CALL":"INCOMING VOICE CALL")}
-                  {phase==="live"&&(isVideo?"VIDEO CALL LIVE":"VOICE CALL LIVE")}
-                </div>
-                <div style={{color:"#ddd",fontSize:15,marginTop:2,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,textShadow:"0 1px 4px rgba(0,0,0,.8)"}}>{lesson.student_name||lesson._tutorName||""}</div>
-                <div style={{color:"#aaa",fontSize:12,marginTop:2,textShadow:"0 1px 4px rgba(0,0,0,.8)"}}>{lesson.subject} · {isOffline?"Offline":"Online"}</div>
-
-                {phase==="outgoing"&&(
-                  <div style={{marginTop:12}}>
-                    <div style={{color:"#666",fontSize:12,fontFamily:"'Barlow Condensed',sans-serif"}}>Ringing — waiting for answer</div>
-                    <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:10}}>
-                      {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:"50%",background:"#3b82f6",animation:"pulse 1.4s ease-in-out "+i*0.3+"s infinite"}}/>)}
-                    </div>
-                  </div>
-                )}
-                {phase==="incoming"&&(
-                  <div style={{color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:32,marginTop:12}}>
-                    {String(ringTimer).padStart(2,"0")}s
-                  </div>
-                )}
-                {phase==="live"&&(
-                  <div style={{marginTop:12}}>
-                    <div style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:24}}>{fmtTime(callSecs)}</div>
-                    {agoraErr&&<div style={{color:"#EF4444",fontSize:11,marginTop:8,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,maxWidth:260,textAlign:"center",margin:"8px auto 0"}}>{agoraErr}</div>}
-                  </div>
-                )}
-              </div>
+            <div style={{width:96,height:96,borderRadius:"50%",background:"#1a1a1a",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",border:bdr,boxShadow:glow,flexShrink:0}}>
+              {cPfp?<img src={cPfp} style={{width:"100%",height:"100%",objectFit:"cover"}} alt=""/>
+                :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:38,color:"#fff"}}>{cName[0].toUpperCase()}</span>}
             </div>
           );
         })()}
+
+        <div style={{textAlign:"center"}}>
+          <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1}}>
+            {phase==="outgoing"&&"CALLING…"}
+            {phase==="incoming"&&"INCOMING VOICE CALL"}
+            {phase==="live"&&"VOICE CALL LIVE"}
+          </div>
+          <div style={{color:"#ddd",fontSize:15,marginTop:2,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{lesson.student_name||lesson._tutorName||""}</div>
+          <div style={{color:"#888",fontSize:12,marginTop:2}}>{lesson.subject} · {isOffline?"Offline":"Online"}</div>
+
+          {phase==="outgoing"&&(
+            <div style={{marginTop:12}}>
+              <div style={{color:"#666",fontSize:12,fontFamily:"'Barlow Condensed',sans-serif"}}>Ringing — waiting for answer</div>
+              <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:10}}>
+                {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:"50%",background:"#3b82f6",animation:"pulse 1.4s ease-in-out "+i*0.3+"s infinite"}}/>)}
+              </div>
+            </div>
+          )}
+
+          {phase==="incoming"&&(
+            <div style={{color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:32,marginTop:12}}>
+              {String(ringTimer).padStart(2,"0")}s
+            </div>
+          )}
+
+          {phase==="live"&&(
+            <div style={{marginTop:12}}>
+              <div style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:24}}>{fmtTime(callSecs)}</div>
+              <div style={{color:remaining<=30?"#EF4444":"#555",fontSize:11,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
+                {remaining<=30?"⚠ "+fmtTime(remaining)+" REMAINING":"LIMIT · "+fmtTime(remaining180)}
+              </div>
+              <div style={{width:220,height:4,background:"#222",borderRadius:2,marginTop:10,overflow:"hidden",margin:"10px auto 0"}}>
+                <div style={{width:(remaining180>0?callSecs/remaining180*100:100)+"%",height:"100%",background:remaining<=30?"#EF4444":"#22C55E",transition:"width 1s linear"}}/>
+              </div>
+              {agoraErr&&<div style={{color:"#EF4444",fontSize:11,marginTop:8,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,maxWidth:260,textAlign:"center",margin:"8px auto 0"}}>{agoraErr}</div>}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* ── Bottom Controls Bar ── */}
-      <div style={{position:"relative",zIndex:3,background:"rgba(0,0,0,.7)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",padding:"20px 32px 44px",display:"flex",gap:20,alignItems:"center",justifyContent:"center"}}>
-        {/* Incoming: DECLINE + ANSWER */}
+      {/* Controls */}
+      <div style={{padding:"20px 0 48px",background:"rgba(0,0,0,.9)",display:"flex",flexDirection:"column",alignItems:"center",gap:18}}>
         {phase==="incoming"&&(
-          <>
+          <div style={{display:"flex",gap:44,alignItems:"center"}}>
             <div style={{textAlign:"center"}}>
-              <button onClick={declineCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-              <div style={{color:"#888",fontSize:9,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>DECLINE</div>
+              <button onClick={declineCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>📵</button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>DECLINE</div>
             </div>
             <div style={{textAlign:"center"}}>
-              <button onClick={acceptCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#22C55E",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
-              </button>
-              <div style={{color:"#888",fontSize:9,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>ANSWER</div>
+              <button onClick={acceptCall} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#22C55E",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg></button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>ANSWER</div>
             </div>
-          </>
-        )}
-
-        {/* Outgoing: just END */}
-        {phase==="outgoing"&&(
-          <div style={{textAlign:"center"}}>
-            <button onClick={()=>hangUp("ended")} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-            <div style={{color:"#888",fontSize:9,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>END</div>
           </div>
         )}
 
-        {/* Live: MUTE + [CAM] + [LOC] + END */}
-        {phase==="live"&&(
-          <>
-            <div style={{textAlign:"center"}}>
-              <button onClick={toggleMute} style={{width:56,height:56,borderRadius:"50%",border:"none",background:muted?"#EF4444":"rgba(255,255,255,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                {muted
-                  ?<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-                  :<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-                }
-              </button>
-              <div style={{color:"#888",fontSize:9,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{muted?"UNMUTE":"MUTE"}</div>
-            </div>
-            {isVideo&&(
+        {(phase==="outgoing"||phase==="live")&&(
+          <div style={{display:"flex",gap:20,alignItems:"center"}}>
+            {phase==="live"&&(
               <div style={{textAlign:"center"}}>
-                <button onClick={toggleCam} style={{width:56,height:56,borderRadius:"50%",border:"none",background:camOff?"#EF4444":"rgba(255,255,255,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                  {camOff
-                    ?<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M21 21H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3m3-3h6l2 3h1a2 2 0 0 1 2 2v9.34m-7.72-2.06A4 4 0 1 1 7.72 7.72"/></svg>
-                    :<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                  }
+                <button onClick={toggleMute} style={{width:56,height:56,borderRadius:"50%",border:"none",background:muted?"#EF4444":"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
+                  {muted?"🔇":"🎙️"}
                 </button>
-                <div style={{color:"#888",fontSize:9,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{camOff?"CAM OFF":"CAM"}</div>
+                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{muted?"UNMUTE":"MUTE"}</div>
               </div>
             )}
-            {withinLocationWindow&&isOffline&&(
+
+            {phase==="live"&&withinLocationWindow&&(
               <div style={{textAlign:"center"}}>
-                <button onClick={()=>setShowLocMap(true)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                <button onClick={()=>setShowLocMap(true)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
+                  📍
                 </button>
-                <div style={{color:"#888",fontSize:9,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>LOCATION</div>
+                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>LOCATION</div>
               </div>
             )}
             <div style={{textAlign:"center"}}>
-              <button onClick={()=>hangUp("ended")} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
-                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-              <div style={{color:"#888",fontSize:9,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>END</div>
+              <button onClick={()=>hangUp("ended")} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>📵</button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>END</div>
             </div>
-          </>
+          </div>
         )}
+
+
       </div>
 
       <style>{`@keyframes pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}`}</style>
@@ -1786,39 +1641,44 @@ function AppRoot(){
 
   React.useEffect(()=>{
     (async()=>{
-      // ── 1. Restore from localStorage IMMEDIATELY (no network) ──
-      const sess=loadSession();
-      if(sess&&sess.profile&&sess.role){
-        if(sess.token)setAuthToken(sess.token||null);
-        setUser(sess.profile);
-        setRole(sess.profile.role||sess.role);
-        setScreen("app");
-        setRestoring(false);
-        window.history.replaceState({screen:"app"},"",window.location.pathname);
-        // ── 2. Refresh profile in background silently ──
-        (async()=>{
-          try{
-            const online=await withTimeout(checkSbConn(),2000,false);
-            setConnStatus(online?"ok":"error");
-            if(!online||!sess.profile.id||sess.profile.id.startsWith("anon-"))return;
-            try{const u=_auth.currentUser;if(u){const t=await withTimeout(u.getIdToken(false),2000,null);if(t)setAuthToken(t);}}catch(e){}
-            const freshProf=await sbAuth.getProfile(sess.profile.id,sess.role||sess.profile.role);
-            if(!freshProf){clearSession();return;}
-            if(!freshProf.pfp_url){
-              const pfp=await sbAuth.getProfilePhoto(sess.profile.id,freshProf.role);
-              if(pfp)freshProf.pfp_url=pfp;
-            }
-            setUser(freshProf);
-            saveSession({...sess,profile:freshProf});
-          }catch(e){}
-        })();
-        return;
-      }
-      // ── No cached session — check connection then show welcome ──
-      const online=await withTimeout(checkSbConn(),2000,false);
+      // Check connection first
+      const online=await checkSbConn();
       setConnStatus(online?"ok":"error");
+
+      // Restore session
+      try{
+        const sess=loadSession();
+        if(sess&&sess.profile&&sess.role){
+          if(sess.token)setAuthToken(sess.token||null);
+          let prof=sess.profile;
+          if(online&&sess.profile.id&&!sess.profile.id.startsWith("anon-")){
+            // Refresh token if possible
+            if(sess.refresh_token){
+              try{
+                const fresh=await sbAuth.refreshToken(sess.refresh_token);
+                if(fresh?.access_token){
+                  setAuthToken(fresh.access_token);
+                  saveSession({...sess,token:fresh.access_token,refresh_token:fresh.refresh_token||sess.refresh_token});
+                }
+              }catch(e){}
+            }
+            try{if(localStorage.getItem("jrsh_acct_deleted")){clearSession();setRestoring(false);return;}}catch(e){}
+            try{const u=_auth.currentUser;if(u){const t=await u.getIdToken(false);if(t)setAuthToken(t);}}catch(e){}
+            const freshProf=await sbAuth.getProfile(sess.profile.id,sess.role||sess.profile.role);
+            if(freshProf){
+              // Load pfp if stored separately
+              if(!freshProf.pfp_url){
+                const pfp=await sbAuth.getProfilePhoto(sess.profile.id,freshProf.role);
+                if(pfp)freshProf.pfp_url=pfp;
+              }
+              prof=freshProf;
+            }else{clearSession();setRestoring(false);return;}
+          }
+          setUser(prof);setRole(prof.role||sess.role);setScreen("app");
+        }
+      }catch(e){}
       setRestoring(false);
-      window.history.replaceState({screen:"welcome"},"",window.location.pathname);
+      window.history.replaceState({screen:screen},"",window.location.pathname);
     })();
   },[]);
 
@@ -1903,10 +1763,10 @@ function SignInModal({onClose,onAuth,C,connOk}){
       const np=await sbAuth.upsertProfile({id:userId,email:email.trim(),name:meta.name||d.user?.displayName||email.split("@")[0],role:"student",createdAt:nowKEiso()});
       profiles=[np];
     }
-    // Load pfp for all profiles in parallel
-    await Promise.all(profiles.map(async p=>{
+    // Load pfp for each profile
+    for(const p of profiles){
       if(!p.pfp_url){const ph=await sbAuth.getProfilePhoto(userId,p.role);if(ph)p.pfp_url=ph;}
-    }));
+    }
     setLoading(false);
     if(profiles.length>1){setRoleProfiles(profiles);setPendingToken(token);return;}
     onAuth({...profiles[0]},token);
@@ -2320,7 +2180,6 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");document.documentElement.classList.toggle("dark-mode",next);}catch(e){}return next;});
   const C=dm?dC():lC();
   const [tab,setTab]=useState("timetable");
-  const [refreshKey,setRefreshKey]=useState(0);
   const [lessons,setLessons]=useState([]);
   const [loadingL,setLoadingL]=useState(true);
   const [acceptedMap,setAcceptedMap]=useState({});
@@ -2343,7 +2202,6 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const [archSearch,setArchSearch]=useState("");
   const [interactions,setInteractions]=useState({});
   const [profile,setProfile]=useState(user);
-  useEffect(()=>{setProfile(u=>({...u,...user}));},[user.name,user.pfp_url,user.age,user.gender,user.grade,user.location]);
   const [profEdit,setProfEdit]=useState(false);
   const [editP,setEditP]=useState({...user});
   const [profSaving,setProfSaving]=useState(false);
@@ -2361,7 +2219,6 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const [callTimeUsedMap,setCallTimeUsedMap]=useState({});
   const [showLessonDetails,setShowLessonDetails]=useState(null); // lesson object
   const pfpRef=useRef();
-  const activeCallRef=useRef(null); // {lessonId, phase} — tracks if a call is currently live so back doesn't kill it
 
   // Register back handler for open overlays/modals
   useEffect(()=>{
@@ -2370,83 +2227,75 @@ function StudentApp({user,onLogout,backHandlerRef}){
     if(showTutorProfile){backHandlerRef.current=()=>setShowTutorProfile(null);return;}
     if(showLessonDetails){backHandlerRef.current=()=>setShowLessonDetails(null);return;}
     if(showTutors){backHandlerRef.current=()=>setShowTutors(null);return;}
-    if(showHistory){backHandlerRef.current=()=>setShowHistory(false);return;}
+    if(showHistory){backHandlerRef.current=()=>setShowHistory(false);return;} // history first — manage stays open beneath
     if(showAdd){backHandlerRef.current=()=>setShowAdd(false);return;}
     if(editLesson){backHandlerRef.current=()=>setEditLesson(null);return;}
     if(showManage){backHandlerRef.current=()=>setShowManage(false);return;}
-    if(callLesson){
-      // If call is live (phase===live), back returns to timetable WITHOUT ending the call
-      backHandlerRef.current=()=>setCallLesson(null);
-      return;
-    }
     if(cancelLesson){backHandlerRef.current=()=>setCancelLesson(null);return;}
     if(profEdit){backHandlerRef.current=()=>setProfEdit(false);return;}
     backHandlerRef.current=null;
-  },[backHandlerRef,openNote,showTutorProfile,showLessonDetails,showTutors,showAdd,showManage,showHistory,editLesson,cancelLesson,profEdit,callLesson]);
+  },[backHandlerRef,openNote,showTutorProfile,showLessonDetails,showTutors,showAdd,showManage,showHistory,editLesson,cancelLesson,profEdit]);
 
   // ── Load all user data from Supabase ──
   useEffect(()=>{
     (async()=>{
-      const isAnon=user.id&&user.id.startsWith("anon-");
-      if(isAnon){setLessons([]);setLoadingL(false);return;}
-
-      // ── Serve cached data instantly ──
-      const cacheKey="jrsh_student_data_"+user.id;
-      try{
-        const cached=sessionStorage.getItem(cacheKey);
-        if(cached&&refreshKey===0){
-          const {lessons:cl,lessonHistory:ch,acceptedMap:cm}=JSON.parse(cached);
-          setLessons(cl||[]);setLessonHistory(ch||[]);setAcceptedMap(cm||{});
-          setLoadingL(false);
-          // Still refresh in background silently
-          fetchStudentData(false,cacheKey);
-          return;
-        }
-      }catch(e){}
       setLoadingL(true);
-      await fetchStudentData(true,cacheKey);
+      try{
+        const isAnon=user.id&&user.id.startsWith("anon-");
+        if(isAnon){setLessons([]);setLoadingL(false);return;}
+        // Lessons + tutor request acceptance map
+        const [data,reqs]=await Promise.all([
+          fbQuery("lessons",[{field:"student_id",op:"==",value:user.id}],{field:"from_hour",dir:"asc"},100),
+          fbQuery("tutor_requests",[{field:"student_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100),
+        ]);
+        const m={};
+        const declinedIds=new Set();
+        const pendingMap={};
+        const tutorIds=new Set();
+        reqs.forEach(r=>{
+          if(r.status==="accepted"){m[r.lesson_id]=true;if(r.tutor_id)tutorIds.add(r.tutor_id);}
+          if(r.status==="declined") declinedIds.add(r.lesson_id);
+          if(r.status==="pending"){pendingMap[r.lesson_id]={tutorName:r.tutor_name,tutorId:r.tutor_id,reqId:r.id};if(r.tutor_id)tutorIds.add(r.tutor_id);}
+        });
+        // Fetch tutor profile objects for display in details modal
+        const tutorObjMap={};
+        await Promise.all([...tutorIds].map(async tid=>{
+          try{const tp=await fbGet("profiles",tid+"_tutor")||await fbGet("profiles",tid);if(tp)tutorObjMap[tid]=tp;}catch(e){}
+        }));
+        // Also fetch pfp for each tutor
+        await Promise.all([...tutorIds].map(async tid=>{
+          if(tutorObjMap[tid]&&!tutorObjMap[tid].pfp_url){
+            try{const pfp=await sbAuth.getProfilePhoto(tid,"tutor");if(pfp)tutorObjMap[tid]={...tutorObjMap[tid],pfp_url:pfp};}catch(e){}
+          }
+        }));
+        setAcceptedMap(m);
+        setLessons((data||[]).map(l=>{
+          const req=reqs.find(r=>r.lesson_id===l.id&&(r.status==="accepted"||r.status==="pending"));
+          const tutorId=req?.tutor_id||l._tutorId;
+          const tutorObj=tutorId?tutorObjMap[tutorId]||null:null;
+          return{
+            ...l,
+            _accepted:!!m[l.id],
+            _declined:declinedIds.has(l.id)&&!m[l.id],
+            _pending:!!pendingMap[l.id]&&!m[l.id],
+            _tutorName:pendingMap[l.id]?.tutorName||req?.tutor_name||l._tutorName,
+            _tutorId:tutorId,
+            _tutorObj:tutorObj||l._tutorObj||null,
+            _reqId:req?.id||null,
+          };
+        }));
+        // History: lessons that are past their end time
+        const now=Date.now();
+        const hist=(data||[]).filter(l=>l.start_ts&&(l.start_ts+(l.to_hour-l.from_hour)*3600000)<now);
+        // Also fetch explicitly cancelled requests as history
+        const cancelled=reqs.filter(r=>r.status==="cancelled");
+        const histIds=new Set(hist.map(l=>l.id));
+        const cancHist=cancelled.map(r=>({id:r.lesson_id,subject:r.subject||"Lesson",day:r.day,from_hour:r.from_hour,to_hour:r.to_hour,_tutorName:r.tutor_name,status:"cancelled",start_ts:r.start_ts})).filter(x=>x.id&&!histIds.has(x.id));
+        setLessonHistory([...hist,...cancHist]);
+      }catch(e){console.warn("Lessons load:",e.message);setLessons([]);setLessonHistory([]);}
+      finally{setLoadingL(false);}
     })();
-  },[user.id,refreshKey]);
-
-  async function fetchStudentData(showLoading,cacheKey){
-    try{
-      const [data,reqs]=await Promise.all([
-        fbQuery("lessons",[{field:"student_id",op:"==",value:user.id}],{field:"from_hour",dir:"asc"},100),
-        fbQuery("tutor_requests",[{field:"student_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100),
-      ]);
-      const m={};const declinedIds=new Set();const pendingMap={};const tutorIds=new Set();
-      reqs.forEach(r=>{
-        if(r.status==="accepted"){m[r.lesson_id]=true;if(r.tutor_id)tutorIds.add(r.tutor_id);}
-        if(r.status==="declined") declinedIds.add(r.lesson_id);
-        if(r.status==="pending"){pendingMap[r.lesson_id]={tutorName:r.tutor_name,tutorId:r.tutor_id,reqId:r.id};if(r.tutor_id)tutorIds.add(r.tutor_id);}
-      });
-      const tutorObjMap={};
-      await Promise.all([...tutorIds].map(async tid=>{
-        try{
-          const [tp,pfp]=await Promise.all([
-            fbGet("profiles",tid+"_tutor").catch(()=>null)||fbGet("profiles",tid).catch(()=>null),
-            sbAuth.getProfilePhoto(tid,"tutor").catch(()=>null),
-          ]);
-          if(tp)tutorObjMap[tid]={...tp,pfp_url:pfp||tp.pfp_url||null};
-        }catch(e){}
-      }));
-      setAcceptedMap(m);
-      const mappedLessons=(data||[]).map(l=>{
-        const req=reqs.find(r=>r.lesson_id===l.id&&(r.status==="accepted"||r.status==="pending"));
-        const tutorId=req?.tutor_id||l._tutorId;
-        const tutorObj=tutorId?tutorObjMap[tutorId]||null:null;
-        return{...l,_accepted:!!m[l.id],_declined:declinedIds.has(l.id)&&!m[l.id],_pending:!!pendingMap[l.id]&&!m[l.id],_tutorName:pendingMap[l.id]?.tutorName||req?.tutor_name||l._tutorName,_tutorId:tutorId,_tutorObj:tutorObj||l._tutorObj||null,_reqId:req?.id||null};
-      });
-      const now=Date.now();
-      const hist=(data||[]).filter(l=>l.start_ts&&(l.start_ts+(l.to_hour-l.from_hour)*3600000)<now);
-      const cancelled=reqs.filter(r=>r.status==="cancelled");
-      const histIds=new Set(hist.map(l=>l.id));
-      const cancHist=cancelled.map(r=>({id:r.lesson_id,subject:r.subject||"Lesson",day:r.day,from_hour:r.from_hour,to_hour:r.to_hour,_tutorName:r.tutor_name,status:"cancelled",start_ts:r.start_ts})).filter(x=>x.id&&!histIds.has(x.id));
-      setLessons(mappedLessons);setLessonHistory([...hist,...cancHist]);
-      try{sessionStorage.setItem(cacheKey,JSON.stringify({lessons:mappedLessons,lessonHistory:[...hist,...cancHist],acceptedMap:m}));}catch(e){}
-    }catch(e){console.warn("Lessons load:",e.message);setLessons([]);setLessonHistory([]);}
-    finally{if(showLoading)setLoadingL(false);}
-  }
+  },[user.id]);
 
   useEffect(()=>{
     // Load interactions once
@@ -2557,12 +2406,11 @@ function StudentApp({user,onLogout,backHandlerRef}){
     if(!user.id||user.id.startsWith("anon-"))return;
     const cancel=fbPoll("tutor_requests",[{field:"student_id",op:"==",value:user.id}],docs=>{
       setRequests && void 0; // requests not in student scope but we derive from docs
-      const m={};const declinedIds=new Set();const pendingMap={};const tutorCancelledIds=new Set();
+      const m={};const declinedIds=new Set();const pendingMap={};
       docs.forEach(r=>{
         if(r.status==="accepted"){m[r.lesson_id]=true;}
         if(r.status==="declined")declinedIds.add(r.lesson_id);
         if(r.status==="pending"){pendingMap[r.lesson_id]={tutorName:r.tutor_name,tutorId:r.tutor_id,reqId:r.id};}
-        if(r.status==="cancelled"&&r.cancelled_by==="tutor")tutorCancelledIds.add(r.lesson_id);
       });
       setAcceptedMap(m);
       setLessons(ls=>ls.map(l=>({
@@ -2570,7 +2418,6 @@ function StudentApp({user,onLogout,backHandlerRef}){
         _accepted:!!m[l.id],
         _declined:declinedIds.has(l.id)&&!m[l.id],
         _pending:!!pendingMap[l.id]&&!m[l.id],
-        _tutorCancelled:tutorCancelledIds.has(l.id)&&!m[l.id],
         _tutorName:pendingMap[l.id]?.tutorName||l._tutorName,
         _tutorId:pendingMap[l.id]?.tutorId||l._tutorId,
       })));
@@ -2653,21 +2500,6 @@ function StudentApp({user,onLogout,backHandlerRef}){
       setShowAdd(false);setAddForm({subject:"",day:"MON",from:8,to:9,desc:"",online:false});setAddErr("");
       showToast("Session saved!","ok");
     }catch(e){setAddErr("Save failed. Please try again.");}finally{setSaving(false);}
-  }
-
-  async function handleStudentCancelLesson(lesson){
-    // Mark the tutor_request as "cancelled" (tutor sees it as Canceled on their timetable)
-    // Remove lesson from student's own timetable
-    try{
-      const _crs=await fbQuery("tutor_requests",[{field:"lesson_id",op:"==",value:lesson.id}]);
-      // Update requests to status cancelled — tutor still sees it with cancel tag and can see who canceled
-      await Promise.all(_crs.map(r=>fbUpdate("tutor_requests",r.id,{status:"cancelled",cancelled_by:"student"})));
-    }catch(e){}
-    // Update lesson status to cancelled in lessons table for history log
-    try{await fbUpdate("lessons",lesson.id,{status:"cancelled",cancelled_by:"student"});}catch(e){}
-    // Remove from student's timetable
-    setLessons(l=>l.filter(x=>x.id!==lesson.id));
-    showToast("Lesson cancelled","ok");
   }
 
   async function handleDeleteLesson(id){
@@ -2772,68 +2604,44 @@ function StudentApp({user,onLogout,backHandlerRef}){
     <Shell C={C}>
       {toast&&<div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:9999,background:toast.type==="error"?"#DC2626":toast.type==="ok"?"#16a34a":"#111",color:"#fff",padding:"10px 20px",borderRadius:50,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1,boxShadow:"0 4px 20px rgba(0,0,0,.3)",maxWidth:"90vw",textAlign:"center",pointerEvents:"none"}}>{toast.msg}</div>}
       {openNote&&<PdfViewer note={openNote} onClose={()=>setOpenNote(null)} C={C} initialPage={notePages[openNote.id]||1} onPageChange={p=>setNotePagesPersist(pp=>({...pp,[openNote.id]:p}))} onRate={r=>handleRateNote(openNote.id,r)} existingRating={ratingMap[openNote.id]?.rating||0}/>}
-      {callLesson&&<CallDialog lesson={callLesson} user={user} callTimeUsed={callTimeUsedMap[callLesson.id]||0} activeCallRef={activeCallRef} onEnd={(reason,secsUsed)=>{
-        activeCallRef.current=null;
+      {callLesson&&<CallDialog lesson={callLesson} user={user} callTimeUsed={callTimeUsedMap[callLesson.id]||0} onEnd={(reason,secsUsed)=>{
         if(secsUsed>0) setCallTimeUsedMap(m=>({...m,[callLesson.id]:(m[callLesson.id]||0)+secsUsed}));
-        if(reason==="no_answer"||reason==="ended"){
+        if(reason!=="cancelled"){
           setLessons(ls=>ls.filter(l=>l.id!==callLesson.id));
           setAcceptedMap(m=>{const n={...m};delete n[callLesson.id];return n;});
         }
-        if(reason==="voice"){
-          // Re-open as voice call
-          setCallLesson(l=>({...l,online:false,_voiceOnly:true}));
-          return;
-        }
         setCallLesson(null);
       }} C={C}/>}
-      {/* Floating return-to-call pill — shows when a live call is active but user navigated away */}
-      {!callLesson&&activeCallRef.current&&(()=>{
-        const lid=activeCallRef.current.lessonId;
-        const l=lessons.find(x=>x.id===lid)||requests.find(x=>x.id===lid);
-        if(!l)return null;
-        return(
-          <div onClick={()=>setCallLesson(l)} style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:9998,background:"#22C55E",color:"#fff",padding:"10px 20px",borderRadius:50,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1,boxShadow:"0 4px 20px rgba(0,0,0,.4)",display:"flex",alignItems:"center",gap:8,cursor:"pointer",whiteSpace:"nowrap"}}>
-            <span style={{width:8,height:8,borderRadius:"50%",background:"#fff",display:"inline-block",animation:"pulse 1s infinite"}}/>
-            CALL LIVE — TAP TO RETURN
-          </div>
-        );
-      })()}
-}
+      {cancelLesson&&<CancelModal onCancel={t=>handleCancelSession(cancelLesson,t)} onClose={()=>setCancelLesson(null)} C={C}/>}
       {showLessonDetails&&(()=>{
         const l=showLessonDetails;
-        if(l._onlineModal&&(l._accepted||acceptedMap[l.id])){
-          return<OnlineLessonModal lesson={l} C={C} isStudent onClose={()=>setShowLessonDetails(null)}
-            onVoiceCall={()=>{setShowLessonDetails(null);setCallLesson({...l,_voiceOnly:true,_startCall:true});}}/>;
-        }
         const now=Date.now();
         const {startMs:lStart,endMs:lEnd}=getScheduledMs(l);
         const withinLoc=!l.online&&(now>=lStart-1800000)&&(now<=lEnd);
         return<LessonDetailsModal lesson={l} C={C} onClose={()=>setShowLessonDetails(null)} withinLocationWindow={withinLoc}
           onCall={lesson=>{setCallLesson(lesson);setShowLessonDetails(null);}}
-          onLocation={lesson=>{setCallLesson({...lesson,_openLocation:true});setShowLessonDetails(null);}}/>;
+          onLocation={lesson=>{setCallLesson({...lesson,_openLocation:true});setShowLessonDetails(null);}}
+        />;
       })()}
 
       {tab==="timetable"&&<>
         <Hdr C={C} dm={dm}><PBtn outline C={C} onClick={()=>{setShowManage(true);window.history.pushState({screen:"app",modal:"manage"},"",window.location.pathname);}}>MANAGE</PBtn><PBtn C={C} onClick={()=>setShowAdd(true)}>ADD SLOT</PBtn></Hdr>
         <Scroll>
-          {loadingL?<TimetableSkeleton C={C}/>:
+          {loadingL?<Ldg C={C}/>:
             <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>{
               const isAccepted=l._accepted||acceptedMap[l.id];
               const isPending=l._pending&&!isAccepted;
-              if(isAccepted&&l.online){
-                if(activeCallRef.current&&activeCallRef.current.lessonId===l.id){
-                  setCallLesson(l);
-                  return;
-                }
-                setShowLessonDetails({...l,_onlineModal:true});
-                return;
-              }
               if(isAccepted){
-                if(l._tutorObj){setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);}
-                else{setShowLessonDetails(l);}
+                // Accepted: show tutor profile if we have the tutor object, otherwise lesson details
+                if(l._tutorObj){
+                  setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);
+                } else {
+                  setShowLessonDetails(l);
+                }
               } else if(isPending){
                 setShowLessonDetails(l);
               } else {
+                // Only unbooked/declined → find a tutor
                 setShowTutors(l);
               }
             }}
@@ -2852,8 +2660,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
                 return(
                   <div style={{marginTop:3,display:"flex",flexDirection:"column",gap:2}}>
                     {isDeclined&&<div style={{fontSize:9,fontWeight:800,color:"#BE123C",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>✕ Declined by {tutorName||"tutor"} — tap to retry</div>}
-                    {l._tutorCancelled&&<div style={{fontSize:9,fontWeight:800,color:"#9333EA",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>⚠ Tutor cancelled — tap to find a new tutor</div>}
-                    {isUnbooked&&!l._tutorCancelled&&<div style={{fontSize:9,fontWeight:800,color:"#9F1239",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>TAP TO REQUEST TUTOR</div>}
+                    {isUnbooked&&<div style={{fontSize:9,fontWeight:800,color:"#9F1239",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>TAP TO REQUEST TUTOR</div>}
                     {isPending&&<div style={{fontSize:9,fontWeight:800,color:"#E65100",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>⏳ Awaiting {tutorName||"tutor"}</div>}
                     {isAccepted&&tutorName&&<div style={{fontSize:9,fontWeight:800,color:"#166634",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>✓ {tutorName}</div>}
                     {isAccepted&&<div style={{fontSize:9,fontWeight:700,color:"#555",fontFamily:"'Barlow Condensed',sans-serif"}}>🕐 {startStr} → {endStr}</div>}
@@ -2887,27 +2694,22 @@ function StudentApp({user,onLogout,backHandlerRef}){
         <Scroll>
           <ArchSearch value={archSearch} onChange={setArchSearch} C={C}/>
           <FilterRow value={archFilter} onChange={setArchFilter} C={C} counts={{FAVORITES:notes.filter(n=>(interactions[n.id]||{}).liked).length,SAVED:notes.filter(n=>(interactions[n.id]||{}).saved).length}}/>
-          {loadingN?<ArchiveSkeleton C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote}/>}
+          {loadingN?<Ldg C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote}/>}
         </Scroll>
       </>}
 
       {tab==="identity"&&<>
         <IdentHdr C={C} dm={dm} setDm={setDm} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{try{localStorage.setItem("jrsh_acct_deleted","1");}catch(e){}await sbAuth.deleteAccount(user.id,"student");clearSession();onLogout();}}/>
         <Scroll>
-          {loadingL?<ProfileSkeleton C={C}/>:<>
-            <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
-            <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const c=await compressImage(ev.target.result,400,400,0.82);setEditP(p=>({...p,pfp_local:c}));}catch(_){setEditP(p=>({...p,pfp_local:ev.target.result}));}};r.readAsDataURL(f);}}/>
-            <ConfCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isStudent
-              onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving}/>
-            <div style={{height:24}}/>
-          </>}
+          <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
+          <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const c=await compressImage(ev.target.result,400,400,0.82);setEditP(p=>({...p,pfp_local:c}));}catch(_){setEditP(p=>({...p,pfp_local:ev.target.result}));}};r.readAsDataURL(f);}}/>
+          <ConfCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isStudent
+            onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving}/>
+          <div style={{height:24}}/>
         </Scroll>
       </>}
 
-      <BotNav tab={tab} setTab={setTab} C={C} onRefresh={id=>{
-        if(id==="timetable"||id==="identity"){setLoadingL(true);setRefreshKey(k=>k+1);}
-        if(id==="archive"){setLoadingN(true);setRefreshKey(k=>k+1);}
-      }}/>
+      <BotNav tab={tab} setTab={setTab} C={C}/>
 
       {showAdd&&<Modal onClose={()=>setShowAdd(false)} C={C}>
         <MT>📅 New Session</MT><MS C={C}>Configure the slot.</MS>
@@ -2957,7 +2759,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
                 </div>
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>setEditLesson({...l})} style={{background:"#fff",border:"1px solid #ddd",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,color:"#111"}}>EDIT</button>
-                  <button onClick={()=>handleStudentCancelLesson(l)} style={{background:"#FEE2E2",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,color:"#DC2626"}}>CANCEL</button>
+                  <button onClick={()=>handleDeleteLesson(l.id)} style={{background:"#FEE2E2",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:11,color:"#DC2626"}}>DEL</button>
                 </div>
               </div>
             ))}
@@ -3082,7 +2884,6 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");document.documentElement.classList.toggle("dark-mode",next);}catch(e){}return next;});
   const C=dm?dC():lC();
   const [tab,setTab]=useState("timetable");
-  const [refreshKey,setRefreshKey]=useState(0);
   const [requests,setRequests]=useState([]);
   const [loadingR,setLoadingR]=useState(true);
   const [showManage,setShowManage]=useState(false);
@@ -3103,7 +2904,6 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const [pubForm,setPubForm]=useState({title:"",subject:"",file:null,coverPreview:null,coverFile:null});
   const [publishing,setPublishing]=useState(false);
   const [profile,setProfile]=useState(user);
-  useEffect(()=>{setProfile(u=>({...u,...user}));},[user.name,user.pfp_url,user.age,user.gender,user.curriculum_level,user.location,user.hourly_rate_online,user.hourly_rate_offline]);
   const [showStudentProf,setShowStudentProf]=React.useState(null);
   const [showWallet,setShowWallet]=React.useState(false);
   const [walletBal,setWalletBal]=React.useState(0);
@@ -3150,7 +2950,6 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const [noteSaving,setNoteSaving]=useState(false);
   const [callLesson,setCallLesson]=useState(null);
   const [callTimeUsedMap,setCallTimeUsedMap]=useState({});
-  const activeCallRef=useRef(null);
   const [cancelReq,setCancelReq]=useState(null);
   const [offlineStartedIds,setOfflineStartedIds]=useState(new Set()); // lessons student has started
   React.useEffect(()=>{
@@ -3169,7 +2968,6 @@ function TutorApp({user,onLogout,backHandlerRef}){
   useEffect(()=>{
     if(!backHandlerRef)return;
     if(openNote){backHandlerRef.current=()=>setOpenNote(null);return;}
-    if(callLesson){backHandlerRef.current=()=>setCallLesson(null);return;}
     if(showHistory){backHandlerRef.current=()=>setShowHistory(false);return;} // history first — manage stays open beneath
     if(showReq){backHandlerRef.current=()=>setShowReq(null);return;}
     if(showPublish){backHandlerRef.current=()=>setShowPublish(false);return;}
@@ -3180,26 +2978,29 @@ function TutorApp({user,onLogout,backHandlerRef}){
     if(cancelReq){backHandlerRef.current=()=>setCancelReq(null);return;}
     if(profEdit){backHandlerRef.current=()=>setProfEdit(false);return;}
     backHandlerRef.current=null;
-  },[backHandlerRef,openNote,showReq,showPublish,editingNote,showWallet,showStudentProf,showManage,showHistory,cancelReq,profEdit,callLesson]);
+  },[backHandlerRef,openNote,showReq,showPublish,editingNote,showWallet,showStudentProf,showManage,showHistory,cancelReq,profEdit]);
 
   useEffect(()=>{
-    const isAnon=user.id&&user.id.startsWith("anon-");
-    const cacheKey="jrsh_tutor_data_"+user.id;
-
-    // ── Serve cached requests instantly ──
     (async()=>{
+      setLoadingR(true);
       try{
-        const cached=sessionStorage.getItem(cacheKey);
-        if(cached&&refreshKey===0){
-          const {requests:cr,lessonHistory:ch}=JSON.parse(cached);
-          setRequests(cr||[]);setLessonHistory(ch||[]);
-          setLoadingR(false);
-          fetchTutorData(false,cacheKey,isAnon);
-          return;
-        }
-      }catch(e){}
-      if(!isAnon)setLoadingR(true);
-      await fetchTutorData(true,cacheKey,isAnon);
+        const isAnon=user.id&&user.id.startsWith("anon-");
+        if(isAnon){setRequests([]);setLoadingR(false);return;}
+        // Fetch all tutor requests + lesson history
+        const data=await fbQuery("tutor_requests",[{field:"tutor_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100);
+        setRequests(data||[]);
+        // History = completed/cancelled requests
+        const now=Date.now();
+        const hist=(data||[]).filter(r=>{
+          if(r.status==="cancelled")return true;
+          if(r.start_ts&&r.status==="accepted"){
+            return(r.start_ts+(r.to_hour-r.from_hour)*3600000)<now;
+          }
+          return false;
+        });
+        setLessonHistory(hist);
+      }catch(e){console.warn("Requests load:",e.message);setRequests([]);}
+      finally{setLoadingR(false);}
     })();
     // Live notes listener — real-time for all users
     const isAnon2=user.id&&user.id.startsWith("anon-");
@@ -3222,24 +3023,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
       e=>{console.warn("Notes snapshot (tutor):",e.message);setLoadingN(false);}
     );
     return()=>_unsubNotesT();
-  },[user.id,refreshKey]);
-
-  async function fetchTutorData(showLoading,cacheKey,isAnon){
-    if(isAnon){setRequests([]);if(showLoading)setLoadingR(false);return;}
-    try{
-      const data=await fbQuery("tutor_requests",[{field:"tutor_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100);
-      setRequests(data||[]);
-      const now=Date.now();
-      const hist=(data||[]).filter(r=>{
-        if(r.status==="cancelled")return true;
-        if(r.start_ts&&r.status==="accepted")return(r.start_ts+(r.to_hour-r.from_hour)*3600000)<now;
-        return false;
-      });
-      setLessonHistory(hist);
-      try{sessionStorage.setItem(cacheKey,JSON.stringify({requests:data||[],lessonHistory:hist}));}catch(e){}
-    }catch(e){console.warn("Requests load:",e.message);setRequests([]);}
-    finally{if(showLoading)setLoadingR(false);}
-  }
+  },[user.id]);
 
   // ── Poll tutor_requests so tutor sees student-side cancellations in real-time ──
   useEffect(()=>{
@@ -3411,8 +3195,8 @@ function TutorApp({user,onLogout,backHandlerRef}){
 
   async function handleCancelBooked(req,type){
     setCancelReq(null);
-    try{await fbUpdate("tutor_requests",req.id,{status:"cancelled",cancelled_by:"tutor"});showToast("Session cancelled","ok");}catch(e){showToast("Cancel failed","error");}
-    setRequests(r=>r.map(x=>x.id===req.id?{...x,status:"cancelled",cancelled_by:"tutor"}:x));
+    try{await fbUpdate("tutor_requests",req.id,{status:"cancelled"});showToast("Session cancelled","ok");}catch(e){showToast("Cancel failed","error");}
+    setRequests(r=>r.map(x=>x.id===req.id?{...x,status:"cancelled"}:x));
   }
 
   async function handlePublish(){
@@ -3575,10 +3359,9 @@ function TutorApp({user,onLogout,backHandlerRef}){
         </div>
         <CnBtn C={C} onClick={()=>setEditingNote(null)}>CANCEL</CnBtn>
       </Modal>}
-      {callLesson&&<CallDialog lesson={callLesson} user={user} callTimeUsed={callTimeUsedMap[callLesson.id]||0} activeCallRef={activeCallRef} onEnd={(reason,secsUsed)=>{
-        activeCallRef.current=null;
+      {callLesson&&<CallDialog lesson={callLesson} user={user} callTimeUsed={callTimeUsedMap[callLesson.id]||0} onEnd={(reason,secsUsed)=>{
         if(secsUsed>0) setCallTimeUsedMap(m=>({...m,[callLesson.id]:(m[callLesson.id]||0)+secsUsed}));
-        if(reason==="no_answer"||reason==="ended"){
+        if(reason!=="cancelled"){
           // Credit tutor wallet: 90% of lesson fee (10% platform commission)
           if(reason==="ended"){
             const hours=(callLesson.to_hour-callLesson.from_hour)||1;
@@ -3597,17 +3380,6 @@ function TutorApp({user,onLogout,backHandlerRef}){
         setCallLesson(null);
       }} C={C}/>}
       {cancelReq&&<CancelModal onCancel={t=>handleCancelBooked(cancelReq,t)} onClose={()=>setCancelReq(null)} C={C}/>}
-      {!callLesson&&activeCallRef.current&&(()=>{
-        const lid=activeCallRef.current.lessonId;
-        const l=requests.find(x=>x.id===lid);
-        if(!l)return null;
-        return(
-          <div onClick={()=>setCallLesson(l)} style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:9998,background:"#22C55E",color:"#fff",padding:"10px 20px",borderRadius:50,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1,boxShadow:"0 4px 20px rgba(0,0,0,.4)",display:"flex",alignItems:"center",gap:8,cursor:"pointer",whiteSpace:"nowrap"}}>
-            <span style={{width:8,height:8,borderRadius:"50%",background:"#fff",display:"inline-block",animation:"pulse 1s infinite"}}/>
-            CALL LIVE — TAP TO RETURN
-          </div>
-        );
-      })()}
 
       {tab==="timetable"&&<>
         {/* Fixed REQUEST button for tutor */}
@@ -3622,18 +3394,8 @@ function TutorApp({user,onLogout,backHandlerRef}){
           </div>
         </div>
         <Scroll>
-          {loadingR?<TimetableSkeleton C={C}/>:
-            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} showStudent onTap={l=>{
-              if(l.online&&l.status==="accepted"){
-                if(activeCallRef.current&&activeCallRef.current.lessonId===l.id){
-                  setCallLesson(l);
-                  return;
-                }
-                setShowStudentProf({...l,_onlineModal:true});
-                return;
-              }
-              setShowStudentProf(l);
-            }}
+          {loadingR?<Ldg C={C}/>:
+            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} showStudent onTap={l=>setShowStudentProf(l)}
               renderExtra={l=>{
                 const isOffline=!l.online;
                 const studentStarted=offlineStartedIds.has(l.id);
@@ -3660,35 +3422,24 @@ function TutorApp({user,onLogout,backHandlerRef}){
         <Scroll>
           <ArchSearch value={archSearch} onChange={setArchSearch} C={C}/>
           <FilterRow value={archFilter} onChange={setArchFilter} C={C} tabs={["ALL","FAVORITES","SAVED","MY NOTES"]} counts={{FAVORITES:notes.filter(n=>(interactions[n.id]||{}).liked).length,SAVED:notes.filter(n=>(interactions[n.id]||{}).saved).length}}/>
-          {loadingN?<ArchiveSkeleton C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote} onEdit={archFilter==="MY NOTES"?setEditingNote:null}/>}
+          {loadingN?<Ldg C={C}/>:<NoteGrid notes={filteredNotes()} C={C} onLike={id=>handleInteraction(id,"liked")} onSave={id=>handleInteraction(id,"saved")} onOpen={setOpenNote} onEdit={archFilter==="MY NOTES"?setEditingNote:null}/>}
         </Scroll>
       </>}
 
       {tab==="identity"&&<>
         <IdentHdr C={C} dm={dm} setDm={setDm} onWallet={()=>setShowWallet(true)} onEditIdentity={()=>{setEditP({...profile});setProfEdit(true);}} onLogout={onLogout} onDeleteAccount={async()=>{try{localStorage.setItem("jrsh_acct_deleted","1");}catch(e){}await sbAuth.deleteAccount(user.id,"tutor");clearSession();onLogout();}}/>
         <Scroll>
-          {loadingR?<ProfileSkeleton C={C}/>:<>
-            <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
-            <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const c=await compressImage(ev.target.result,400,400,0.82);setEditP(p=>({...p,pfp_local:c}));}catch(_){setEditP(p=>({...p,pfp_local:ev.target.result}));}};r.readAsDataURL(f);}}/>
-            <ConfCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isTutor
-              onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving}/>
-            <div style={{height:24}}/>
-          </>}
+          <ProfCard profile={profile} editP={editP} setEditP={setEditP} editing={profEdit} pfpRef={pfpRef} C={C}/>
+          <input type="file" accept="image/*" ref={pfpRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async ev=>{try{const c=await compressImage(ev.target.result,400,400,0.82);setEditP(p=>({...p,pfp_local:c}));}catch(_){setEditP(p=>({...p,pfp_local:ev.target.result}));}};r.readAsDataURL(f);}}/>
+          <ConfCard C={C} editP={editP} setEditP={setEditP} editing={profEdit} profile={profile} isTutor
+            onToggle={()=>{if(profEdit)handleSaveProfile();else{setEditP({...profile});setProfEdit(true);}}} saving={profSaving}/>
+          <div style={{height:24}}/>
         </Scroll>
       </>}
 
-      {showStudentProf&&(showStudentProf._onlineModal
-        ?<OnlineLessonModal lesson={showStudentProf} C={C} isStudent={false} onClose={()=>setShowStudentProf(null)}
-            onVoiceCall={()=>{const l=showStudentProf;setShowStudentProf(null);setCallLesson({...l,_voiceOnly:true,_startCall:true});}}/>
-        :<StudentProfileModal lesson={showStudentProf} C={C} onClose={()=>setShowStudentProf(null)}
-            onCall={l=>{setCallLesson({...l,_voiceOnly:true,_startCall:true});setShowStudentProf(null);}}
-            onLocation={l=>{setCallLesson({...l,_openLocation:true});setShowStudentProf(null);}}/>
-      )}
+      {showStudentProf&&<StudentProfileModal lesson={showStudentProf} C={C} onClose={()=>setShowStudentProf(null)} onCall={l=>{setCallLesson(l);setShowStudentProf(null);}} onLocation={l=>{setCallLesson({...l,_openLocation:true});setShowStudentProf(null);}}/>}
       {showWallet&&<WalletModal bal={walletBal} txs={walletTx} withdrawAmt={withdrawAmt} setWithdrawAmt={setWithdrawAmt} withdrawMsg={withdrawMsg} onWithdraw={doWithdraw} onClose={()=>setShowWallet(false)} C={C} tutorPhone={profile.phone||profile.mpesa_phone||""}/>}
-      <BotNav tab={tab} setTab={setTab} C={C} onRefresh={id=>{
-        if(id==="timetable"||id==="identity"){setLoadingR(true);setRefreshKey(k=>k+1);}
-        if(id==="archive"){setLoadingN(true);setRefreshKey(k=>k+1);}
-      }}/>
+      <BotNav tab={tab} setTab={setTab} C={C}/>
 
       {showHistory&&<HistoryModal history={lessonHistory} onClose={()=>setShowHistory(false)} C={C}/>}
       {showManage&&<Modal onClose={()=>{setShowManage(false);setShowReq(null);}} C={C}>
@@ -3900,76 +3651,6 @@ function SettingsSheet({C,dm,setDm,onEditIdentity,onLogout,onDeleteAccount,onClo
 function PBtn({C,children,onClick,outline}){return <button onClick={onClick} style={{padding:"9px 20px",borderRadius:50,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,letterSpacing:1.5,display:"flex",alignItems:"center",gap:6,border:outline?"1.5px solid "+C.border:"none",background:outline?"transparent":C.accentBg,color:outline?C.text:C.accentText}}>{children}</button>;}
 function AvaBubble({name,C}){return <div style={{width:36,height:36,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:14}}>{name?name[0].toUpperCase():"?"}</div>;}
 function Ldg({C}){return <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}>LOADING…</div>;}
-
-// ── Skeleton shimmer primitives ──
-function SkeletonBox({w="100%",h=16,r=8,C,style={}}){
-  return(
-    <div style={{width:w,height:h,borderRadius:r,background:C.border,position:"relative",overflow:"hidden",...style}}>
-      <div style={{position:"absolute",inset:0,background:"linear-gradient(90deg,transparent 0%,rgba(255,255,255,.06) 50%,transparent 100%)",backgroundSize:"200% 100%",animation:"skshimmer 1.4s infinite"}}/>
-    </div>
-  );
-}
-
-function TimetableSkeleton({C}){
-  return(
-    <div style={{padding:"16px 16px 0"}}>
-      {[0,1,2,3].map(i=>(
-        <div key={i} style={{display:"flex",gap:12,marginBottom:20,alignItems:"flex-start"}}>
-          <SkeletonBox C={C} w={36} h={14} r={4} style={{marginTop:4,flexShrink:0}}/>
-          <div style={{flex:1,background:C.surface,border:"1px solid "+C.border,borderRadius:14,padding:"14px 14px 12px",display:"flex",flexDirection:"column",gap:8}}>
-            <div style={{display:"flex",justifyContent:"space-between"}}>
-              <SkeletonBox C={C} w="42%" h={14} r={4}/>
-              <SkeletonBox C={C} w="26%" h={10} r={4}/>
-            </div>
-            <SkeletonBox C={C} w="58%" h={10} r={4}/>
-            <SkeletonBox C={C} w="100%" h={26} r={8}/>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ArchiveSkeleton({C}){
-  return(
-    <div style={{padding:"16px 16px 0",display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-      {[0,1,2,3,4,5].map(i=>(
-        <div key={i} style={{background:C.surface,border:"1px solid "+C.border,borderRadius:14,padding:14,display:"flex",flexDirection:"column",gap:8}}>
-          <SkeletonBox C={C} w="100%" h={80} r={8}/>
-          <SkeletonBox C={C} w="70%" h={12} r={4}/>
-          <SkeletonBox C={C} w="50%" h={10} r={4}/>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ProfileSkeleton({C}){
-  return(
-    <div style={{padding:"20px 16px 0"}}>
-      {/* Avatar card */}
-      <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:20,padding:"24px 20px",marginBottom:14,display:"flex",alignItems:"center",gap:16}}>
-        <SkeletonBox C={C} w={72} h={72} r={36} style={{flexShrink:0}}/>
-        <div style={{flex:1,display:"flex",flexDirection:"column",gap:8}}>
-          <SkeletonBox C={C} w="60%" h={16} r={6}/>
-          <SkeletonBox C={C} w="40%" h={11} r={4}/>
-          <SkeletonBox C={C} w="30%" h={11} r={4}/>
-        </div>
-      </div>
-      {/* Info rows card */}
-      <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:20,padding:"8px 20px",marginBottom:14}}>
-        {[0,1,2,3].map(i=>(
-          <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 0",borderBottom:i<3?"1px solid "+C.border:"none"}}>
-            <SkeletonBox C={C} w="28%" h={10} r={4}/>
-            <SkeletonBox C={C} w="42%" h={12} r={4}/>
-          </div>
-        ))}
-      </div>
-      {/* Action button */}
-      <SkeletonBox C={C} w="100%" h={48} r={50}/>
-    </div>
-  );
-}
 function Empty({C,children}){return <div style={{textAlign:"center",padding:"24px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{children}</div>;}
 
 function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
@@ -4051,7 +3732,7 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
                 📍
               </button>
             )}
-            {onCall&&lesson.status==="accepted"&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} title="Voice call (3 min limit)">
+            {onCall&&<button onClick={()=>{onClose();onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} title="Voice call (3 min limit)">
               <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
             </button>}
           </div>
@@ -4096,12 +3777,12 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
 
         <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.7}}>
           {lesson.online?(
-            <>🌐 Online session{lesson.status==="accepted"?" — tap 🎙️ above for a voice call.":""}</>
+            <>🌐 Online session — tap 🎙️ above for a voice call (3-min limit).</>
           ):(
             <>{withinLocationWindow
               ?"📍 Location window open — tap 📍 above to see live GPS for both you and the student."
               :"🔒 "+locationWindowOpenStr}
-              {lesson.status==="accepted"&&" 🎙️ Voice call available any time."}
+              {" 🎙️ Voice call (3-min limit) available any time."}
             </>
           )}
         </div>
@@ -4111,135 +3792,65 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
   );
 }
 /* ══ LESSON DETAILS MODAL (Student) ══ */
-function OnlineLessonModal({lesson,C,onClose,onVoiceCall,isStudent}){
-  if(!lesson)return null;
-  const otherName=isStudent?(lesson._tutorName||lesson._tutorObj?.name||"Tutor"):(lesson.student_name||"Student");
-  const pfpUrl=isStudent?(lesson._tutorObj?.pfp_url||lesson._pfpUrl||null):(lesson.student_pfp||null);
-  const tutorObj=isStudent?lesson._tutorObj:null;
-  return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",padding:"24px 22px 40px",maxHeight:"88dvh",overflowY:"auto"}}>
-
-        {/* Header */}
-        <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
-          <div style={{width:62,height:62,borderRadius:"50%",background:C.accentBg,flexShrink:0,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #22C55E"}}>
-            {pfpUrl
-              ?<img src={pfpUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-              :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{otherName[0].toUpperCase()}</span>}
-          </div>
-          <div style={{flex:1}}>
-            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{otherName}</div>
-            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} · 🌐 Online</div>
-          </div>
-          {/* Voice call button */}
-          <button onClick={()=>{onClose();onVoiceCall&&onVoiceCall();}} style={{width:48,height:48,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,boxShadow:"0 2px 12px rgba(34,197,94,.35)"}}>
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
-          </button>
-        </div>
-
-        {/* Detail rows */}
-        {[
-          {label:"SUBJECT",value:lesson.subject},
-          {label:"DAY",value:lesson.day},
-          {label:"TIME",value:timeLbl(lesson.from_hour)+" – "+timeLbl(lesson.to_hour)},
-          {label:"MODE",value:"🌐 Online"},
-          {label:"STATUS",value:"✓ ACCEPTED"},
-          tutorObj?.curriculum_level&&{label:"LEVEL",value:tutorObj.curriculum_level},
-          tutorObj?.hourly_rate_online&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_online+"/hr"},
-        ].filter(Boolean).map(row=>(
-          <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid "+C.border}}>
-            <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
-            <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
-          </div>
-        ))}
-
-        {/* Info note */}
-        <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.7}}>
-          🌐 Online session — tap 🎙️ above to start a voice call.
-        </div>
-
-        <button onClick={onClose} style={{marginTop:16,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
-      </div>
-    </div>
-  );
-}
-
 function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWindow}){
   if(!lesson)return null;
   const isAccepted=lesson._accepted;
   const isPending=lesson._pending&&!isAccepted;
   const tutorName=lesson._tutorName||lesson._tutorObj?.name||null;
   const tutorObj=lesson._tutorObj||null;
-  const pfpUrl=tutorObj?.pfp_url||lesson._pfpUrl||null;
-  const lessonStartMs=lesson.start_ts||null;
-  const locationWindowOpenStr=lessonStartMs?"Live location unlocks 30 min before "+lesson.day+" "+timeLbl(lesson.from_hour):"Live location unlocks 30 min before the lesson starts.";
+  const statusColor=isAccepted?"#166634":isPending?"#92400E":"#9F1239";
+  const statusText=isAccepted?("✓ Accepted by "+tutorName):isPending?("⏳ Awaiting "+tutorName):"Unbooked";
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:C.surface,borderRadius:"24px 24px 0 0",width:"100%",maxWidth:"100%",padding:"24px 22px 36px",maxHeight:"88dvh",overflowY:"auto"}}>
-
-        {/* Header: pfp + name + call button (accepted only) */}
+        {/* Header row */}
         <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
-          <div style={{width:60,height:60,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden",border:"2px solid "+C.border}}>
-            {pfpUrl
-              ?<img src={pfpUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-              :<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:C.accentText}}>{(tutorName||lesson.subject||"?")[0].toUpperCase()}</span>}
+          <div style={{width:60,height:60,borderRadius:"50%",background:isAccepted?"#D1FAE5":isPending?"#FEF3C7":"#FCE4EC",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,border:"2px solid "+(isAccepted?"#86EFAC":isPending?"#FCD34D":"#F8BBD9")}}>
+            {tutorObj?.pfp_url?<img src={tutorObj.pfp_url} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"50%"}} alt=""/>:<span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:24,color:"#111"}}>{(tutorName||lesson.subject||"?")[0].toUpperCase()}</span>}
           </div>
           <div style={{flex:1}}>
-            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{tutorName||"Tutor"}</div>
-            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.subject} · {lesson.day} {timeLbl(lesson.from_hour)}–{timeLbl(lesson.to_hour)} · {lesson.online?"🌐 Online":"📍 Offline"}</div>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,color:C.text}}>{lesson.subject}</div>
+            <div style={{fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,marginTop:2}}>{lesson.day} · {timeLbl(lesson.from_hour)}–{timeLbl(lesson.to_hour)} · {lesson.online?"🌐 Online":"📍 Offline"}</div>
           </div>
+          {/* Action buttons — only for accepted lessons */}
           {isAccepted&&(
-            <button onClick={()=>{onClose();onCall&&onCall({...lesson,_voiceOnly:true,_startCall:true});}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}}>
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
-            </button>
+            <div style={{display:"flex",gap:8,flexShrink:0}}>
+              {withinLocationWindow&&!lesson.online&&(
+                <button onClick={()=>{onClose();onLocation&&onLocation(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#F59E0B",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20}} title="Live location (30 min before lesson)">
+                  📍
+                </button>
+              )}
+              <button onClick={()=>{onClose();onCall&&onCall(lesson);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} title="Voice call · 3 min">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
+              </button>
+            </div>
           )}
         </div>
-
-        {/* Detail rows */}
+        {/* Status badge */}
+        <div style={{fontSize:11,fontWeight:800,color:statusColor,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5,marginBottom:16,padding:"6px 12px",borderRadius:8,background:isAccepted?"rgba(22,101,52,.08)":isPending?"rgba(146,64,14,.08)":"rgba(159,18,57,.08)",display:"inline-block"}}>{statusText}</div>
+        {/* Details */}
         {[
-          {label:"SUBJECT",value:lesson.subject},
+          {label:"MODE",value:lesson.online?"🌐 Online":"📍 Offline"},
           {label:"DAY",value:lesson.day},
           {label:"TIME",value:timeLbl(lesson.from_hour)+" – "+timeLbl(lesson.to_hour)},
-          {label:"MODE",value:lesson.online?"🌐 Online":"📍 Offline (in person)"},
-          {label:"STATUS",value:isAccepted?"ACCEPTED":isPending?"PENDING":"UNBOOKED"},
-        ].map(row=>(
+          {label:"SUBJECT",value:lesson.subject},
+          tutorName&&{label:"TUTOR",value:tutorName},
+          tutorObj?.curriculum_level&&{label:"LEVEL",value:tutorObj.curriculum_level},
+          tutorObj?.hourly_rate_online&&lesson.online&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_online+"/hr"},
+          tutorObj?.hourly_rate_offline&&!lesson.online&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_offline+"/hr"},
+        ].filter(Boolean).map(row=>(
           <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid "+C.border}}>
             <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
             <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
           </div>
         ))}
-
-        {/* Tutor profile card */}
-        {tutorObj&&(tutorObj.curriculum_level||tutorObj.age||tutorObj.gender||tutorObj.hourly_rate_online||tutorObj.hourly_rate_offline)&&(
-          <div style={{marginTop:14,padding:14,borderRadius:14,background:C.surfaceAlt,border:"1px solid "+C.border}}>
-            <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:10}}>TUTOR PROFILE</div>
-            {[
-              tutorObj.age&&{label:"AGE",value:tutorObj.age+" yrs"},
-              tutorObj.gender&&{label:"GENDER",value:tutorObj.gender},
-              tutorObj.curriculum_level&&{label:"LEVEL",value:tutorObj.curriculum_level},
-              lesson.online&&tutorObj.hourly_rate_online&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_online+"/hr"},
-              !lesson.online&&tutorObj.hourly_rate_offline&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_offline+"/hr"},
-            ].filter(Boolean).map(row=>(
-              <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid "+C.border}}>
-                <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
-                <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
-              </div>
-            ))}
+        {/* Call/Location helper text */}
+        {isAccepted&&(
+          <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.6}}>
+            🎙️ Voice call limited to 3 minutes.
+            {!lesson.online&&" · 📍 Location sharing available 30 min before lesson starts."}
           </div>
         )}
-
-        {/* Info footer */}
-        <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.7}}>
-          {lesson.online
-            ?<>🌐 Online session{isAccepted?" — tap 🎙️ above for a voice call.":isPending?" — awaiting tutor confirmation.":""}</>
-            :<>{withinLocationWindow
-                ?"📍 Location window open — tap 📍 above to see live GPS."
-                :"🔒 "+locationWindowOpenStr}
-              {isAccepted&&" 🎙️ Voice call available any time."}
-            </>
-          }
-        </div>
-
         <button onClick={onClose} style={{marginTop:18,width:"100%",padding:"13px",borderRadius:50,border:"1.5px solid "+C.border,background:"transparent",color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,cursor:"pointer"}}>CLOSE</button>
       </div>
     </div>
@@ -4632,16 +4243,11 @@ function HistoryModal({history,onClose,C,isStudent}){
     </div>
   );
 }
-function BotNav({tab,setTab,C,onRefresh}){
+function BotNav({tab,setTab,C}){
   const tabs=[{id:"timetable",label:"TIMETABLE",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>},{id:"archive",label:"ARCHIVE",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>},{id:"identity",label:"IDENTITY",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>}];
   return(
     <div style={{position:"fixed",bottom:0,left:0,right:0,background:C.surface,borderTop:"1px solid "+C.border,borderRadius:"20px 20px 0 0",display:"flex",padding:"6px 0 10px",zIndex:100,maxWidth:"100vw"}}>
-      {tabs.map(n=>(
-        <button key={n.id} onClick={()=>{
-          if(n.id===tab){onRefresh&&onRefresh(n.id);}
-          else setTab(n.id);
-        }} style={{flex:1,border:"none",background:"transparent",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"8px 0",color:tab===n.id?C.text:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:10,letterSpacing:1.5}}>{n.icon}{n.label}</button>
-      ))}
+      {tabs.map(n=><button key={n.id} onClick={()=>setTab(n.id)} style={{flex:1,border:"none",background:"transparent",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"8px 0",color:tab===n.id?C.text:C.sub,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:10,letterSpacing:1.5}}>{n.icon}{n.label}</button>)}
     </div>
   );
 }
