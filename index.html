@@ -736,6 +736,11 @@ const STUN_SERVERS={iceServers:[
   {urls:"stun:stun.l.google.com:19302"},
   {urls:"stun:stun1.l.google.com:19302"},
   {urls:"stun:stun2.l.google.com:19302"},
+  {urls:"stun:stun3.l.google.com:19302"},
+  {urls:"stun:stun4.l.google.com:19302"},
+  {urls:"stun:openrelay.metered.ca:80"},
+  {urls:"turn:openrelay.metered.ca:80",username:"openrelayproject",credential:"openrelayproject"},
+  {urls:"turn:openrelay.metered.ca:443",username:"openrelayproject",credential:"openrelayproject"},
 ]};
 /* ══ LIVE LOCATION HOOK ══ */
 function useLiveLocation(active){
@@ -810,7 +815,8 @@ async function startWebRTCVoice(sigDocId, isCaller){
   let remoteDescSet=false;
 
   if(isCaller){
-    // Caller: write offer, then watch for answer + callee ICE
+    // Caller: clear stale signal doc, write fresh offer, then watch for answer + callee ICE
+    try{await sigDoc.delete();}catch(_){}
     const offer=await pc.createOffer();
     await pc.setLocalDescription(offer);
     await sigDoc.set({offer:JSON.stringify({type:offer.type,sdp:offer.sdp}),ts:Date.now()});
@@ -869,7 +875,11 @@ async function startWebRTCVoice(sigDocId, isCaller){
 // Store call signals in tutor_requests doc
 async function sendCallSignal(lessonId, signal){
   try{
-    await fbUpdate("tutor_requests",lessonId,{call_signal:JSON.stringify({...signal,ts:Date.now()})});
+    // Use set+merge so it works even if the doc has no call_signal field yet
+    await _db.collection("tutor_requests").doc(String(lessonId)).set(
+      {call_signal:JSON.stringify({...signal,ts:Date.now()}),updatedAt:nowKEiso()},
+      {merge:true}
+    );
   }catch(e){console.warn("[CallSignal] failed for doc",lessonId,":",e.message);}
 }
 
@@ -880,7 +890,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   const isOffline = !lesson.online;
 
   // Phase: idle | outgoing | incoming | live | ended
-  const [phase, setPhase]  = React.useState(lesson._incomingRing?"incoming":"idle");
+  const [phase, setPhase]  = React.useState(lesson._incomingRing?"incoming":lesson._autoInitiate?"outgoing":"idle");
   const [ringTimer, setRingTimer] = React.useState(30);
   const [callSecs, setCallSecs]   = React.useState(0);
   const [muted, setMuted]   = React.useState(false);
@@ -892,7 +902,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   // (runs once after first render; initiateCall defined below via ref)
   const initiateCallRef = React.useRef(null);
   React.useEffect(()=>{
-    if(lesson._autoRing&&lesson.online){
+    if((lesson._autoRing&&lesson.online)||lesson._autoInitiate){
       // Small delay to allow initiateCallRef to be set
       const t=setTimeout(()=>{ if(initiateCallRef.current) initiateCallRef.current(); },200);
       return()=>clearTimeout(t);
@@ -978,7 +988,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
           }
         }catch(e){}
       }
-      if(sig.type==="accept"&&curPhase==="outgoing"){await connectVoice(true);} // caller creates offer
+      if(sig.type==="accept"&&curPhase==="outgoing"){setPhase("live");} // offer already written on ring; callee answered via Firestore
       if(sig.type==="decline"&&curPhase==="outgoing"){hangUp("declined");}
       if(sig.type==="end"&&(curPhase==="live"||curPhase==="outgoing"||curPhase==="incoming")){hangUp("ended");}
     };
@@ -1059,7 +1069,8 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
 
   // ── WebRTC connect — isCaller=true for caller, false for callee ──
   async function connectVoice(isCaller){
-    setPhase("live");
+    // Callee goes live immediately on accept; caller waits for accept signal to move to live
+    if(!isCaller) setPhase("live");
     try{
       const reqId=lesson._reqId||lesson.id;
       // sigDocId is shared by both parties — derived from reqId
@@ -1076,20 +1087,24 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
     }
   }
 
-  // ── Initiate call ──
+  // ── Initiate call — ring + immediately write WebRTC offer so callee can answer ──
   async function initiateCall(){
     setPhase("outgoing");
     const reqId=lesson._reqId||lesson.id;
+    // Send ring signal
     await sendCallSignal(reqId,{from:user.id,type:"ring"});
+    // Start WebRTC as caller immediately — writes offer to Firestore
+    // Callee's onSnapshot will detect the offer and create an answer
+    await connectVoice(true);
   }
   initiateCallRef.current = initiateCall;
 
-  // ── Accept incoming ──
+  // ── Accept incoming — send accept signal + answer the WebRTC offer ──
   async function acceptCall(){
     try{if(ringAudioRef.current)ringAudioRef.current.stop();}catch(e){}
     const reqId=lesson._reqId||lesson.id;
     await sendCallSignal(reqId,{from:user.id,type:"accept"});
-    await connectVoice(false); // callee creates answer
+    await connectVoice(false); // callee reads offer from Firestore, creates answer
   }
 
   // ── Decline ──
@@ -2693,7 +2708,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
         const {startMs:lStart,endMs:lEnd}=getScheduledMs(l);
         const withinLoc=!l.online&&(now>=lStart-1800000)&&(now<=lEnd);
         return<LessonDetailsModal lesson={l} C={C} onClose={()=>setShowLessonDetails(null)} withinLocationWindow={withinLoc}
-          onCall={lesson=>{setCallLesson(lesson);setShowLessonDetails(null);}}
+          onCall={lesson=>{setCallLesson({...lesson,_autoInitiate:true});setShowLessonDetails(null);}}
           onLocation={lesson=>{setCallLesson({...lesson,_openLocation:true});setShowLessonDetails(null);}}
         />;
       })()}
@@ -2873,7 +2888,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
                   </button>
                 )}
                 {_isAcceptedLesson&&(
-                  <button onClick={()=>{setCallLesson({..._tLesson,online:_tLesson.online});setShowTutorProfile(null);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}} title="Voice call · 3 min limit">
+                  <button onClick={()=>{setCallLesson({..._tLesson,online:_tLesson.online,_autoInitiate:true});setShowTutorProfile(null);}} style={{width:44,height:44,borderRadius:"50%",background:"#22C55E",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}} title="Voice call · 3 min limit">
                     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg>
                   </button>
                 )}
