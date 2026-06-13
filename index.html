@@ -2367,49 +2367,66 @@ function StudentApp({user,onLogout,backHandlerRef}){
   // ── Load all user data from Supabase ──
   useEffect(()=>{
     (async()=>{
-      setLoadingL(true);
+      const isAnon=user.id&&user.id.startsWith("anon-");
+      if(isAnon){setLessons([]);setLoadingL(false);return;}
+
+      // ── Serve cached data instantly ──
+      const cacheKey="jrsh_student_data_"+user.id;
       try{
-        const isAnon=user.id&&user.id.startsWith("anon-");
-        if(isAnon){setLessons([]);setLoadingL(false);return;}
-        // Fetch lessons and requests in parallel
-        const [data,reqs]=await Promise.all([
-          fbQuery("lessons",[{field:"student_id",op:"==",value:user.id}],{field:"from_hour",dir:"asc"},100),
-          fbQuery("tutor_requests",[{field:"student_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100),
-        ]);
-        const m={};const declinedIds=new Set();const pendingMap={};const tutorIds=new Set();
-        reqs.forEach(r=>{
-          if(r.status==="accepted"){m[r.lesson_id]=true;if(r.tutor_id)tutorIds.add(r.tutor_id);}
-          if(r.status==="declined") declinedIds.add(r.lesson_id);
-          if(r.status==="pending"){pendingMap[r.lesson_id]={tutorName:r.tutor_name,tutorId:r.tutor_id,reqId:r.id};if(r.tutor_id)tutorIds.add(r.tutor_id);}
-        });
-        // Fetch tutor profiles + pfp all at once
-        const tutorObjMap={};
-        await Promise.all([...tutorIds].map(async tid=>{
-          try{
-            const [tp,pfp]=await Promise.all([
-              fbGet("profiles",tid+"_tutor").catch(()=>null)||fbGet("profiles",tid).catch(()=>null),
-              sbAuth.getProfilePhoto(tid,"tutor").catch(()=>null),
-            ]);
-            if(tp)tutorObjMap[tid]={...tp,pfp_url:pfp||tp.pfp_url||null};
-          }catch(e){}
-        }));
-        setAcceptedMap(m);
-        setLessons((data||[]).map(l=>{
-          const req=reqs.find(r=>r.lesson_id===l.id&&(r.status==="accepted"||r.status==="pending"));
-          const tutorId=req?.tutor_id||l._tutorId;
-          const tutorObj=tutorId?tutorObjMap[tutorId]||null:null;
-          return{...l,_accepted:!!m[l.id],_declined:declinedIds.has(l.id)&&!m[l.id],_pending:!!pendingMap[l.id]&&!m[l.id],_tutorName:pendingMap[l.id]?.tutorName||req?.tutor_name||l._tutorName,_tutorId:tutorId,_tutorObj:tutorObj||l._tutorObj||null,_reqId:req?.id||null};
-        }));
-        const now=Date.now();
-        const hist=(data||[]).filter(l=>l.start_ts&&(l.start_ts+(l.to_hour-l.from_hour)*3600000)<now);
-        const cancelled=reqs.filter(r=>r.status==="cancelled");
-        const histIds=new Set(hist.map(l=>l.id));
-        const cancHist=cancelled.map(r=>({id:r.lesson_id,subject:r.subject||"Lesson",day:r.day,from_hour:r.from_hour,to_hour:r.to_hour,_tutorName:r.tutor_name,status:"cancelled",start_ts:r.start_ts})).filter(x=>x.id&&!histIds.has(x.id));
-        setLessonHistory([...hist,...cancHist]);
-      }catch(e){console.warn("Lessons load:",e.message);setLessons([]);setLessonHistory([]);}
-      finally{setLoadingL(false);}
+        const cached=sessionStorage.getItem(cacheKey);
+        if(cached&&refreshKey===0){
+          const {lessons:cl,lessonHistory:ch,acceptedMap:cm}=JSON.parse(cached);
+          setLessons(cl||[]);setLessonHistory(ch||[]);setAcceptedMap(cm||{});
+          setLoadingL(false);
+          // Still refresh in background silently
+          fetchStudentData(false,cacheKey);
+          return;
+        }
+      }catch(e){}
+      setLoadingL(true);
+      await fetchStudentData(true,cacheKey);
     })();
   },[user.id,refreshKey]);
+
+  async function fetchStudentData(showLoading,cacheKey){
+    try{
+      const [data,reqs]=await Promise.all([
+        fbQuery("lessons",[{field:"student_id",op:"==",value:user.id}],{field:"from_hour",dir:"asc"},100),
+        fbQuery("tutor_requests",[{field:"student_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100),
+      ]);
+      const m={};const declinedIds=new Set();const pendingMap={};const tutorIds=new Set();
+      reqs.forEach(r=>{
+        if(r.status==="accepted"){m[r.lesson_id]=true;if(r.tutor_id)tutorIds.add(r.tutor_id);}
+        if(r.status==="declined") declinedIds.add(r.lesson_id);
+        if(r.status==="pending"){pendingMap[r.lesson_id]={tutorName:r.tutor_name,tutorId:r.tutor_id,reqId:r.id};if(r.tutor_id)tutorIds.add(r.tutor_id);}
+      });
+      const tutorObjMap={};
+      await Promise.all([...tutorIds].map(async tid=>{
+        try{
+          const [tp,pfp]=await Promise.all([
+            fbGet("profiles",tid+"_tutor").catch(()=>null)||fbGet("profiles",tid).catch(()=>null),
+            sbAuth.getProfilePhoto(tid,"tutor").catch(()=>null),
+          ]);
+          if(tp)tutorObjMap[tid]={...tp,pfp_url:pfp||tp.pfp_url||null};
+        }catch(e){}
+      }));
+      setAcceptedMap(m);
+      const mappedLessons=(data||[]).map(l=>{
+        const req=reqs.find(r=>r.lesson_id===l.id&&(r.status==="accepted"||r.status==="pending"));
+        const tutorId=req?.tutor_id||l._tutorId;
+        const tutorObj=tutorId?tutorObjMap[tutorId]||null:null;
+        return{...l,_accepted:!!m[l.id],_declined:declinedIds.has(l.id)&&!m[l.id],_pending:!!pendingMap[l.id]&&!m[l.id],_tutorName:pendingMap[l.id]?.tutorName||req?.tutor_name||l._tutorName,_tutorId:tutorId,_tutorObj:tutorObj||l._tutorObj||null,_reqId:req?.id||null};
+      });
+      const now=Date.now();
+      const hist=(data||[]).filter(l=>l.start_ts&&(l.start_ts+(l.to_hour-l.from_hour)*3600000)<now);
+      const cancelled=reqs.filter(r=>r.status==="cancelled");
+      const histIds=new Set(hist.map(l=>l.id));
+      const cancHist=cancelled.map(r=>({id:r.lesson_id,subject:r.subject||"Lesson",day:r.day,from_hour:r.from_hour,to_hour:r.to_hour,_tutorName:r.tutor_name,status:"cancelled",start_ts:r.start_ts})).filter(x=>x.id&&!histIds.has(x.id));
+      setLessons(mappedLessons);setLessonHistory([...hist,...cancHist]);
+      try{sessionStorage.setItem(cacheKey,JSON.stringify({lessons:mappedLessons,lessonHistory:[...hist,...cancHist],acceptedMap:m}));}catch(e){}
+    }catch(e){console.warn("Lessons load:",e.message);setLessons([]);setLessonHistory([]);}
+    finally{if(showLoading)setLoadingL(false);}
+  }
 
   useEffect(()=>{
     // Load interactions once
@@ -2870,7 +2887,9 @@ function StudentApp({user,onLogout,backHandlerRef}){
       <BotNav tab={tab} setTab={setTab} C={C} onRefresh={id=>{
         if(id==="timetable"||id==="identity"){setLoadingL(true);setRefreshKey(k=>k+1);}
         if(id==="archive"){setLoadingN(true);setRefreshKey(k=>k+1);}
-      }}/><Modal onClose={()=>setShowAdd(false)} C={C}>
+      }}/>
+
+      {showAdd&&<Modal onClose={()=>setShowAdd(false)} C={C}>
         <MT>📅 New Session</MT><MS C={C}>Configure the slot.</MS>
         <ML C={C}>SUBJECT</ML><Picker value={addForm.subject} onChange={v=>setAddForm(f=>({...f,subject:v}))} items={SUBJECTS} placeholder="Select Subject" C={C}/>
         <ML C={C}>DAY</ML><Picker value={addForm.day} onChange={v=>setAddForm(f=>({...f,day:v}))} items={DAYS.map((d,i)=>({label:d+" – "+DAY_FULL[i],value:d}))} placeholder="Select Day" C={C}/>
@@ -3143,26 +3162,23 @@ function TutorApp({user,onLogout,backHandlerRef}){
   },[backHandlerRef,openNote,showReq,showPublish,editingNote,showWallet,showStudentProf,showManage,showHistory,cancelReq,profEdit,callLesson]);
 
   useEffect(()=>{
+    const isAnon=user.id&&user.id.startsWith("anon-");
+    const cacheKey="jrsh_tutor_data_"+user.id;
+
+    // ── Serve cached requests instantly ──
     (async()=>{
-      setLoadingR(true);
       try{
-        const isAnon=user.id&&user.id.startsWith("anon-");
-        if(isAnon){setRequests([]);setLoadingR(false);return;}
-        // Fetch all tutor requests + lesson history
-        const data=await fbQuery("tutor_requests",[{field:"tutor_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100);
-        setRequests(data||[]);
-        // History = completed/cancelled requests
-        const now=Date.now();
-        const hist=(data||[]).filter(r=>{
-          if(r.status==="cancelled")return true;
-          if(r.start_ts&&r.status==="accepted"){
-            return(r.start_ts+(r.to_hour-r.from_hour)*3600000)<now;
-          }
-          return false;
-        });
-        setLessonHistory(hist);
-      }catch(e){console.warn("Requests load:",e.message);setRequests([]);}
-      finally{setLoadingR(false);}
+        const cached=sessionStorage.getItem(cacheKey);
+        if(cached&&refreshKey===0){
+          const {requests:cr,lessonHistory:ch}=JSON.parse(cached);
+          setRequests(cr||[]);setLessonHistory(ch||[]);
+          setLoadingR(false);
+          fetchTutorData(false,cacheKey,isAnon);
+          return;
+        }
+      }catch(e){}
+      if(!isAnon)setLoadingR(true);
+      await fetchTutorData(true,cacheKey,isAnon);
     })();
     // Live notes listener — real-time for all users
     const isAnon2=user.id&&user.id.startsWith("anon-");
@@ -3186,6 +3202,23 @@ function TutorApp({user,onLogout,backHandlerRef}){
     );
     return()=>_unsubNotesT();
   },[user.id,refreshKey]);
+
+  async function fetchTutorData(showLoading,cacheKey,isAnon){
+    if(isAnon){setRequests([]);if(showLoading)setLoadingR(false);return;}
+    try{
+      const data=await fbQuery("tutor_requests",[{field:"tutor_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100);
+      setRequests(data||[]);
+      const now=Date.now();
+      const hist=(data||[]).filter(r=>{
+        if(r.status==="cancelled")return true;
+        if(r.start_ts&&r.status==="accepted")return(r.start_ts+(r.to_hour-r.from_hour)*3600000)<now;
+        return false;
+      });
+      setLessonHistory(hist);
+      try{sessionStorage.setItem(cacheKey,JSON.stringify({requests:data||[],lessonHistory:hist}));}catch(e){}
+    }catch(e){console.warn("Requests load:",e.message);setRequests([]);}
+    finally{if(showLoading)setLoadingR(false);}
+  }
 
   // ── Poll tutor_requests so tutor sees student-side cancellations in real-time ──
   useEffect(()=>{
@@ -3858,19 +3891,17 @@ function SkeletonBox({w="100%",h=16,r=8,C,style={}}){
 
 function TimetableSkeleton({C}){
   return(
-    <div style={{padding:"0 16px"}}>
+    <div style={{padding:"16px 16px 0"}}>
       {[0,1,2,3].map(i=>(
         <div key={i} style={{display:"flex",gap:12,marginBottom:20,alignItems:"flex-start"}}>
           <SkeletonBox C={C} w={36} h={14} r={4} style={{marginTop:4,flexShrink:0}}/>
-          <div style={{flex:1}}>
-            <div style={{background:C.surface,border:"1px solid "+C.border,borderRadius:14,padding:"14px 14px 12px",display:"flex",flexDirection:"column",gap:8}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <SkeletonBox C={C} w="40%" h={14} r={4}/>
-                <SkeletonBox C={C} w="28%" h={10} r={4}/>
-              </div>
-              <SkeletonBox C={C} w="60%" h={10} r={4}/>
-              <SkeletonBox C={C} w="100%" h={28} r={8}/>
+          <div style={{flex:1,background:C.surface,border:"1px solid "+C.border,borderRadius:14,padding:"14px 14px 12px",display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{display:"flex",justifyContent:"space-between"}}>
+              <SkeletonBox C={C} w="42%" h={14} r={4}/>
+              <SkeletonBox C={C} w="26%" h={10} r={4}/>
             </div>
+            <SkeletonBox C={C} w="58%" h={10} r={4}/>
+            <SkeletonBox C={C} w="100%" h={26} r={8}/>
           </div>
         </div>
       ))}
@@ -3880,7 +3911,7 @@ function TimetableSkeleton({C}){
 
 function ArchiveSkeleton({C}){
   return(
-    <div style={{padding:"0 16px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+    <div style={{padding:"16px 16px 0",display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
       {[0,1,2,3,4,5].map(i=>(
         <div key={i} style={{background:C.surface,border:"1px solid "+C.border,borderRadius:14,padding:14,display:"flex",flexDirection:"column",gap:8}}>
           <SkeletonBox C={C} w="100%" h={80} r={8}/>
@@ -3894,8 +3925,8 @@ function ArchiveSkeleton({C}){
 
 function ProfileSkeleton({C}){
   return(
-    <div style={{padding:"0 16px"}}>
-      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,marginBottom:24,paddingTop:8}}>
+    <div style={{padding:"16px 16px 0"}}>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,marginBottom:24}}>
         <SkeletonBox C={C} w={88} h={88} r={44}/>
         <SkeletonBox C={C} w={140} h={16} r={6}/>
         <SkeletonBox C={C} w={100} h={11} r={4}/>
