@@ -2354,8 +2354,11 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const [toast,setToast]=React.useState(null);
   function showToast(msg,type='info'){setToast({msg,type});setTimeout(()=>setToast(null),3200);}
   const [openNote,setOpenNote]=useState(null);
-  const [notePages,setNotePages]=useState(()=>{try{const s=localStorage.getItem("jrsh_npages");return s?JSON.parse(s):{}}catch(e){return{};}});
-  const setNotePagesPersist=(fn)=>setNotePages(prev=>{const next=typeof fn==="function"?fn(prev):fn;try{localStorage.setItem("jrsh_npages",JSON.stringify(next));}catch(e){}return next;});
+  const notePagesKey="jrsh_npages_"+(user.id||"guest");
+  const [notePages,setNotePages]=useState(()=>{try{const s=localStorage.getItem(notePagesKey);return s?JSON.parse(s):{}}catch(e){return{};}});
+  const setNotePagesPersist=(fn)=>setNotePages(prev=>{const next=typeof fn==="function"?fn(prev):fn;try{localStorage.setItem(notePagesKey,JSON.stringify(next));}catch(e){}return next;});
+  // Reload notePages when the logged-in user changes (shared-device safety)
+  useEffect(()=>{try{const s=localStorage.getItem(notePagesKey);setNotePages(s?JSON.parse(s):{});}catch(e){setNotePages({});}},[user.id]);
   const [cancelLesson,setCancelLesson]=useState(null);
   const [editErr,setEditErr]=useState("");
   const [ratingMap,setRatingMap]=useState({}); // noteId -> {rating,id}
@@ -2453,6 +2456,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
   useEffect(()=>{
     const isAnon=user.id&&user.id.startsWith("anon-");
     // Load interactions + tutors in parallel — neither blocks the timetable
+    setInteractions({}); // reset immediately — prevent showing previous user's likes/saves
     Promise.all([
       isAnon?Promise.resolve([]):fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]).catch(()=>[]),
       fbQuery("profiles",[{field:"role",op:"==",value:"tutor"}],null,100).catch(()=>[]),
@@ -2816,7 +2820,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
                         started={started}
                         onStart={()=>{
                           setOfflineStarted(s=>({...s,[l.id]:true}));
-                          try{const cur=JSON.parse(localStorage.getItem("jrsh_offline_started")||"[]");if(!cur.includes(l.id)){localStorage.setItem("jrsh_offline_started",JSON.stringify([...cur,l.id]));}}catch(e){}
+                          try{const _k="jrsh_offline_started_"+(user.id||"guest");const cur=JSON.parse(localStorage.getItem(_k)||"[]");if(!cur.includes(l.id)){localStorage.setItem(_k,JSON.stringify([...cur,l.id]));}}catch(e){}
                         }}
                         onDrop={()=>{
                           setOfflineDropped(s=>{const n=new Set(s);n.add(l.id);return n;});
@@ -3085,8 +3089,11 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const [toast,setToast]=React.useState(null); // {msg,type}
   function showToast(msg,type='info'){setToast({msg,type});setTimeout(()=>setToast(null),3200);}
   const [openNote,setOpenNote]=useState(null);
-  const [notePages,setNotePages]=useState(()=>{try{const s=localStorage.getItem("jrsh_npages");return s?JSON.parse(s):{}}catch(e){return{};}});
-  const setNotePagesPersist=(fn)=>setNotePages(prev=>{const next=typeof fn==="function"?fn(prev):fn;try{localStorage.setItem("jrsh_npages",JSON.stringify(next));}catch(e){}return next;});
+  const notePagesKey="jrsh_npages_"+(user.id||"guest");
+  const [notePages,setNotePages]=useState(()=>{try{const s=localStorage.getItem(notePagesKey);return s?JSON.parse(s):{}}catch(e){return{};}});
+  const setNotePagesPersist=(fn)=>setNotePages(prev=>{const next=typeof fn==="function"?fn(prev):fn;try{localStorage.setItem(notePagesKey,JSON.stringify(next));}catch(e){}return next;});
+  // Reload notePages when the logged-in user changes (shared-device safety)
+  useEffect(()=>{try{const s=localStorage.getItem(notePagesKey);setNotePages(s?JSON.parse(s):{});}catch(e){setNotePages({});}},[user.id]);
   const [editingNote,setEditingNote]=useState(null);
   const [showNoteEditCover,setShowNoteEditCover]=useState(false);
   const editCoverRef=React.useRef();
@@ -3099,7 +3106,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
   const [offlineStartedIds,setOfflineStartedIds]=useState(new Set()); // lessons student has started
   React.useEffect(()=>{
     function checkStarted(){
-      try{const ids=JSON.parse(localStorage.getItem("jrsh_offline_started")||"[]");setOfflineStartedIds(new Set(ids));}catch(e){}
+      try{const _k="jrsh_offline_started_"+(user.id||"guest");const ids=JSON.parse(localStorage.getItem(_k)||"[]");setOfflineStartedIds(new Set(ids));}catch(e){}
     }
     checkStarted();
     const id=setInterval(checkStarted,3000);
@@ -3149,12 +3156,13 @@ function TutorApp({user,onLogout,backHandlerRef}){
     })();
     // Live notes listener — real-time for all users
     const isAnon2=user.id&&user.id.startsWith("anon-");
+    setInteractions({}); // reset immediately — prevent showing previous user's likes/saves
     (async()=>{
       try{
         const ix=isAnon2?[]:await fbQuery("note_interactions",[{field:"user_id",op:"==",value:user.id}]);
         const map={};(ix||[]).forEach(i=>{map[i.note_id]={liked:i.liked,saved:i.saved,id:i.id};});
         setInteractions(map);
-      }catch(e){}
+      }catch(e){setInteractions({});}
     })();
     setLoadingN(true);
     let firstSnapT=true;
@@ -3444,7 +3452,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
     let n=notes.map(note=>{const{id:_ixId,...ixRest}=interactions[note.id]||{};return{...note,liked:ixRest.liked||false,saved:ixRest.saved||false};});
     if(archFilter==="FAVORITES")n=n.filter(x=>x.liked);
     if(archFilter==="SAVED")n=n.filter(x=>x.saved);
-    if(archFilter==="MY NOTES")n=n.filter(x=>x.tutor_name===profile.name||x._mine);
+    if(archFilter==="MY NOTES")n=n.filter(x=>x.tutor_id===user.id||x._mine);
     if(archSearch)n=n.filter(x=>x.title?.toLowerCase().includes(archSearch.toLowerCase())||x.subject?.toLowerCase().includes(archSearch.toLowerCase()));
     return n;
   };
@@ -4129,19 +4137,19 @@ function NoteGrid({notes,C,onLike,onSave,onOpen,onEdit}){
           </div>
           {/* ── Info bar ── */}
           <div style={{padding:"8px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
-            <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:0}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,flex:"1 1 auto",minWidth:0,overflow:"hidden"}}>
               {note.tutor_pfp
                 ?<img src={note.tutor_pfp} alt="" style={{width:24,height:24,borderRadius:"50%",objectFit:"cover",flexShrink:0}} onError={e=>e.target.style.display="none"}/>
                 :<div style={{width:24,height:24,borderRadius:"50%",background:C.accentBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:10,fontWeight:900,color:C.accentText,fontFamily:"'Barlow Condensed',sans-serif"}}>{(note.tutor_name||"?")[0].toUpperCase()}</div>
               }
-              <div style={{flex:1,minWidth:0}}>
+              <div style={{flex:1,minWidth:0,overflow:"hidden"}}>
                 <div style={{fontSize:11,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",color:C.text,lineHeight:1.15,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{note.title}</div>
                 <div style={{fontSize:9,fontWeight:700,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{note.tutor_name?.toUpperCase()}</div>
               </div>
             </div>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0}}>
-              <div style={{fontSize:8,fontWeight:800,letterSpacing:1,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",border:"1px solid "+C.border,borderRadius:4,padding:"1px 5px",whiteSpace:"nowrap"}}>{note.subject?.toUpperCase()}</div>
-              <div style={{fontSize:8,fontWeight:800,color:"#4f46e5",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>OPEN PDF →</div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0,maxWidth:"42%"}}>
+              <div style={{fontSize:8,fontWeight:800,letterSpacing:1,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",border:"1px solid "+C.border,borderRadius:4,padding:"1px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{note.subject?.toUpperCase()}</div>
+              <div style={{fontSize:8,fontWeight:800,color:"#4f46e5",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5,whiteSpace:"nowrap"}}>OPEN PDF →</div>
             </div>
           </div>
         </div>
