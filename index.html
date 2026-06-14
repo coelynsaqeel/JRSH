@@ -876,16 +876,26 @@ async function startWebRTCVoice(sigDocId, isCaller, mode){
   // ── 5. Signaling — fully event-driven via onSnapshot ──
   let remoteDescSet=false;
 
+  // Unique id for this call attempt — lets both sides ignore stale signaling
+  // docs left over from a previous call on the same lesson/request.
+  const callSessionId = isCaller ? String(Date.now())+"-"+Math.random().toString(36).slice(2,8) : null;
+
   if(isCaller){
-    // Caller: clear stale signal doc, write fresh offer, then watch for answer + callee ICE
-    try{await sigDoc.delete();}catch(_){}
+    // Caller: create the offer and write the doc fresh (clearing any stale answer/ICE
+    // from previous calls) BEFORE calling setLocalDescription — ICE gathering only
+    // starts once setLocalDescription runs, so this guarantees no ICE candidate write
+    // can race ahead of and get wiped out by this clearing write.
     const offer=await pc.createOffer();
+    await sigDoc.set({
+      session:callSessionId,
+      offer:JSON.stringify({type:offer.type,sdp:offer.sdp}),
+      ts:Date.now(),
+    }); // no {merge:true} — fully replaces the doc, clearing stale answer/ICE from prior calls
     await pc.setLocalDescription(offer);
-    await sigDoc.set({offer:JSON.stringify({type:offer.type,sdp:offer.sdp}),ts:Date.now()});
 
     unsubs.push(sigDoc.onSnapshot(async snap=>{
       const d=snap.data();
-      if(!d) return;
+      if(!d||d.session!==callSessionId) return; // ignore anything not from this call attempt
       // Set remote description once when answer arrives
       if(d.answer && !remoteDescSet){
         remoteDescSet=true;
@@ -898,14 +908,18 @@ async function startWebRTCVoice(sigDocId, isCaller, mode){
     }));
 
   }else{
-    // Callee: watch for offer (may already be there or arrive shortly)
+    // Callee: watch for offer. Track the session id of the offer we answer,
+    // and ignore any snapshot that doesn't match it once we've committed to one.
+    let answeredSession=null;
     unsubs.push(sigDoc.onSnapshot(async snap=>{
       const d=snap.data();
-      if(!d) return;
+      if(!d||!d.offer) return;
 
-      // Set remote + create answer once
-      if(d.offer && !remoteDescSet){
+      // Set remote + create answer once per session id (handles caller retries cleanly)
+      if(!remoteDescSet||d.session!==answeredSession){
         remoteDescSet=true;
+        answeredSession=d.session;
+        appliedIce.clear(); // fresh session — old ICE keys no longer apply
         try{
           await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(d.offer)));
           const answer=await pc.createAnswer();
@@ -914,7 +928,7 @@ async function startWebRTCVoice(sigDocId, isCaller, mode){
         }catch(err){console.warn("callee setRemote/answer",err); return;}
       }
 
-      // Drain caller ICE — works whether it arrived before or after answer
+      // Drain caller ICE for the current session
       if(remoteDescSet) await drainIce(d);
     }));
   }
@@ -1986,18 +2000,27 @@ function AppRoot(){
 
   React.useEffect(()=>{
     (async()=>{
-      // Check connection first
-      const online=await checkSbConn();
-      setConnStatus(online?"ok":"error");
-
-      // Restore session
+      // Restore session IMMEDIATELY from cache — mount the app with cached profile
+      // first so the timetable can start fetching right away, without waiting on
+      // connection checks or token refreshes.
+      let sess=null;
       try{
-        const sess=loadSession();
+        sess=loadSession();
         if(sess&&sess.profile&&sess.role){
           if(sess.token)setAuthToken(sess.token||null);
-          let prof=sess.profile;
+          setUser(sess.profile);setRole(sess.profile.role||sess.role);setScreen("app");
+        }
+      }catch(e){}
+      setRestoring(false);
+      window.history.replaceState({screen:screen},"",window.location.pathname);
+
+      // Connection check + token refresh + fresh profile happen in the BACKGROUND
+      // and patch in once ready, without blocking the initial render.
+      const online=await checkSbConn();
+      setConnStatus(online?"ok":"error");
+      try{
+        if(sess&&sess.profile&&sess.role){
           if(online&&sess.profile.id&&!sess.profile.id.startsWith("anon-")){
-            // Refresh token if possible
             if(sess.refresh_token){
               try{
                 const fresh=await sbAuth.refreshToken(sess.refresh_token);
@@ -2007,23 +2030,19 @@ function AppRoot(){
                 }
               }catch(e){}
             }
-            try{if(localStorage.getItem("jrsh_acct_deleted")){clearSession();setRestoring(false);return;}}catch(e){}
+            try{if(localStorage.getItem("jrsh_acct_deleted")){clearSession();handleLogout();return;}}catch(e){}
             try{const u=_auth.currentUser;if(u){const t=await u.getIdToken(false);if(t)setAuthToken(t);}}catch(e){}
             const freshProf=await sbAuth.getProfile(sess.profile.id,sess.role||sess.profile.role);
             if(freshProf){
-              // Load pfp if stored separately
               if(!freshProf.pfp_url){
                 const pfp=await sbAuth.getProfilePhoto(sess.profile.id,freshProf.role);
                 if(pfp)freshProf.pfp_url=pfp;
               }
-              prof=freshProf;
-            }else{clearSession();setRestoring(false);return;}
+              setUser(freshProf);setRole(freshProf.role||sess.role);
+            }
           }
-          setUser(prof);setRole(prof.role||sess.role);setScreen("app");
         }
       }catch(e){}
-      setRestoring(false);
-      window.history.replaceState({screen:screen},"",window.location.pathname);
     })();
   },[]);
 
@@ -2536,6 +2555,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const [acceptedMap,setAcceptedMap]=useState(()=>{
     try{const c=sessionStorage.getItem(_lessonsCacheKey);return c?JSON.parse(c).acceptedMap||{}:{};}catch(e){return{};}
   });
+  const [loadingTutorFor,setLoadingTutorFor]=useState(null); // lesson id whose tutor profile is being fetched on tap
   const [showAdd,setShowAdd]=useState(false);
   const [showManage,setShowManage]=useState(false);
   const [showHistory,setShowHistory]=useState(false);
@@ -2709,7 +2729,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const studentIncomingSigTs=React.useRef({});
   useEffect(()=>{
     if(!user.id||user.id.startsWith("anon-"))return;
-    const acceptedLessons=lessons.filter(l=>acceptedMap[l.id]&&l._reqId);
+    const acceptedLessons=lessons.filter(l=>acceptedMap[l.id]);
     if(!acceptedLessons.length)return;
     const unsubs=acceptedLessons.map(lesson=>{
       const reqId=lesson._reqId||lesson.id;
@@ -2717,15 +2737,16 @@ function StudentApp({user,onLogout,backHandlerRef}){
       try{
         unsub=_db.collection("tutor_requests").doc(String(reqId)).onSnapshot(snap=>{
           try{
-            if(callLesson)return;
             const row=snap.data();
             if(!row?.call_signal)return;
             const sig=JSON.parse(row.call_signal);
             const lastTs=studentIncomingSigTs.current[reqId]||0;
             if(!sig||sig.ts<=lastTs||sig.from===user.id)return;
             studentIncomingSigTs.current[reqId]=sig.ts;
+            // Don't interrupt a call already in progress for this same lesson
+            if(callLesson&&(callLesson._reqId||callLesson.id)===reqId)return;
             if(sig.type==="ring"){
-              setCallLesson({...lesson,_incomingRing:true,_callMode:sig.mode==="video"?"video":"voice"});
+              setCallLesson({...lesson,_reqId:reqId,_incomingRing:true,_callMode:sig.mode==="video"?"video":"voice"});
               try{
                 safeNotify(sig.mode==="video"?"Incoming Video Call":"Incoming Voice Call",{body:(lesson._tutorName||"Tutor")+" is calling – "+lesson.subject,tag:"incoming-call",requireInteraction:true});
               }catch(e){}
@@ -2988,13 +3009,34 @@ function StudentApp({user,onLogout,backHandlerRef}){
         <Hdr C={C} dm={dm}><PBtn outline C={C} onClick={()=>{setShowManage(true);window.history.pushState({screen:"app",modal:"manage"},"",window.location.pathname);}}>MANAGE</PBtn><PBtn C={C} onClick={()=>setShowAdd(true)}>ADD SLOT</PBtn></Hdr>
         <Scroll>
           {loadingL?<Ldg C={C}/>:
-            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} onTap={l=>{
+            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} loadingTutorFor={loadingTutorFor} onTap={async l=>{
               const isAccepted=l._accepted||acceptedMap[l.id];
               const isPending=l._pending&&!isAccepted;
               if(isAccepted){
-                // Accepted: show tutor profile if we have the tutor object, otherwise lesson details
+                // Accepted: show tutor profile if we have the tutor object, otherwise fetch it on demand
                 if(l._tutorObj){
                   setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);
+                } else if(l._tutorId){
+                  // Tutor profile not loaded yet — fetch on demand so the rich profile
+                  // (photo, subjects, rates) shows directly instead of a sparse fallback
+                  setLoadingTutorFor(l.id);
+                  try{
+                    const [tp,pfp]=await Promise.all([
+                      fbGet("profiles",l._tutorId+"_tutor").then(r=>r||fbGet("profiles",l._tutorId)),
+                      sbAuth.getProfilePhoto(l._tutorId,"tutor").catch(()=>null),
+                    ]);
+                    if(tp){
+                      const tutorObj=pfp?{...tp,pfp_url:pfp}:tp;
+                      setLessons(prev=>prev.map(x=>x.id===l.id?{...x,_tutorObj:tutorObj}:x));
+                      setShowTutorProfile(tutorObj);setShowTutorProfileLesson({...l,_tutorObj:tutorObj});
+                    }else{
+                      setShowLessonDetails({...l,_accepted:true});
+                    }
+                  }catch(e){
+                    setShowLessonDetails({...l,_accepted:true});
+                  }finally{
+                    setLoadingTutorFor(null);
+                  }
                 } else {
                   setShowLessonDetails({...l,_accepted:true});
                 }
@@ -3470,16 +3512,17 @@ function TutorApp({user,onLogout,backHandlerRef}){
       try{
         unsub=_db.collection("tutor_requests").doc(String(req.id)).onSnapshot(snap=>{
           try{
-            if(callLesson)return; // already in a call — don't interrupt
             const row=snap.data();
             if(!row?.call_signal)return;
             const sig=JSON.parse(row.call_signal);
             const lastTs=incomingSigTs.current[req.id]||0;
             if(!sig||sig.ts<=lastTs||sig.from===user.id)return;
             incomingSigTs.current[req.id]=sig.ts;
+            // Don't interrupt a call already in progress for this same request
+            if(callLesson&&(callLesson._reqId||callLesson.id)===req.id)return;
             if(sig.type==="ring"){
               // Open CallDialog already showing "incoming" ring
-              setCallLesson({...req,_incomingRing:true,_callMode:sig.mode==="video"?"video":"voice"});
+              setCallLesson({...req,_reqId:req.id,_incomingRing:true,_callMode:sig.mode==="video"?"video":"voice"});
               // Web notification
               try{
                 safeNotify(sig.mode==="video"?"Incoming Video Call":"Incoming Voice Call",{body:(req.student_name||"Student")+" is calling – "+req.subject,tag:"incoming-call",requireInteraction:true});
@@ -4014,7 +4057,7 @@ function AvaBubble({name,C}){return <div style={{width:36,height:36,borderRadius
 function Ldg({C}){return <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}>LOADING…</div>;}
 function Empty({C,children}){return <div style={{textAlign:"center",padding:"24px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{children}</div>;}
 
-function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
+function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra,loadingTutorFor}){
   return(
     <div style={{background:C.surface,margin:"14px 14px 0",borderRadius:20,overflow:"hidden",border:"1px solid "+C.border}}>
       {days.map((day,idx)=>{
@@ -4050,7 +4093,10 @@ function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra}){
                         <span style={{fontSize:13}}>{l.online?"🌐":"📍"}</span>
                         <div style={{fontSize:11,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",color:"#111"}}>{l.subject}</div>
                       </div>
-                      <div style={{fontSize:9,fontWeight:700,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",whiteSpace:"nowrap"}}>{timeLbl(l.from_hour)}–{timeLbl(l.to_hour)}</div>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        {loadingTutorFor===l.id&&<span style={{width:8,height:8,borderRadius:"50%",border:"2px solid #999",borderTopColor:"transparent",display:"inline-block",animation:"spin .7s linear infinite"}}/>}
+                        <div style={{fontSize:9,fontWeight:700,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",whiteSpace:"nowrap"}}>{timeLbl(l.from_hour)}–{timeLbl(l.to_hour)}</div>
+                      </div>
                     </div>
                     {showStudent&&l.student_name&&<div style={{fontSize:10,color:"#555",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>👤 {l.student_name}</div>}
                     {renderExtra&&renderExtra(l)}
