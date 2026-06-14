@@ -1001,6 +1001,10 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   const remoteVideoContainerRef = React.useRef(null);
   const [cameraOff, setCameraOff] = React.useState(false);
   const [engineReady, setEngineReady] = React.useState(false); // flips when engineRef is set — triggers video attach effect
+  const [myReady, setMyReady] = React.useState(false);     // this user pressed ANSWER (video calls)
+  const [otherReady, setOtherReady] = React.useState(false); // other party pressed ANSWER (video calls)
+  const myReadyRef = React.useRef(false);
+  const otherReadyRef = React.useRef(false);
   const pollRef    = React.useRef(null);
   const lastSigTs  = React.useRef(0);
   const callSecsRef= React.useRef(0);
@@ -1077,9 +1081,20 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
           safeRequestNotificationPermission();
         }catch(e){}
       }
-      if(sig.type==="accept"&&curPhase==="outgoing"){setPhase("live");} // offer already written on ring; callee answered via Firestore
-      if(sig.type==="decline"&&curPhase==="outgoing"){hangUp("declined");}
-      if(sig.type==="end"&&(curPhase==="live"||curPhase==="outgoing"||curPhase==="incoming")){hangUp("ended");}
+      // For video calls: both caller and callee must press ANSWER before the call goes "live".
+      // sig.type "accept" = callee answered; sig.type "ready" = caller answered.
+      if(sig.type==="accept"||sig.type==="ready"){
+        otherReadyRef.current=true;
+        setOtherReady(true);
+        if(!sig.mode||sig.mode!=="video"){
+          // Voice calls keep the original single-sided handshake
+          if(curPhase==="outgoing")setPhase("live");
+        }else if(myReadyRef.current&&(curPhase==="outgoing"||curPhase==="waiting_other")){
+          setPhase("live");
+        }
+      }
+      if(sig.type==="decline"&&(curPhase==="outgoing"||curPhase==="waiting_other")){hangUp("declined");}
+      if(sig.type==="end"&&(curPhase==="live"||curPhase==="outgoing"||curPhase==="incoming"||curPhase==="waiting_other")){hangUp("ended");}
     };
     const fallbackPoll=()=>{
       const reqId=lesson._reqId||lesson.id;
@@ -1136,12 +1151,15 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   },[phase,ringTimer]);
 
   // ── Outgoing ring timeout — video lesson-start calls get 5 min (per rules), manual voice calls get 30s ──
+  // For video calls this timer must keep running through "waiting_other" (one side answered,
+  // waiting on the other) — only cleared once the call is live or ends.
+  const isRingingPhase = phase==="outgoing"||phase==="waiting_other";
   React.useEffect(()=>{
-    if(phase!=="outgoing") return;
+    if(!isRingingPhase) return;
     const timeout=isVideo?5*60*1000:30000;
     const id=setTimeout(()=>hangUp("no_answer"),timeout);
     return()=>clearTimeout(id);
-  },[phase]);
+  },[isRingingPhase]);
 
   // ── Call duration + auto-end at remaining180 secs ──
   React.useEffect(()=>{
@@ -1180,8 +1198,9 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
 
   // ── WebRTC connect — isCaller=true for caller, false for callee ──
   async function connectVoice(isCaller){
-    // Callee goes live immediately on accept; caller waits for accept signal to move to live
-    if(!isCaller) setPhase("live");
+    // Voice calls: callee goes live immediately on accept; caller waits for accept signal.
+    // Video calls: phase is managed by acceptCall/answerAsCaller via the readiness handshake.
+    if(!isCaller&&!isVideo) setPhase("live");
     try{
       const reqId=lesson._reqId||lesson.id;
       // sigDocId is shared by both parties — derived from reqId
@@ -1217,8 +1236,27 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   async function acceptCall(){
     try{if(ringAudioRef.current)ringAudioRef.current.stop();}catch(e){}
     const reqId=lesson._reqId||lesson.id;
-    await sendCallSignal(reqId,{from:user.id,type:"accept"});
+    myReadyRef.current=true;
+    setMyReady(true);
+    await sendCallSignal(reqId,{from:user.id,type:"accept",mode:mode});
     await connectVoice(false); // callee reads offer from Firestore, creates answer
+    // For video calls: only go live once the caller has also pressed ANSWER
+    if(isVideo){
+      setPhase(otherReadyRef.current?"live":"waiting_other");
+    }
+  }
+
+  // ── Answer (caller side, video calls) — confirms presence and waits for the other party ──
+  async function answerAsCaller(){
+    const reqId=lesson._reqId||lesson.id;
+    myReadyRef.current=true;
+    setMyReady(true);
+    await sendCallSignal(reqId,{from:user.id,type:"ready",mode:mode});
+    if(otherReadyRef.current){
+      setPhase("live");
+    }else{
+      setPhase("waiting_other");
+    }
   }
 
   // ── Decline ──
@@ -1236,7 +1274,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
     callSecsRef.current=0;
     const curPhase=phaseRef.current;
     const reqId=lesson._reqId||lesson.id;
-    if(curPhase==="live"||curPhase==="outgoing"){
+    if(curPhase==="live"||curPhase==="outgoing"||curPhase==="waiting_other"){
       await sendCallSignal(reqId,{from:user.id,type:"end"});
     }
     if(engineRef.current){
@@ -1333,6 +1371,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
         <div style={{textAlign:"center"}}>
           <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1}}>
             {phase==="outgoing"&&(isVideo?"CALLING (VIDEO)…":"CALLING…")}
+            {phase==="waiting_other"&&"WAITING FOR OTHER PARTY…"}
             {phase==="incoming"&&(isVideo?"INCOMING VIDEO CALL":"INCOMING VOICE CALL")}
             {phase==="live"&&(isVideo?"VIDEO CALL LIVE":"VOICE CALL LIVE")}
           </div>
@@ -1341,11 +1380,21 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
 
           {phase==="outgoing"&&(
             <div style={{marginTop:12}}>
-              <div style={{color:"#666",fontSize:12,fontFamily:"'Barlow Condensed',sans-serif"}}>{isVideo?"Lesson starting — ringing for video call":"Ringing — waiting for answer"}</div>
+              <div style={{color:"#666",fontSize:12,fontFamily:"'Barlow Condensed',sans-serif"}}>{isVideo?"Lesson starting — press ANSWER when ready":"Ringing — waiting for answer"}</div>
               <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:10}}>
                 {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:"50%",background:"#3b82f6",animation:"pulse 1.4s ease-in-out "+i*0.3+"s infinite"}}/>)}
               </div>
               {isVideo&&<div style={{color:"#555",fontSize:10,marginTop:8,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>Lesson is dropped if unanswered within 5 min</div>}
+            </div>
+          )}
+
+          {phase==="waiting_other"&&(
+            <div style={{marginTop:12}}>
+              <div style={{color:"#666",fontSize:12,fontFamily:"'Barlow Condensed',sans-serif"}}>You're ready — waiting for the other party to answer</div>
+              <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:10}}>
+                {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:"50%",background:"#22C55E",animation:"pulse 1.4s ease-in-out "+i*0.3+"s infinite"}}/>)}
+              </div>
+              <div style={{color:"#555",fontSize:10,marginTop:8,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>Lesson starts as soon as they answer</div>
             </div>
           )}
 
@@ -1393,7 +1442,27 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
           </div>
         )}
 
-        {(phase==="outgoing"||phase==="live")&&(
+        {phase==="outgoing"&&isVideo&&(
+          <div style={{display:"flex",gap:44,alignItems:"center"}}>
+            <div style={{textAlign:"center"}}>
+              <button onClick={()=>hangUp("ended")} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>📵</button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>END</div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <button onClick={answerAsCaller} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#22C55E",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.26h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.06 6.06l1.01-.95a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.09z"/></svg></button>
+              <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>ANSWER</div>
+            </div>
+          </div>
+        )}
+
+        {phase==="waiting_other"&&(
+          <div style={{textAlign:"center"}}>
+            <button onClick={()=>hangUp("ended")} style={{width:64,height:64,borderRadius:"50%",border:"none",background:"#EF4444",fontSize:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>📵</button>
+            <div style={{color:"#888",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif"}}>END</div>
+          </div>
+        )}
+
+        {((phase==="outgoing"&&!isVideo)||phase==="live")&&(
           <div style={{display:"flex",gap:20,alignItems:"center"}}>
             {phase==="live"&&(
               <div style={{textAlign:"center"}}>
@@ -2456,9 +2525,17 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");document.documentElement.classList.toggle("dark-mode",next);}catch(e){}return next;});
   const C=dm?dC():lC();
   const [tab,setTab]=useState("timetable");
-  const [lessons,setLessons]=useState([]);
-  const [loadingL,setLoadingL]=useState(true);
-  const [acceptedMap,setAcceptedMap]=useState({});
+  // Seed from sessionStorage cache for instant timetable render on revisit; fresh data still loads after
+  const _lessonsCacheKey="jrsh_timetable_cache_"+(user.id||"guest");
+  const [lessons,setLessons]=useState(()=>{
+    try{const c=sessionStorage.getItem(_lessonsCacheKey);return c?JSON.parse(c).lessons||[]:[];}catch(e){return[];}
+  });
+  const [loadingL,setLoadingL]=useState(()=>{
+    try{const c=sessionStorage.getItem(_lessonsCacheKey);return c?false:true;}catch(e){return true;}
+  });
+  const [acceptedMap,setAcceptedMap]=useState(()=>{
+    try{const c=sessionStorage.getItem(_lessonsCacheKey);return c?JSON.parse(c).acceptedMap||{}:{};}catch(e){return{};}
+  });
   const [showAdd,setShowAdd]=useState(false);
   const [showManage,setShowManage]=useState(false);
   const [showHistory,setShowHistory]=useState(false);
@@ -2518,7 +2595,10 @@ function StudentApp({user,onLogout,backHandlerRef}){
   // ── Load all user data from Supabase ──
   useEffect(()=>{
     (async()=>{
-      setLoadingL(true);
+      // Only show the loading spinner if we don't already have cached lessons to display
+      let hasCache=false;
+      try{hasCache=!!sessionStorage.getItem(_lessonsCacheKey);}catch(e){}
+      if(!hasCache)setLoadingL(true);
       // Hard 5-second cap — show whatever we have (or empty) after 5s no matter what
       const loadTimer=setTimeout(()=>setLoadingL(false),5000);
       try{
@@ -2557,6 +2637,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
           };
         });
         setLessons(mappedLessons);
+        try{sessionStorage.setItem(_lessonsCacheKey,JSON.stringify({lessons:mappedLessons,acceptedMap:m}));}catch(e){}
         // Fetch tutor profiles + photos in background (doesn't block timetable render)
         Promise.all([...tutorIds].map(async tid=>{
           try{
@@ -2897,7 +2978,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
         const now=Date.now();
         const {startMs:lStart,endMs:lEnd}=getScheduledMs(l);
         const withinLoc=!l.online&&(now>=lStart-1800000)&&(now<=lEnd);
-        return<LessonDetailsModal lesson={l} C={C} onClose={()=>setShowLessonDetails(null)} withinLocationWindow={withinLoc}
+        return<LessonDetailsModal lesson={l} C={C} onClose={()=>setShowLessonDetails(null)} withinLocationWindow={withinLoc} acceptedMap={acceptedMap}
           onCall={lesson=>{setCallLesson({...lesson,_autoInitiate:true});setShowLessonDetails(null);}}
           onLocation={lesson=>{setCallLesson({...lesson,_openLocation:true});setShowLessonDetails(null);}}
         />;
@@ -2915,7 +2996,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
                 if(l._tutorObj){
                   setShowTutorProfile(l._tutorObj);setShowTutorProfileLesson(l);
                 } else {
-                  setShowLessonDetails(l);
+                  setShowLessonDetails({...l,_accepted:true});
                 }
               } else if(isPending){
                 setShowLessonDetails(l);
@@ -4072,9 +4153,9 @@ function StudentProfileModal({lesson,C,onClose,onCall,onLocation}){
   );
 }
 /* ══ LESSON DETAILS MODAL (Student) ══ */
-function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWindow}){
+function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWindow,acceptedMap}){
   if(!lesson)return null;
-  const isAccepted=lesson._accepted;
+  const isAccepted=lesson._accepted||(acceptedMap&&acceptedMap[lesson.id])||false;
   const isPending=lesson._pending&&!isAccepted;
   const tutorName=lesson._tutorName||lesson._tutorObj?.name||null;
   const tutorObj=lesson._tutorObj||null;
