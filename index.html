@@ -769,28 +769,41 @@ function useLiveLocation(active){
 // caller=false → creates answer (the one who accepted)
 // sigDocId  → shared Firestore doc under "webrtc_signals" — same string on both sides
 // isCaller  → true for the person who pressed Call, false for the person who accepted
-async function startWebRTCVoice(sigDocId, isCaller){
+// mode      → "voice" (audio only) or "video" (audio + camera)
+async function startWebRTCVoice(sigDocId, isCaller, mode){
+  mode = mode||"voice";
+  const wantVideo = mode==="video";
   const sigDoc=_db.collection("webrtc_signals").doc(sigDocId);
   const unsubs=[];
 
-  // ── 1. Mic ──
-  // Android WebView / Chrome requires explicit audio constraints
+  // ── 1. Mic (+ camera if video mode) ──
+  // Android WebView / Chrome requires explicit constraints
   let stream;
+  const audioConstraints={echoCancellation:true,noiseSuppression:true,autoGainControl:true};
+  const videoConstraints=wantVideo?{facingMode:"user",width:{ideal:640},height:{ideal:480}}:false;
   try{
-    stream=await navigator.mediaDevices.getUserMedia({
-      audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},
-      video:false
-    });
+    stream=await navigator.mediaDevices.getUserMedia({audio:audioConstraints,video:videoConstraints});
   }catch(e){
-    // Fallback for older Android WebViews that don't support constraint objects
-    stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    if(wantVideo){
+      // Camera may be unavailable — fall back to audio-only so the call still connects
+      try{
+        stream=await navigator.mediaDevices.getUserMedia({audio:audioConstraints,video:false});
+      }catch(e2){
+        stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+      }
+    }else{
+      // Fallback for older Android WebViews that don't support constraint objects
+      stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    }
   }
+  const hasLocalVideo = stream.getVideoTracks().length>0;
 
   // ── 2. Peer connection ──
   const pc=new RTCPeerConnection(STUN_SERVERS);
   stream.getTracks().forEach(t=>pc.addTrack(t,stream));
 
-  // ── 3. Remote audio output ──
+  // ── 3. Remote media output ──
+  // Audio element always created (covers voice calls and audio of video calls)
   const audioEl=document.createElement("audio");
   audioEl.autoplay=true;
   audioEl.setAttribute("autoplay",""); // Android WebView needs attribute form
@@ -799,22 +812,43 @@ async function startWebRTCVoice(sigDocId, isCaller){
   audioEl.muted=false;
   audioEl.volume=1.0;
   document.body.appendChild(audioEl);
+  // Video element for remote video track (video calls only) — kept in DOM, hidden until attached
+  const videoEl=document.createElement("video");
+  videoEl.autoplay=true;
+  videoEl.setAttribute("autoplay","");
+  videoEl.playsInline=true;
+  videoEl.setAttribute("playsinline","");
+  videoEl.muted=false;
+  videoEl.style.display="none";
+  document.body.appendChild(videoEl);
+
   const remoteStream=new MediaStream();
+  let remoteHasVideo=false;
   pc.ontrack=e=>{
     e.streams[0]?.getTracks().forEach(t=>{
       if(!remoteStream.getTracks().includes(t)) remoteStream.addTrack(t);
+      if(t.kind==="video") remoteHasVideo=true;
     });
-    // Set srcObject fresh on each track event — Android WebView requires this
-    audioEl.srcObject=remoteStream;
-    // Android requires explicit play() after srcObject is assigned
-    const playPromise=audioEl.play();
-    if(playPromise!==undefined){
-      playPromise.catch(err=>{
-        // Autoplay blocked — attempt to resume on next user interaction
-        const resume=()=>{audioEl.play().catch(()=>{});document.removeEventListener("touchstart",resume);document.removeEventListener("click",resume);};
+    if(remoteHasVideo){
+      // Route everything through the video element (it plays audio too)
+      videoEl.srcObject=remoteStream;
+      const vp=videoEl.play();
+      if(vp!==undefined)vp.catch(()=>{
+        const resume=()=>{videoEl.play().catch(()=>{});document.removeEventListener("touchstart",resume);document.removeEventListener("click",resume);};
         document.addEventListener("touchstart",resume,{once:true});
         document.addEventListener("click",resume,{once:true});
       });
+    }else{
+      // Audio-only — Set srcObject fresh on each track event (Android WebView requirement)
+      audioEl.srcObject=remoteStream;
+      const playPromise=audioEl.play();
+      if(playPromise!==undefined){
+        playPromise.catch(err=>{
+          const resume=()=>{audioEl.play().catch(()=>{});document.removeEventListener("touchstart",resume);document.removeEventListener("click",resume);};
+          document.addEventListener("touchstart",resume,{once:true});
+          document.addEventListener("click",resume,{once:true});
+        });
+      }
     }
   };
 
@@ -887,15 +921,35 @@ async function startWebRTCVoice(sigDocId, isCaller){
 
   // ── 6. Return engine handle ──
   return{
-    pc, stream, audioEl,
+    pc, stream, audioEl, videoEl, hasLocalVideo, mode,
     cleanup:()=>{
       unsubs.forEach(u=>u());
       stream.getTracks().forEach(t=>t.stop());
       try{pc.close();}catch(_){}
       try{audioEl.pause();audioEl.srcObject=null;audioEl.remove();}catch(_){}
+      try{videoEl.pause();videoEl.srcObject=null;videoEl.remove();}catch(_){}
       try{sigDoc.delete();}catch(_){}
     },
     mute:(m)=>stream.getAudioTracks().forEach(t=>t.enabled=!m),
+    // Toggle local camera on/off (video calls only) — sender keeps transmitting silence/black when off
+    toggleCamera:(off)=>stream.getVideoTracks().forEach(t=>t.enabled=!off),
+    // Flip between front/back camera (video calls only)
+    flipCamera:async()=>{
+      if(!hasLocalVideo) return null;
+      try{
+        const curTrack=stream.getVideoTracks()[0];
+        const curFacing=curTrack?.getSettings?.().facingMode||"user";
+        const nextFacing=curFacing==="environment"?"user":"environment";
+        const newStream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:nextFacing,width:{ideal:640},height:{ideal:480}}});
+        const newTrack=newStream.getVideoTracks()[0];
+        if(!newTrack)return null;
+        const sender=pc.getSenders().find(s=>s.track&&s.track.kind==="video");
+        if(sender)await sender.replaceTrack(newTrack);
+        if(curTrack){stream.removeTrack(curTrack);curTrack.stop();}
+        stream.addTrack(newTrack);
+        return newTrack;
+      }catch(e){console.warn("flipCamera",e);return null;}
+    },
   };
 }
 
@@ -913,13 +967,18 @@ async function sendCallSignal(lessonId, signal){
 
 /* ══ CALL DIALOG — Agora Voice, On-Demand, 3-min Limit ══ */
 function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
+  // mode: "video" for auto-triggered lesson-start calls (online only), "voice" for the manual VOICE CALL button
+  const mode = lesson._callMode || "voice";
+  const isVideo = mode==="video";
   const CALL_LIMIT = 3*60;
-  const remaining180=Math.max(0,CALL_LIMIT-callTimeUsed);
+  // Video calls (auto-triggered at lesson start) are NOT subject to the 3-min voice cap —
+  // they run for the lesson duration. Only voice-only manual calls are capped at 3 min cumulative.
+  const remaining180=isVideo?Infinity:Math.max(0,CALL_LIMIT-callTimeUsed);
   const isOffline = !lesson.online;
 
   // Phase: idle | outgoing | incoming | live | ended
   const [phase, setPhase]  = React.useState(lesson._incomingRing?"incoming":lesson._autoInitiate?"outgoing":"idle");
-  const [ringTimer, setRingTimer] = React.useState(30);
+  const [ringTimer, setRingTimer] = React.useState(lesson._callMode==="video"?300:30);
   const [callSecs, setCallSecs]   = React.useState(0);
   const [muted, setMuted]   = React.useState(false);
   const [agoraErr, setAgoraErr] = React.useState("");
@@ -938,6 +997,10 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
   },[]);
 
   const engineRef  = React.useRef(null); // {client, audioTrack}
+  const localVideoRef = React.useRef(null);
+  const remoteVideoContainerRef = React.useRef(null);
+  const [cameraOff, setCameraOff] = React.useState(false);
+  const [engineReady, setEngineReady] = React.useState(false); // flips when engineRef is set — triggers video attach effect
   const pollRef    = React.useRef(null);
   const lastSigTs  = React.useRef(0);
   const callSecsRef= React.useRef(0);
@@ -1006,7 +1069,8 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
       if(!sig||sig.ts<=lastSigTs.current||sig.from===user.id) return;
       lastSigTs.current=sig.ts;
       if(sig.type==="ring"&&curPhase==="idle"){
-        setPhase("incoming");setRingTimer(30);
+        const sigIsVideo=sig.mode==="video";
+        setPhase("incoming");setRingTimer(sigIsVideo?300:30);
         // Web notification for background tab
         try{
           safeNotify("Incoming Voice Call",{body:(lesson.student_name||lesson._tutorName||"Contact")+" is calling – "+lesson.subject,tag:"incoming-call",requireInteraction:true});
@@ -1071,10 +1135,10 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
     return()=>{clearTimeout(id);stopRingtone();};
   },[phase,ringTimer]);
 
-  // ── Outgoing ring timeout (5 min for online auto-trigger, 30s for manual) ──
+  // ── Outgoing ring timeout — video lesson-start calls get 5 min (per rules), manual voice calls get 30s ──
   React.useEffect(()=>{
     if(phase!=="outgoing") return;
-    const timeout=lesson._autoRing?5*60*1000:30000;
+    const timeout=isVideo?5*60*1000:30000;
     const id=setTimeout(()=>hangUp("no_answer"),timeout);
     return()=>clearTimeout(id);
   },[phase]);
@@ -1094,6 +1158,26 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
     return()=>clearInterval(id);
   },[phase]);
 
+  // ── Attach video elements once the live video UI mounts (refs only exist when phase==="live") ──
+  React.useEffect(()=>{
+    if(!isVideo||phase!=="live"||!engineReady) return;
+    const eng=engineRef.current;
+    if(!eng) return;
+    if(eng.hasLocalVideo && localVideoRef.current){
+      localVideoRef.current.srcObject=eng.stream;
+      localVideoRef.current.play().catch(()=>{});
+    }
+    if(remoteVideoContainerRef.current && eng.videoEl && !remoteVideoContainerRef.current.contains(eng.videoEl)){
+      eng.videoEl.style.display="";
+      eng.videoEl.style.width="100%";
+      eng.videoEl.style.height="100%";
+      eng.videoEl.style.objectFit="cover";
+      eng.videoEl.style.borderRadius="16px";
+      remoteVideoContainerRef.current.innerHTML="";
+      remoteVideoContainerRef.current.appendChild(eng.videoEl);
+    }
+  },[phase,isVideo,engineReady]);
+
   // ── WebRTC connect — isCaller=true for caller, false for callee ──
   async function connectVoice(isCaller){
     // Callee goes live immediately on accept; caller waits for accept signal to move to live
@@ -1102,8 +1186,11 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
       const reqId=lesson._reqId||lesson.id;
       // sigDocId is shared by both parties — derived from reqId
       const sigDocId="wrtc-"+(reqId||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,28);
-      const eng=await startWebRTCVoice(sigDocId, isCaller);
+      const eng=await startWebRTCVoice(sigDocId, isCaller, mode);
       engineRef.current=eng;
+      setEngineReady(true);
+      // Video element attachment happens in a separate effect once phase becomes "live"
+      // (refs for caller aren't mounted yet at this point, since outgoing phase shows the non-video UI)
     }catch(e){
       const msg=e?.message||"";
       let errMsg="Call failed";
@@ -1119,7 +1206,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
     setPhase("outgoing");
     const reqId=lesson._reqId||lesson.id;
     // Send ring signal
-    await sendCallSignal(reqId,{from:user.id,type:"ring"});
+    await sendCallSignal(reqId,{from:user.id,type:"ring",mode:mode});
     // Start WebRTC as caller immediately — writes offer to Firestore
     // Callee's onSnapshot will detect the offer and create an answer
     await connectVoice(true);
@@ -1213,6 +1300,22 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
       {showLocMap&&<LocationModal lesson={lesson} user={user} myLoc={myLoc} otherLoc={otherLoc} locErr={locErr} otherRole={otherRole} onClose={()=>setShowLocMap(false)} C={C}/>}
 
       {/* Call body */}
+      {isVideo&&phase==="live"?(
+        <div style={{flex:1,position:"relative",overflow:"hidden",background:"#000"}}>
+          {/* Remote video fills the screen */}
+          <div ref={remoteVideoContainerRef} style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#111"}}>
+            <div style={{color:"#555",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:1}}>WAITING FOR VIDEO…</div>
+          </div>
+          {/* Local camera preview — picture-in-picture */}
+          <video ref={localVideoRef} autoPlay playsInline muted style={{position:"absolute",top:14,right:14,width:96,height:128,borderRadius:12,objectFit:"cover",background:"#222",border:"2px solid rgba(255,255,255,.2)",transform:"scaleX(-1)",display:cameraOff?"none":"block"}}/>
+          {/* Overlay info */}
+          <div style={{position:"absolute",top:14,left:14,background:"rgba(0,0,0,.55)",backdropFilter:"blur(4px)",borderRadius:10,padding:"6px 12px"}}>
+            <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13}}>{lesson.student_name||lesson._tutorName||""}</div>
+            <div style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:12,marginTop:2}}>{fmtTime(callSecs)} · {lesson.subject}</div>
+          </div>
+          {agoraErr&&<div style={{position:"absolute",bottom:100,left:0,right:0,textAlign:"center",color:"#EF4444",fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,padding:"0 24px"}}>{agoraErr}</div>}
+        </div>
+      ):(
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24}}>
         {(()=>{
           const cName=lesson.student_name||lesson._tutorName||"?";
@@ -1229,42 +1332,51 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
 
         <div style={{textAlign:"center"}}>
           <div style={{color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:22,letterSpacing:1}}>
-            {phase==="outgoing"&&"CALLING…"}
-            {phase==="incoming"&&"INCOMING VOICE CALL"}
-            {phase==="live"&&"VOICE CALL LIVE"}
+            {phase==="outgoing"&&(isVideo?"CALLING (VIDEO)…":"CALLING…")}
+            {phase==="incoming"&&(isVideo?"INCOMING VIDEO CALL":"INCOMING VOICE CALL")}
+            {phase==="live"&&(isVideo?"VIDEO CALL LIVE":"VOICE CALL LIVE")}
           </div>
           <div style={{color:"#ddd",fontSize:15,marginTop:2,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>{lesson.student_name||lesson._tutorName||""}</div>
           <div style={{color:"#888",fontSize:12,marginTop:2}}>{lesson.subject} · {isOffline?"Offline":"Online"}</div>
 
           {phase==="outgoing"&&(
             <div style={{marginTop:12}}>
-              <div style={{color:"#666",fontSize:12,fontFamily:"'Barlow Condensed',sans-serif"}}>Ringing — waiting for answer</div>
+              <div style={{color:"#666",fontSize:12,fontFamily:"'Barlow Condensed',sans-serif"}}>{isVideo?"Lesson starting — ringing for video call":"Ringing — waiting for answer"}</div>
               <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:10}}>
                 {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:"50%",background:"#3b82f6",animation:"pulse 1.4s ease-in-out "+i*0.3+"s infinite"}}/>)}
               </div>
+              {isVideo&&<div style={{color:"#555",fontSize:10,marginTop:8,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>Lesson is dropped if unanswered within 5 min</div>}
             </div>
           )}
 
           {phase==="incoming"&&(
-            <div style={{color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:32,marginTop:12}}>
-              {String(ringTimer).padStart(2,"0")}s
-            </div>
+            <>
+              <div style={{color:"#F59E0B",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:32,marginTop:12}}>
+                {isVideo?(String(Math.floor(ringTimer/60)).padStart(2,"0")+":"+String(ringTimer%60).padStart(2,"0")):(String(ringTimer).padStart(2,"0")+"s")}
+              </div>
+              {isVideo&&<div style={{color:"#555",fontSize:10,marginTop:6,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>Lesson is dropped if unanswered in time</div>}
+            </>
           )}
 
           {phase==="live"&&(
             <div style={{marginTop:12}}>
               <div style={{color:"#22C55E",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:24}}>{fmtTime(callSecs)}</div>
-              <div style={{color:remaining<=30?"#EF4444":"#555",fontSize:11,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
-                {remaining<=30?"⚠ "+fmtTime(remaining)+" REMAINING":"LIMIT · "+fmtTime(remaining180)}
-              </div>
-              <div style={{width:220,height:4,background:"#222",borderRadius:2,marginTop:10,overflow:"hidden",margin:"10px auto 0"}}>
-                <div style={{width:(remaining180>0?callSecs/remaining180*100:100)+"%",height:"100%",background:remaining<=30?"#EF4444":"#22C55E",transition:"width 1s linear"}}/>
-              </div>
+              {!isVideo&&(
+                <div style={{color:remaining<=30?"#EF4444":"#555",fontSize:11,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700}}>
+                  {remaining<=30?"⚠ "+fmtTime(remaining)+" REMAINING":"LIMIT · "+fmtTime(remaining180)}
+                </div>
+              )}
+              {!isVideo&&(
+                <div style={{width:220,height:4,background:"#222",borderRadius:2,marginTop:10,overflow:"hidden",margin:"10px auto 0"}}>
+                  <div style={{width:(remaining180>0?callSecs/remaining180*100:100)+"%",height:"100%",background:remaining<=30?"#EF4444":"#22C55E",transition:"width 1s linear"}}/>
+                </div>
+              )}
               {agoraErr&&<div style={{color:"#EF4444",fontSize:11,marginTop:8,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,maxWidth:260,textAlign:"center",margin:"8px auto 0"}}>{agoraErr}</div>}
             </div>
           )}
         </div>
       </div>
+      )}
 
       {/* Controls */}
       <div style={{padding:"20px 0 48px",background:"rgba(0,0,0,.9)",display:"flex",flexDirection:"column",alignItems:"center",gap:18}}>
@@ -1289,6 +1401,24 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
                   {muted?"🔇":"🎙️"}
                 </button>
                 <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{muted?"UNMUTE":"MUTE"}</div>
+              </div>
+            )}
+
+            {phase==="live"&&isVideo&&(
+              <div style={{textAlign:"center"}}>
+                <button onClick={()=>{const next=!cameraOff;setCameraOff(next);if(engineRef.current?.toggleCamera)engineRef.current.toggleCamera(next);}} style={{width:56,height:56,borderRadius:"50%",border:"none",background:cameraOff?"#EF4444":"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
+                  {cameraOff?"📷":"🎥"}
+                </button>
+                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>{cameraOff?"CAM ON":"CAM OFF"}</div>
+              </div>
+            )}
+
+            {phase==="live"&&isVideo&&engineReady&&engineRef.current?.hasLocalVideo&&(
+              <div style={{textAlign:"center"}}>
+                <button onClick={async()=>{const t=await engineRef.current?.flipCamera?.();if(t&&localVideoRef.current){const ms=new MediaStream([t]);localVideoRef.current.srcObject=ms;localVideoRef.current.play().catch(()=>{});}}} style={{width:56,height:56,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.12)",fontSize:22,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto"}}>
+                  🔄
+                </button>
+                <div style={{color:"#666",fontSize:9,marginTop:4,fontFamily:"'Barlow Condensed',sans-serif"}}>FLIP</div>
               </div>
             )}
 
@@ -2488,7 +2618,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
       lessons.forEach(l=>{
         if(!acceptedMap[l.id]||!l.start_ts||!l.online)return;
         const diff=now-l.start_ts;
-        if(diff>=0&&diff<30000&&callLesson?.id!==l.id){setCallLesson({...l,_autoRing:true});}
+        if(diff>=0&&diff<30000&&callLesson?.id!==l.id){setCallLesson({...l,_autoRing:true,_callMode:"video"});}
       });
     },5000);
     return()=>clearInterval(interval);
@@ -2514,9 +2644,9 @@ function StudentApp({user,onLogout,backHandlerRef}){
             if(!sig||sig.ts<=lastTs||sig.from===user.id)return;
             studentIncomingSigTs.current[reqId]=sig.ts;
             if(sig.type==="ring"){
-              setCallLesson({...lesson,_incomingRing:true});
+              setCallLesson({...lesson,_incomingRing:true,_callMode:sig.mode==="video"?"video":"voice"});
               try{
-                safeNotify("Incoming Voice Call",{body:(lesson._tutorName||"Tutor")+" is calling – "+lesson.subject,tag:"incoming-call",requireInteraction:true});
+                safeNotify(sig.mode==="video"?"Incoming Video Call":"Incoming Voice Call",{body:(lesson._tutorName||"Tutor")+" is calling – "+lesson.subject,tag:"incoming-call",requireInteraction:true});
               }catch(e){}
             }
           }catch(e){}
@@ -3240,7 +3370,7 @@ function TutorApp({user,onLogout,backHandlerRef}){
       booked.forEach(l=>{
         if(!l.start_ts||!l.online)return;
         const diff=now-l.start_ts;
-        if(diff>=0&&diff<30000&&callLesson?.id!==l.id){setCallLesson({...l,_autoRing:true});}
+        if(diff>=0&&diff<30000&&callLesson?.id!==l.id){setCallLesson({...l,_autoRing:true,_callMode:"video"});}
       });
     },5000);
     return()=>clearInterval(interval);
@@ -3268,10 +3398,10 @@ function TutorApp({user,onLogout,backHandlerRef}){
             incomingSigTs.current[req.id]=sig.ts;
             if(sig.type==="ring"){
               // Open CallDialog already showing "incoming" ring
-              setCallLesson({...req,_incomingRing:true});
+              setCallLesson({...req,_incomingRing:true,_callMode:sig.mode==="video"?"video":"voice"});
               // Web notification
               try{
-                safeNotify("Incoming Voice Call",{body:(req.student_name||"Student")+" is calling – "+req.subject,tag:"incoming-call",requireInteraction:true});
+                safeNotify(sig.mode==="video"?"Incoming Video Call":"Incoming Voice Call",{body:(req.student_name||"Student")+" is calling – "+req.subject,tag:"incoming-call",requireInteraction:true});
                 safeRequestNotificationPermission();
               }catch(e){}
             }
