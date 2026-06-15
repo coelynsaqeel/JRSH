@@ -1809,7 +1809,7 @@ function PdfViewer({note,onClose,C,initialPage,onPageChange,onRate,existingRatin
         </div>
         {/* Bookmark button — always visible; tap to set bookmark at current page, amber when on bookmarked page */}
         {total>0&&(
-          <button onClick={()=>{if(onPageChange)onPageChange(page);}} title={"Bookmark page "+page} style={{background:page===bookmarkPage&&bookmarkPage>1?"#F59E0B":"#222",border:"1px solid "+(page===bookmarkPage&&bookmarkPage>1?"#F59E0B":"#444"),borderRadius:8,padding:"7px 10px",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",gap:4,color:page===bookmarkPage&&bookmarkPage>1?"#000":"#ccc",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10}} title={(bookmarkPage>1&&page!==bookmarkPage)?"Set bookmark (currently P"+bookmarkPage+")":"Bookmark P"+page}>
+          <button onClick={()=>{if(onPageChange)onPageChange(page);}} title={(bookmarkPage>1&&page!==bookmarkPage)?"Set bookmark (currently P"+bookmarkPage+")":"Bookmark P"+page} style={{background:page===bookmarkPage&&bookmarkPage>1?"#F59E0B":"#222",border:"1px solid "+(page===bookmarkPage&&bookmarkPage>1?"#F59E0B":"#444"),borderRadius:8,padding:"7px 10px",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",gap:4,color:page===bookmarkPage&&bookmarkPage>1?"#000":"#ccc",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:10}}>
             🔖<span style={{letterSpacing:.5}}>{page===bookmarkPage&&bookmarkPage>1?"P"+bookmarkPage:"SET"}</span>
           </button>
         )}
@@ -2544,16 +2544,16 @@ function StudentApp({user,onLogout,backHandlerRef}){
   const setDm=v=>setDmRaw(prev=>{const next=typeof v==="function"?v(prev):v;try{localStorage.setItem("jrsh_dm",next?"1":"0");document.documentElement.classList.toggle("dark-mode",next);}catch(e){}return next;});
   const C=dm?dC():lC();
   const [tab,setTab]=useState("timetable");
-  // Seed from sessionStorage cache for instant timetable render on revisit; fresh data still loads after
+  // Seed from localStorage cache for instant timetable render on app launch; fresh data still loads after
   const _lessonsCacheKey="jrsh_timetable_cache_"+(user.id||"guest");
   const [lessons,setLessons]=useState(()=>{
-    try{const c=sessionStorage.getItem(_lessonsCacheKey);return c?JSON.parse(c).lessons||[]:[];}catch(e){return[];}
+    try{const c=localStorage.getItem(_lessonsCacheKey);return c?JSON.parse(c).lessons||[]:[];}catch(e){return[];}
   });
   const [loadingL,setLoadingL]=useState(()=>{
-    try{const c=sessionStorage.getItem(_lessonsCacheKey);return c?false:true;}catch(e){return true;}
+    try{const c=localStorage.getItem(_lessonsCacheKey);return c?false:true;}catch(e){return true;}
   });
   const [acceptedMap,setAcceptedMap]=useState(()=>{
-    try{const c=sessionStorage.getItem(_lessonsCacheKey);return c?JSON.parse(c).acceptedMap||{}:{};}catch(e){return{};}
+    try{const c=localStorage.getItem(_lessonsCacheKey);return c?JSON.parse(c).acceptedMap||{}:{};}catch(e){return{};}
   });
   const [loadingTutorFor,setLoadingTutorFor]=useState(null); // lesson id whose tutor profile is being fetched on tap
   const [showAdd,setShowAdd]=useState(false);
@@ -2617,7 +2617,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
     (async()=>{
       // Only show the loading spinner if we don't already have cached lessons to display
       let hasCache=false;
-      try{hasCache=!!sessionStorage.getItem(_lessonsCacheKey);}catch(e){}
+      try{hasCache=!!localStorage.getItem(_lessonsCacheKey);}catch(e){}
       if(!hasCache)setLoadingL(true);
       // Hard 5-second cap — show whatever we have (or empty) after 5s no matter what
       const loadTimer=setTimeout(()=>setLoadingL(false),5000);
@@ -2657,7 +2657,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
           };
         });
         setLessons(mappedLessons);
-        try{sessionStorage.setItem(_lessonsCacheKey,JSON.stringify({lessons:mappedLessons,acceptedMap:m}));}catch(e){}
+        try{localStorage.setItem(_lessonsCacheKey,JSON.stringify({lessons:mappedLessons,acceptedMap:m}));}catch(e){}
         // Fetch tutor profiles + photos in background (doesn't block timetable render)
         Promise.all([...tutorIds].map(async tid=>{
           try{
@@ -2786,7 +2786,6 @@ function StudentApp({user,onLogout,backHandlerRef}){
   useEffect(()=>{
     if(!user.id||user.id.startsWith("anon-"))return;
     const cancel=fbPoll("tutor_requests",[{field:"student_id",op:"==",value:user.id}],docs=>{
-      setRequests && void 0; // requests not in student scope but we derive from docs
       const m={};const declinedIds=new Set();const pendingMap={};
       docs.forEach(r=>{
         if(r.status==="accepted"){m[r.lesson_id]=true;}
@@ -3009,7 +3008,7 @@ function StudentApp({user,onLogout,backHandlerRef}){
         <Hdr C={C} dm={dm}><PBtn outline C={C} onClick={()=>{setShowManage(true);window.history.pushState({screen:"app",modal:"manage"},"",window.location.pathname);}}>MANAGE</PBtn><PBtn C={C} onClick={()=>setShowAdd(true)}>ADD SLOT</PBtn></Hdr>
         <Scroll>
           {loadingL?<Ldg C={C}/>:
-            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} loadingTutorFor={loadingTutorFor} onTap={async l=>{
+            <DayGrid days={DAYS} getLessons={getLessonsForDay} C={C} loadingTutorFor={loadingTutorFor} acceptedMap={acceptedMap} onTap={async l=>{
               const isAccepted=l._accepted||acceptedMap[l.id];
               const isPending=l._pending&&!isAccepted;
               if(isAccepted){
@@ -4057,7 +4056,7 @@ function AvaBubble({name,C}){return <div style={{width:36,height:36,borderRadius
 function Ldg({C}){return <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}>LOADING…</div>;}
 function Empty({C,children}){return <div style={{textAlign:"center",padding:"24px 0",color:C.sub,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{children}</div>;}
 
-function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra,loadingTutorFor}){
+function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra,loadingTutorFor,acceptedMap}){
   return(
     <div style={{background:C.surface,margin:"14px 14px 0",borderRadius:20,overflow:"hidden",border:"1px solid "+C.border}}>
       {days.map((day,idx)=>{
@@ -4072,8 +4071,7 @@ function DayGrid({days,getLessons,C,onTap,showStudent,renderExtra,loadingTutorFo
                     // Student states: added(no tutor)=light pink, requested=light orange, accepted=light green
                     // Tutor states: accepted=standard green
                     const isTutorView=!!showStudent;
-                    // acceptedMap may be passed via closure — check both flag and map
-                    const _cardAccepted=l._accepted||(typeof acceptedMap!=="undefined"&&acceptedMap[l.id]);
+                    const _cardAccepted=l._accepted||(acceptedMap&&acceptedMap[l.id]);
                     const _cardPending=l._pending&&!_cardAccepted;
                     let cardBg,cardBorder;
                     if(isTutorView||_cardAccepted){
