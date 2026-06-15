@@ -435,12 +435,21 @@ async function fbDel(col,id){
 function fbPoll(col,filters,cb,intervalMs=8000){
   let active=true;
   let lastSig="";
+  let hadResults=false;
   async function tick(){
     if(!active)return;
     try{
       const docs=await fbQuery(col,filters,null,200);
-      const sig=JSON.stringify(docs.map(d=>d.id+"@"+(d.updatedAt||d.createdAt||"")));
-      if(sig!==lastSig){lastSig=sig;cb(docs);}
+      // Guard: if we previously had results but this tick came back empty,
+      // it's more likely a transient fetch error (fbQuery swallows errors and
+      // returns []) than the data genuinely disappearing — skip this update
+      // so the UI doesn't flash to an empty/unbooked state.
+      if(docs.length===0&&hadResults){
+        // skip — keep previous state, try again next tick
+      }else{
+        const sig=JSON.stringify(docs.map(d=>d.id+"@"+(d.updatedAt||d.createdAt||"")));
+        if(sig!==lastSig){lastSig=sig;hadResults=docs.length>0;cb(docs);}
+      }
     }catch(e){}
     if(active)setTimeout(tick,intervalMs);
   }
@@ -770,10 +779,23 @@ function useLiveLocation(active){
 // sigDocId  → shared Firestore doc under "webrtc_signals" — same string on both sides
 // isCaller  → true for the person who pressed Call, false for the person who accepted
 // mode      → "voice" (audio only) or "video" (audio + camera)
-async function startWebRTCVoice(sigDocId, isCaller, mode){
+async function startWebRTCVoice(sigDocId, isCaller, mode, reqId){
   mode = mode||"voice";
   const wantVideo = mode==="video";
-  const sigDoc=_db.collection("webrtc_signals").doc(sigDocId);
+  // Try the dedicated webrtc_signals collection first. If a write to it fails
+  // (e.g. Firestore security rules don't allow this collection), fall back to
+  // the existing tutor_requests document (known-writable, used by call_signal).
+  let sigDoc=_db.collection("webrtc_signals").doc(sigDocId);
+  let usingFallback=false;
+  try{
+    await sigDoc.set({_probe:Date.now()},{merge:true});
+  }catch(probeErr){
+    console.warn("[WebRTC] webrtc_signals collection not writable, falling back to tutor_requests:",probeErr.message);
+    if(reqId){
+      sigDoc=_db.collection("tutor_requests").doc(String(reqId));
+      usingFallback=true;
+    }
+  }
   const unsubs=[];
 
   // ── 1. Mic (+ camera if video mode) ──
@@ -852,9 +874,14 @@ async function startWebRTCVoice(sigDocId, isCaller, mode){
     }
   };
 
+  // When falling back to the tutor_requests doc, prefix every field with "rtc_"
+  // so we never collide with booking fields (call_signal, status, etc.) and
+  // can always use {merge:true} (never wipe the booking record).
+  const fp = usingFallback ? "rtc_" : "";
+
   // ── 4. Trickle ICE — send each candidate to Firestore immediately ──
-  const myIceField = isCaller ? "caller_ice" : "callee_ice";
-  const theirIceField = isCaller ? "callee_ice" : "caller_ice";
+  const myIceField = fp + (isCaller ? "caller_ice" : "callee_ice");
+  const theirIceField = fp + (isCaller ? "callee_ice" : "caller_ice");
   let iceSeq=0;
   pc.onicecandidate=async e=>{
     if(!e.candidate) return; // null = gathering complete, ignore
@@ -879,28 +906,47 @@ async function startWebRTCVoice(sigDocId, isCaller, mode){
   // Unique id for this call attempt — lets both sides ignore stale signaling
   // docs left over from a previous call on the same lesson/request.
   const callSessionId = isCaller ? String(Date.now())+"-"+Math.random().toString(36).slice(2,8) : null;
+  const sessionField = fp+"session", offerField = fp+"offer", answerField = fp+"answer", tsField = fp+"ts";
 
   if(isCaller){
-    // Caller: create the offer and write the doc fresh (clearing any stale answer/ICE
-    // from previous calls) BEFORE calling setLocalDescription — ICE gathering only
-    // starts once setLocalDescription runs, so this guarantees no ICE candidate write
-    // can race ahead of and get wiped out by this clearing write.
+    // Caller: create the offer and write fresh signaling fields BEFORE calling
+    // setLocalDescription — ICE gathering only starts once setLocalDescription
+    // runs, so this guarantees no ICE candidate write can race ahead of this.
+    // When using the dedicated webrtc_signals doc we replace it wholesale (no merge)
+    // to clear stale answer/ICE from prior calls. When falling back to tutor_requests
+    // we must always merge (never wipe the booking record) — clear our own prior
+    // rtc_* fields explicitly instead.
     const offer=await pc.createOffer();
-    await sigDoc.set({
-      session:callSessionId,
-      offer:JSON.stringify({type:offer.type,sdp:offer.sdp}),
-      ts:Date.now(),
-    }); // no {merge:true} — fully replaces the doc, clearing stale answer/ICE from prior calls
+    const offerPayload={
+      [sessionField]:callSessionId,
+      [offerField]:JSON.stringify({type:offer.type,sdp:offer.sdp}),
+      [tsField]:Date.now(),
+    };
+    if(usingFallback){
+      // Clear any stale answer/ICE fields from a previous call attempt
+      offerPayload[answerField]=firebase.firestore.FieldValue.delete();
+      try{
+        const prev=(await sigDoc.get()).data()||{};
+        Object.keys(prev).forEach(k=>{
+          if((k.startsWith(fp+"caller_ice_")||k.startsWith(fp+"callee_ice_"))){
+            offerPayload[k]=firebase.firestore.FieldValue.delete();
+          }
+        });
+      }catch(_){}
+      await sigDoc.set(offerPayload,{merge:true});
+    }else{
+      await sigDoc.set(offerPayload); // no merge — fully replaces the dedicated doc
+    }
     await pc.setLocalDescription(offer);
 
     unsubs.push(sigDoc.onSnapshot(async snap=>{
       const d=snap.data();
-      if(!d||d.session!==callSessionId) return; // ignore anything not from this call attempt
+      if(!d||d[sessionField]!==callSessionId) return; // ignore anything not from this call attempt
       // Set remote description once when answer arrives
-      if(d.answer && !remoteDescSet){
+      if(d[answerField] && !remoteDescSet){
         remoteDescSet=true;
         try{
-          await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(d.answer)));
+          await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(d[answerField])));
         }catch(err){console.warn("caller setRemote",err);}
       }
       // Always try to drain callee ICE (new ones may arrive after answer)
@@ -913,18 +959,18 @@ async function startWebRTCVoice(sigDocId, isCaller, mode){
     let answeredSession=null;
     unsubs.push(sigDoc.onSnapshot(async snap=>{
       const d=snap.data();
-      if(!d||!d.offer) return;
+      if(!d||!d[offerField]) return;
 
       // Set remote + create answer once per session id (handles caller retries cleanly)
-      if(!remoteDescSet||d.session!==answeredSession){
+      if(!remoteDescSet||d[sessionField]!==answeredSession){
         remoteDescSet=true;
-        answeredSession=d.session;
+        answeredSession=d[sessionField];
         appliedIce.clear(); // fresh session — old ICE keys no longer apply
         try{
-          await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(d.offer)));
+          await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(d[offerField])));
           const answer=await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          await sigDoc.set({answer:JSON.stringify({type:answer.type,sdp:answer.sdp})},{merge:true});
+          await sigDoc.set({[answerField]:JSON.stringify({type:answer.type,sdp:answer.sdp})},{merge:true});
         }catch(err){console.warn("callee setRemote/answer",err); return;}
       }
 
@@ -942,7 +988,19 @@ async function startWebRTCVoice(sigDocId, isCaller, mode){
       try{pc.close();}catch(_){}
       try{audioEl.pause();audioEl.srcObject=null;audioEl.remove();}catch(_){}
       try{videoEl.pause();videoEl.srcObject=null;videoEl.remove();}catch(_){}
-      try{sigDoc.delete();}catch(_){}
+      // Only delete the dedicated webrtc_signals doc — never delete the
+      // tutor_requests booking record when using the fallback path.
+      if(!usingFallback){try{sigDoc.delete();}catch(_){}}
+      else{
+        // Clear our rtc_* fields from the booking doc so they don't linger
+        try{
+          const clearFields={};
+          [sessionField,offerField,answerField,tsField].forEach(f=>{clearFields[f]=firebase.firestore.FieldValue.delete();});
+          for(let i=0;i<iceSeq;i++){clearFields[myIceField+"_"+i]=firebase.firestore.FieldValue.delete();}
+          appliedIce.forEach(k=>{clearFields[k]=firebase.firestore.FieldValue.delete();});
+          sigDoc.set(clearFields,{merge:true});
+        }catch(_){}
+      }
     },
     mute:(m)=>stream.getAudioTracks().forEach(t=>t.enabled=!m),
     // Toggle local camera on/off (video calls only) — sender keeps transmitting silence/black when off
@@ -1219,7 +1277,7 @@ function CallDialog({lesson, user, onEnd, C, callTimeUsed=0}){
       const reqId=lesson._reqId||lesson.id;
       // sigDocId is shared by both parties — derived from reqId
       const sigDocId="wrtc-"+(reqId||"demo").toString().replace(/[^a-z0-9]/gi,"").slice(0,28);
-      const eng=await startWebRTCVoice(sigDocId, isCaller, mode);
+      const eng=await startWebRTCVoice(sigDocId, isCaller, mode, reqId);
       engineRef.current=eng;
       setEngineReady(true);
       // Video element attachment happens in a separate effect once phase becomes "live"
@@ -2624,13 +2682,23 @@ function StudentApp({user,onLogout,backHandlerRef}){
       try{
         const isAnon=user.id&&user.id.startsWith("anon-");
         if(isAnon){clearTimeout(loadTimer);setLessons([]);setLoadingL(false);return;}
-        // Race each query against 4.5s so processing still fits inside 5s cap
-        function withTimeout(p,ms=4500){return Promise.race([p,new Promise(r=>setTimeout(()=>r([]),ms))]);}
+        // Race each query against 4.5s so processing still fits inside 5s cap.
+        // Use a TIMEOUT sentinel (not []) so a slow/failed fetch never overwrites
+        // already-displayed (cached) lessons with an empty list.
+        const TIMEOUT_SENTINEL=Symbol("timeout");
+        function withTimeout(p,ms=4500){return Promise.race([p,new Promise(r=>setTimeout(()=>r(TIMEOUT_SENTINEL),ms))]);}
         // Lessons + tutor request acceptance map
-        const [data,reqs]=await Promise.all([
+        const [dataRaw,reqsRaw]=await Promise.all([
           withTimeout(fbQuery("lessons",[{field:"student_id",op:"==",value:user.id}],{field:"from_hour",dir:"asc"},100)),
           withTimeout(fbQuery("tutor_requests",[{field:"student_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100)),
         ]);
+        if(dataRaw===TIMEOUT_SENTINEL||reqsRaw===TIMEOUT_SENTINEL){
+          // Fetch timed out — keep showing whatever is already on screen (cache or
+          // previous state) instead of wiping it with an empty result.
+          console.warn("[Timetable] fetch timed out — keeping existing content");
+          return;
+        }
+        const data=dataRaw, reqs=reqsRaw;
         const m={};
         const declinedIds=new Set();
         const pendingMap={};
@@ -2679,7 +2747,14 @@ function StudentApp({user,onLogout,backHandlerRef}){
         const histIds=new Set(hist.map(l=>l.id));
         const cancHist=cancelled.map(r=>({id:r.lesson_id,subject:r.subject||"Lesson",day:r.day,from_hour:r.from_hour,to_hour:r.to_hour,_tutorName:r.tutor_name,status:"cancelled",start_ts:r.start_ts})).filter(x=>x.id&&!histIds.has(x.id));
         setLessonHistory([...hist,...cancHist]);
-      }catch(e){console.warn("Lessons load:",e.message);setLessons([]);setLessonHistory([]);}
+      }catch(e){
+        // On error, keep showing whatever lessons/history are already on screen
+        // (cache or previous state) — only clear if we have nothing cached at all.
+        console.warn("Lessons load:",e.message);
+        let hadCache=false;
+        try{hadCache=!!localStorage.getItem(_lessonsCacheKey);}catch(_e){}
+        if(!hadCache){setLessons([]);setLessonHistory([]);}
+      }
       finally{clearTimeout(loadTimer);setLoadingL(false);}
     })();
   },[user.id]);
@@ -3207,23 +3282,39 @@ function StudentApp({user,onLogout,backHandlerRef}){
               </div>
             </div>
             {[
+              _tLesson&&{label:"SUBJECT",value:_tLesson.subject},
+              _tLesson&&{label:"DAY",value:_tLesson.day},
+              _tLesson&&{label:"TIME",value:timeLbl(_tLesson.from_hour)+" – "+timeLbl(_tLesson.to_hour)},
               {label:"MODE",value:(_tLesson?_tLesson.online:showTutorProfile.online)?"🌐 Online":"📍 Offline"},
-              {label:"LEVEL",value:showTutorProfile.curriculum_level},
-              showTutorProfile.age&&{label:"AGE",value:showTutorProfile.age+" yrs"},
-              showTutorProfile.gender&&{label:"GENDER",value:showTutorProfile.gender},
-              showTutorProfile.location&&{label:"ZONE",value:showTutorProfile.location},
-              showTutorProfile.hourly_rate_online&&{label:"ONLINE RATE",value:"KES "+showTutorProfile.hourly_rate_online+"/hr"},
-              showTutorProfile.hourly_rate_offline&&{label:"OFFLINE RATE",value:"KES "+showTutorProfile.hourly_rate_offline+"/hr"},
               _tLesson&&{label:"STATUS",value:"ACCEPTED"},
-              _tLesson&&{label:"SLOT",value:timeLbl(_tLesson.from_hour)+" – "+timeLbl(_tLesson.to_hour)},
             ].filter(Boolean).map(row=>(
               <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid "+C.border}}>
                 <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
                 <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
               </div>
             ))}
+
+            {(showTutorProfile.curriculum_level||showTutorProfile.age||showTutorProfile.gender||showTutorProfile.location||showTutorProfile.hourly_rate_online||showTutorProfile.hourly_rate_offline)&&(
+              <div style={{marginTop:14,padding:14,borderRadius:14,background:C.surfaceAlt,border:"1px solid "+C.border}}>
+                <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:10}}>TUTOR PROFILE</div>
+                {[
+                  showTutorProfile.curriculum_level&&{label:"LEVEL",value:showTutorProfile.curriculum_level},
+                  showTutorProfile.age&&{label:"AGE",value:showTutorProfile.age+" yrs"},
+                  showTutorProfile.gender&&{label:"GENDER",value:showTutorProfile.gender},
+                  showTutorProfile.location&&{label:"ZONE",value:showTutorProfile.location},
+                  showTutorProfile.hourly_rate_online&&{label:"ONLINE RATE",value:"KES "+showTutorProfile.hourly_rate_online+"/hr"},
+                  showTutorProfile.hourly_rate_offline&&{label:"OFFLINE RATE",value:"KES "+showTutorProfile.hourly_rate_offline+"/hr"},
+                ].filter(Boolean).map(row=>(
+                  <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid "+C.border}}>
+                    <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
+                    <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {showTutorProfile.subjects_taught&&(
-              <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border}}>
+              <div style={{marginTop:12,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border}}>
                 <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:8}}>SUBJECTS</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{showTutorProfile.subjects_taught.map(s=><span key={s} style={{fontSize:10,fontWeight:800,padding:"3px 10px",borderRadius:20,background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif"}}>{s}</span>)}</div>
               </div>
@@ -4235,20 +4326,45 @@ function LessonDetailsModal({lesson,C,onClose,onCall,onLocation,withinLocationWi
         <div style={{fontSize:11,fontWeight:800,color:statusColor,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5,marginBottom:16,padding:"6px 12px",borderRadius:8,background:isAccepted?"rgba(22,101,52,.08)":isPending?"rgba(146,64,14,.08)":"rgba(159,18,57,.08)",display:"inline-block"}}>{statusText}</div>
         {/* Details */}
         {[
-          {label:"MODE",value:lesson.online?"🌐 Online":"📍 Offline"},
+          {label:"SUBJECT",value:lesson.subject},
           {label:"DAY",value:lesson.day},
           {label:"TIME",value:timeLbl(lesson.from_hour)+" – "+timeLbl(lesson.to_hour)},
-          {label:"SUBJECT",value:lesson.subject},
-          tutorName&&{label:"TUTOR",value:tutorName},
-          tutorObj?.curriculum_level&&{label:"LEVEL",value:tutorObj.curriculum_level},
-          tutorObj?.hourly_rate_online&&lesson.online&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_online+"/hr"},
-          tutorObj?.hourly_rate_offline&&!lesson.online&&{label:"RATE",value:"KES "+tutorObj.hourly_rate_offline+"/hr"},
+          {label:"MODE",value:lesson.online?"🌐 Online":"📍 Offline"},
+          isAccepted&&{label:"STATUS",value:"ACCEPTED"},
         ].filter(Boolean).map(row=>(
           <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid "+C.border}}>
             <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
             <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
           </div>
         ))}
+
+        {tutorObj&&(tutorName||tutorObj.curriculum_level||tutorObj.age||tutorObj.gender||tutorObj.location||tutorObj.hourly_rate_online||tutorObj.hourly_rate_offline)&&(
+          <div style={{marginTop:14,padding:14,borderRadius:14,background:C.surfaceAlt,border:"1px solid "+C.border}}>
+            <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:10}}>TUTOR PROFILE</div>
+            {[
+              tutorName&&{label:"NAME",value:tutorName},
+              tutorObj.curriculum_level&&{label:"LEVEL",value:tutorObj.curriculum_level},
+              tutorObj.age&&{label:"AGE",value:tutorObj.age+" yrs"},
+              tutorObj.gender&&{label:"GENDER",value:tutorObj.gender},
+              tutorObj.location&&{label:"ZONE",value:tutorObj.location},
+              tutorObj.hourly_rate_online&&{label:"ONLINE RATE",value:"KES "+tutorObj.hourly_rate_online+"/hr"},
+              tutorObj.hourly_rate_offline&&{label:"OFFLINE RATE",value:"KES "+tutorObj.hourly_rate_offline+"/hr"},
+            ].filter(Boolean).map(row=>(
+              <div key={row.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid "+C.border}}>
+                <span style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.label}</span>
+                <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'Barlow Condensed',sans-serif"}}>{row.value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tutorObj?.subjects_taught&&(
+          <div style={{marginTop:12,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border}}>
+            <div style={{fontSize:10,fontWeight:800,letterSpacing:1.5,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",marginBottom:8}}>SUBJECTS</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{tutorObj.subjects_taught.map(s=><span key={s} style={{fontSize:10,fontWeight:800,padding:"3px 10px",borderRadius:20,background:"#111",color:"#fff",fontFamily:"'Barlow Condensed',sans-serif"}}>{s}</span>)}</div>
+          </div>
+        )}
+
         {/* Call/Location helper text */}
         {isAccepted&&(
           <div style={{marginTop:14,padding:12,borderRadius:12,background:C.surfaceAlt,border:"1px solid "+C.border,fontSize:11,color:C.sub,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1.6}}>
