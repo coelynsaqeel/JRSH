@@ -2685,14 +2685,14 @@ function StudentApp({user,onLogout,backHandlerRef}){
         // Race each query against 4.5s so processing still fits inside 5s cap.
         // Use a TIMEOUT sentinel (not []) so a slow/failed fetch never overwrites
         // already-displayed (cached) lessons with an empty list.
-        const TIMEOUT_SENTINEL=Symbol("timeout");
+        const TIMEOUT_SENTINEL={_timeout:true}; // unique object reference — works in all Android WebView versions
         function withTimeout(p,ms=4500){return Promise.race([p,new Promise(r=>setTimeout(()=>r(TIMEOUT_SENTINEL),ms))]);}
         // Lessons + tutor request acceptance map
         const [dataRaw,reqsRaw]=await Promise.all([
           withTimeout(fbQuery("lessons",[{field:"student_id",op:"==",value:user.id}],{field:"from_hour",dir:"asc"},100)),
           withTimeout(fbQuery("tutor_requests",[{field:"student_id",op:"==",value:user.id}],{field:"createdAt",dir:"desc"},100)),
         ]);
-        if(dataRaw===TIMEOUT_SENTINEL||reqsRaw===TIMEOUT_SENTINEL){
+        if((dataRaw&&dataRaw._timeout)||(reqsRaw&&reqsRaw._timeout)){
           // Fetch timed out — keep showing whatever is already on screen (cache or
           // previous state) instead of wiping it with an empty result.
           console.warn("[Timetable] fetch timed out — keeping existing content");
